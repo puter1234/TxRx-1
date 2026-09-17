@@ -1,4 +1,4 @@
-# 구현 및 검토 보고 · 2026-09-17
+# 구현 및 검토 보고 · 2026-09-17~18
 
 확정된 요구사항의 프론트엔드·서버·인식·저장·오프라인 배포 코드를 구현했다. 현재 결과물은 **소프트웨어 검토 후보**이며 실제 장비 운전 승인 상태는 **NOT_VERIFIED**다. 사용자 요청대로 브라우저 실행, 프론트엔드 스크린샷, 화면의 직접 시각 검사는 수행하지 않았다.
 
@@ -24,8 +24,8 @@
 
 검증 환경: 현재 Windows x64, Python 3.11.8, PyTorch 2.5.1+cpu, torchvision 0.20.1+cpu, timm 0.9.16, OpenCV 4.11.0.86, zxing-cpp 3.1.1. 새 `.venv-offline-verified`에 **--no-index**로 의존성을 설치하고 `pip check`를 통과했다.
 
-- **기능 테스트 88개 통과**: 기존 실제 사진 인식, 헤지스 제공 127행 해독, 판정·계수·DB·권한·통신·복원·고장 경로 포함. 속도 한계 시험 9개는 별도 성능 항목으로 분리했다. [원본 결과](verification/functional-tests.xml)
-- **마지막 운영 로직 테스트 49개 통과**: 최종 실물 필수 채널/작업 취소/저장 변경 후 재확인. 느린 실제 모델 테스트 1개는 앞의 기능 실행에서 통과했다. [원본 결과](verification/station-tests.xml)
+- **기능 테스트 90개 통과**: 기존 실제 사진 인식, 헤지스 제공 127행 해독, 판정·계수·DB·권한·통신·복원·고장 경로 포함. 속도 한계 시험 9개는 별도 성능 항목으로 분리했다. [원본 결과](verification/functional-tests.xml)
+- **마지막 운영 로직 테스트 51개 통과**: 최종 실물 필수 채널/작업 취소/RFID 단절/증거 이미지 보존/저장 변경 후 재확인. 느린 실제 모델 테스트 1개는 앞의 기능 실행에서 통과했다. [원본 결과](verification/station-tests.xml)
 - **프론트엔드 7개 통과**, TypeScript/프로덕션 빌드 통과. 목표 선택·바코드 선택성·옵션 편집·설정 잠금·복구 사유·권한·서버 readiness·요청 중 STOP 사용·수량 보정 중복 클릭 방지를 jsdom으로 검사했다. [결과](verification/frontend-tests.json)
 - **실제 loopback HTTP/WebSocket 통합 통과**: 정적 JS/CSS, 초기 인증, RFID 작업/계수, 실시간 상태/heartbeat, DB 백업 다운로드, 미연결 장비 표시. 종료까지 확인했다. [결과](verification/local-http.json)
 - 실제 PARSeq 로드/인식 테스트에서 network/torch.hub URL 경로를 차단한 상태로 통과했다. 모델 파일 112개 해시 검증과 소프트웨어 사전 검사 통과. [사전 검사](verification/preflight.json)

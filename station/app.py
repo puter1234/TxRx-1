@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import os
 import re
@@ -582,24 +581,11 @@ def create_app(data_dir: Path | None = None, io=None, vision=None):
                 data = await image.read(20 * 1024 * 1024 + 1)
                 if len(data) > 20 * 1024 * 1024:
                     raise ValueError("이미지는 20MB 이하여야 합니다.")
-                from PIL import Image, ImageOps
-                import io as buffer
+                from .evidence import save_upload
 
-                with Image.open(buffer.BytesIO(data)) as im:
-                    if im.width * im.height > 24_000_000:
-                        raise ValueError("이미지는 2,400만 화소 이하여야 합니다.")
-                    im.load()
-                    im = ImageOps.exif_transpose(im).convert("RGB")
-                    target = store.root / "evidence" / f'{inspection["id"]}.png'
-                    target.parent.mkdir(exist_ok=True)
-                    im.save(target, format="PNG")
-                    target.with_suffix(".original").write_bytes(data)
-                info = {
-                    "url": f'/api/evidence/{inspection["id"]}',
-                    "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
-                    "input_sha256": hashlib.sha256(data).hexdigest(),
-                    "source": "UPLOADED_PHOTO",
-                }
+                target, info = await asyncio.to_thread(
+                    save_upload, store.root, inspection["id"], data
+                )
                 if not failures and any(
                     c in recipe.channels for c in ("ocr", "barcode")
                 ):

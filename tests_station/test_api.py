@@ -5,6 +5,36 @@ from station.app import create_app
 EPC = "1D44D280281B70D75A8DF0000E114D7A"
 
 
+def test_upload_keeps_original_and_white_transparent_background(
+    tmp_path, brand, recipe
+):
+    from PIL import Image
+    import io
+
+    photo = io.BytesIO()
+    Image.new("RGBA", (4, 4), (255, 0, 0, 0)).save(photo, format="PNG")
+    app = create_app(tmp_path)
+    with TestClient(app) as client:
+        login(client)
+        if not app.state.store.brands():
+            app.state.store.save_brand(brand.model_dump(), None, "test")
+        assert client.post("/api/sessions", json=recipe.model_dump()).status_code == 200
+        response = client.post(
+            "/api/replay",
+            data={"product_id": "photo-1", "epcs": EPC},
+            files={"image": ("alpha.png", photo.getvalue(), "image/png")},
+        )
+        assert response.status_code == 200, response.text
+        record = response.json()
+        assert record["status"] == "PASS"
+        image = client.get(record["evidence"]["url"])
+        with Image.open(io.BytesIO(image.content)) as decoded:
+            assert decoded.getpixel((0, 0)) == (255, 255, 255)
+        assert (
+            tmp_path / "evidence" / f'{record["id"]}.original'
+        ).read_bytes() == photo.getvalue()
+
+
 def login(client):
     r = client.post("/api/auth/setup", json={"password": "testing-only-123"})
     assert r.status_code == 200, r.text

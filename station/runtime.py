@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 import asyncio
-import hashlib
 import threading
 import time
 import uuid
@@ -93,6 +92,12 @@ class HardwareCycle:
         if active and (snap.get("fault") or not snap.get("connected")):
             self.cancel.set()
             self.c.fault(snap.get("fault") or "IO_DISCONNECTED")
+            return
+        if active and (
+            snap.get("rfid_connected") is False or snap.get("rfid_ready") is False
+        ):
+            self.cancel.set()
+            self.c.fault("RFID_DISCONNECTED")
             return
         if self.camera and not self.camera.status()["connected"] and active:
             self.cancel.set()
@@ -197,19 +202,11 @@ class HardwareCycle:
             )
             product = await self.offload(self.detector.one, frame)
             self.still_valid(epoch)
-            import cv2
+            from .evidence import save_frame
 
-            path = self.c.store.root / "evidence" / f'{inspection["id"]}.png'
-            path.parent.mkdir(exist_ok=True)
-            if not cv2.imwrite(str(path), frame):
-                raise IOError("EVIDENCE_WRITE_FAILED")
-            evidence = {
-                "url": f'/api/evidence/{inspection["id"]}',
-                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-                "source": "CSI_CAMERA",
-                "timing": timing,
-                "product_detection": product,
-            }
+            path, evidence = await self.offload(
+                save_frame, self.c.store.root, inspection["id"], frame, timing, product
+            )
             jobs = []
             names = []
             if "rfid" in recipe.channels:

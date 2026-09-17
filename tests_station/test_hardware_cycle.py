@@ -160,6 +160,24 @@ def test_camera_stale_stops_feeding(controller, recipe):
     )
 
 
+def test_rfid_disconnect_stops_before_next_inspection(controller, recipe):
+    io = TestIO()
+    c = controller
+    c.io = io
+    c.new_session(recipe)
+    c.session["phase"] = "FEEDING"
+    io.on = True
+    prior = io.snapshot
+    io.snapshot = lambda: {**prior(), "rfid_connected": False, "rfid_ready": False}
+    cycle = HardwareCycle(c, TestCamera(io), TestDetector(), TestVision())
+    asyncio.run(cycle.tick())
+    assert (
+        c.session["phase"] == "FAULT"
+        and c.session["fault"] == "RFID_DISCONNECTED"
+        and not io.on
+    )
+
+
 def test_cancelled_native_call_keeps_readiness_blocked(controller):
     import threading
 

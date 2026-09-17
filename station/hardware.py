@@ -185,6 +185,16 @@ class GpioIO:
             snap = self._read()
             if snap["km2_on"] or not snap["physical_permit"]:
                 raise RuntimeError("현장 정지/새 START 상태를 확인하세요.")
+            if not self.snapshot().get("rfid_ready"):
+                if self.reader:
+                    try:
+                        self.reader.close()
+                    except Exception:
+                        pass  # The unplugged descriptor may reject STOP.
+                self.reader = Reader(self.config.rfid_port)
+                if not self.config.commissioning.rfid_protocol_verified:
+                    raise RuntimeError("RFID 프로토콜 실기 검증이 필요합니다.")
+                self.reader.initialize()
             self.fault = None
 
     def snapshot(self):
@@ -192,7 +202,13 @@ class GpioIO:
             snap = dict(self.latest)
         if time.time() - snap.get("observed_at", 0) > 0.5:
             snap.update(connected=False, fault="IO_STALE")
-        snap["rfid_ready"] = bool(self.reader and self.reader.initialized)
+        snap["rfid_connected"] = bool(
+            self.reader
+            and self.reader.port.is_open
+            and Path(self.config.rfid_port).exists()
+        )
+        snap["rfid_ready"] = bool(snap["rfid_connected"] and self.reader.initialized)
+        snap["rfid_error"] = self.reader.last_error if self.reader else None
         return snap
 
     def blockers(self):
@@ -210,7 +226,12 @@ class GpioIO:
     def inventory(self, window_ms, cancel):
         if not self.reader:
             raise RuntimeError("RFID 포트 없음")
-        return self.reader.inventory(window_ms, cancel)
+        try:
+            return self.reader.inventory(window_ms, cancel)
+        except Exception as exc:
+            self.reader.initialized = False
+            self.reader.last_error = str(exc)
+            raise
 
     def close(self):
         self.closed.set()
