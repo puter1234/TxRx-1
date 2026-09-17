@@ -53,19 +53,29 @@ export default function Work({
       setSending([...running.current]);
       const prior = pending.current[name];
       const cmd =
-        prior && prior.session_id === s!.id && prior.reason === reason
+        prior &&
+        prior.session_id === s!.id &&
+        prior.reason === reason &&
+        (name !== "adjust" || prior.delta === Number(delta))
           ? prior
-          : {
-              request_id: uuid(),
-              session_id: s!.id,
-              action: name,
-              reason,
-              expected_revision: state.revision,
-              issued_at: Date.now() / 1000,
-            };
+          : name === "adjust"
+            ? {
+                request_id: uuid(),
+                session_id: s!.id,
+                delta: Number(delta),
+                reason,
+              }
+            : {
+                request_id: uuid(),
+                session_id: s!.id,
+                action: name,
+                reason,
+                expected_revision: state.revision,
+                issued_at: Date.now() / 1000,
+              };
       pending.current[name] = cmd;
       try {
-        await api("/commands", cmd);
+        await api(name === "adjust" ? "/adjustments" : "/commands", cmd);
         delete pending.current[name];
         await refresh();
       } catch (error) {
@@ -262,23 +272,14 @@ export default function Work({
                   <button
                     className="btn btn-outline"
                     disabled={
+                      sending.includes("adjust") ||
                       role === "operator" ||
                       !online ||
                       state.busy ||
                       reason.length < 3 ||
                       !Number.isInteger(Number(delta))
                     }
-                    onClick={() =>
-                      action(async () => {
-                        await api("/adjustments", {
-                          request_id: uuid(),
-                          session_id: s.id,
-                          delta: Number(delta),
-                          reason,
-                        });
-                        await refresh();
-                      }, "수량 보정과 사유를 기록했습니다.")
-                    }
+                    onClick={() => command("adjust")}
                   >
                     수량 수동 보정
                   </button>

@@ -44,6 +44,62 @@ afterEach(() => {
 });
 
 describe("operator flows without browser or screenshots", () => {
+  it("submits a manual correction once despite a double click", async () => {
+    const user = userEvent.setup();
+    let resolve: (v: unknown) => void = () => {};
+    const fetcher = vi.fn(
+      () =>
+        new Promise((r) => {
+          resolve = r;
+        }),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    const state: Snapshot = {
+      ...snapshot,
+      can_start: true,
+      session: {
+        id: "s1",
+        phase: "READY",
+        count: 0,
+        passed: 0,
+        failed: 0,
+        adjustments: 0,
+        created_at: "2026-09-17",
+        active_product: null,
+        recipe: {
+          brand_id: "hazzys",
+          brand_revision: 1,
+          targets: { size: "095" },
+          channels: ["rfid"],
+          target_count: null,
+        },
+        brand,
+        fault: null,
+        mode: "REPLAY",
+      },
+    };
+    render(
+      <Work
+        state={state}
+        brands={[brand]}
+        action={action}
+        refresh={async () => {}}
+        online
+      />,
+    );
+    await user.type(
+      screen.getByLabelText("작업자 조치·보정 사유"),
+      "실측 수량 확인",
+    );
+    const button = screen.getByRole("button", {
+      name: "수량 수동 보정",
+    }) as HTMLButtonElement;
+    await user.dblClick(button);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(button.disabled).toBe(true);
+    resolve({ ok: true, json: async () => ({ count: 1 }) });
+    await waitFor(() => expect(button.disabled).toBe(false));
+  });
   it("uses server readiness and denies recovery to the operator role", () => {
     const state: Snapshot = {
       ...snapshot,

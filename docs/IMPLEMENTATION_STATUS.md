@@ -26,7 +26,7 @@
 
 - **기능 테스트 88개 통과**: 기존 실제 사진 인식, 헤지스 제공 127행 해독, 판정·계수·DB·권한·통신·복원·고장 경로 포함. 속도 한계 시험 9개는 별도 성능 항목으로 분리했다. [원본 결과](verification/functional-tests.xml)
 - **마지막 운영 로직 테스트 49개 통과**: 최종 실물 필수 채널/작업 취소/저장 변경 후 재확인. 느린 실제 모델 테스트 1개는 앞의 기능 실행에서 통과했다. [원본 결과](verification/station-tests.xml)
-- **프론트엔드 6개 통과**, TypeScript/프로덕션 빌드 통과. 목표 선택·바코드 선택성·옵션 편집·설정 잠금·복구 사유·권한·서버 readiness·요청 중 STOP 사용을 jsdom으로 검사했다. [결과](verification/frontend-tests.json)
+- **프론트엔드 7개 통과**, TypeScript/프로덕션 빌드 통과. 목표 선택·바코드 선택성·옵션 편집·설정 잠금·복구 사유·권한·서버 readiness·요청 중 STOP 사용·수량 보정 중복 클릭 방지를 jsdom으로 검사했다. [결과](verification/frontend-tests.json)
 - **실제 loopback HTTP/WebSocket 통합 통과**: 정적 JS/CSS, 초기 인증, RFID 작업/계수, 실시간 상태/heartbeat, DB 백업 다운로드, 미연결 장비 표시. 종료까지 확인했다. [결과](verification/local-http.json)
 - 실제 PARSeq 로드/인식 테스트에서 network/torch.hub URL 경로를 차단한 상태로 통과했다. 모델 파일 112개 해시 검증과 소프트웨어 사전 검사 통과. [사전 검사](verification/preflight.json)
 - 기존 인식 파일 12개 중 11개는 byte hash가 동일하다. `ocr/core.py`는 로컬 전용 로더로 변경했고 기존 Recognizer·추론·변환 함수 AST는 동일하다. [보존 검사](verification/legacy-preservation.json)
@@ -65,4 +65,4 @@
 
 Git origin은 요청한 `https://github.com/puter1234/TxRx-1.git`으로 연결했다. 소스는 로컬 commit으로 보관하고 원격 push는 수행하지 않는다. 고객 전체 JSON/사진/모델 가중치/실행 데이터/환경/배포 ZIP은 Git에서 제외한다. 원본 G: 디렉터리는 변경하지 않았다.
 
-사용량은 작업 10회마다 **잔여 사용량**으로 확인했다. 10/20/30/40/50/60/70/80회 확인은 각각 87/86/84/83/82/82/81/80%였다. 잔여 50% 제한을 넘지 않았다. 리셋 크레딧은 사용하지 않았다.
+사용량은 작업 10회마다 **잔여 사용량**으로 확인했다. 10/20/30/40/50/60/70/80/90회 확인은 각각 87/86/84/83/82/82/81/80/79%였다. 잔여 50% 제한을 넘지 않았다. 리셋 크레딧은 사용하지 않았다.
