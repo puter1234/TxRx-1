@@ -1,0 +1,20 @@
+{
+  "mode": "REPLAY",
+  "gpio_chip": "/dev/gpiochip0",
+  "di_lines": [105, 144, 106],
+  "do_lines": [51, 52],
+  "do_on_raw": null,
+  "permit_line": null,
+  "permit_active_raw": null,
+  "rfid_port": "",
+  "rfid_window_ms": null,
+  "camera_source": "",
+  "camera_width": null,
+  "camera_height": null,
+  "camera_fps": null,
+  "io_lease_ms": 500,
+  "disk_min_free_mb": 1024,
+  "retention_days": null,
+  "automatic_cycle": true,
+  "commissioning": {}
+}

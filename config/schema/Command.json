@@ -1,0 +1,59 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "maxLength": 100,
+      "minLength": 8,
+      "title": "Request Id",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "action": {
+      "enum": [
+        "start",
+        "pause",
+        "stop",
+        "reset",
+        "release",
+        "discard",
+        "finish"
+      ],
+      "title": "Action",
+      "type": "string"
+    },
+    "reason": {
+      "default": "",
+      "maxLength": 500,
+      "title": "Reason",
+      "type": "string"
+    },
+    "expected_revision": {
+      "minimum": 0,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "issued_at": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Issued At"
+    }
+  },
+  "required": [
+    "request_id",
+    "session_id",
+    "action",
+    "expected_revision"
+  ],
+  "title": "Command",
+  "type": "object"
+}

@@ -1,0 +1,25 @@
+{
+  "file_hashes": {
+    "ocr/core.py": false,
+    "ocr/normalize.py": true,
+    "ocr/textlines.py": true,
+    "ocr/__init__.py": true,
+    "tagreader/crop.py": true,
+    "tagreader/decode.py": true,
+    "tagreader/detect.py": true,
+    "tagreader/geometry.py": true,
+    "tagreader/io.py": true,
+    "tagreader/preprocess.py": true,
+    "tagreader/__init__.py": true,
+    "pipeline.py": true
+  },
+  "core_functions_classes_except_loader": {
+    "resolve_device": true,
+    "build_transform": true,
+    "infer": true,
+    "to_rgb": true,
+    "Recognizer": true,
+    "versions": true
+  },
+  "intentional_change": "load_model uses verified local PARSeq sources/weights; no network fallback"
+}

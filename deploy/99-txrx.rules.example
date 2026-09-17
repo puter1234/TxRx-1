@@ -1,0 +1,3 @@
+# Match only verified site hardware. Fill exact serial/vendor/product from udevadm.
+# SUBSYSTEM=="tty", ATTRS{idVendor}=="SITE_VENDOR", ATTRS{idProduct}=="SITE_PRODUCT", ATTRS{serial}=="SITE_SERIAL", GROUP="dialout", MODE="0660", SYMLINK+="txrx-rfid"
+# Use installed distro gpio permissions; never chmod all devices world-writable.

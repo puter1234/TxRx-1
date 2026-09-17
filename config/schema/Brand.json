@@ -1,0 +1,187 @@
+{
+  "$defs": {
+    "Decoder": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "default": "none",
+          "enum": [
+            "none",
+            "hazzys_6bit_crc8",
+            "lookup"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "records": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "maxProperties": 100000,
+          "title": "Records",
+          "type": "object"
+        }
+      },
+      "title": "Decoder",
+      "type": "object"
+    },
+    "Option": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "pattern": "^[a-z][a-z0-9_]{0,31}$",
+          "title": "Key",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 40,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "values": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 1000,
+          "minItems": 1,
+          "title": "Values",
+          "type": "array"
+        }
+      },
+      "required": [
+        "key",
+        "label",
+        "values"
+      ],
+      "title": "Option",
+      "type": "object"
+    },
+    "Region": {
+      "additionalProperties": false,
+      "properties": {
+        "field": {
+          "pattern": "^[a-z][a-z0-9_]{0,31}$",
+          "title": "Field",
+          "type": "string"
+        },
+        "box": {
+          "maxItems": 4,
+          "minItems": 4,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Box",
+          "type": "array"
+        },
+        "rotation": {
+          "default": 0,
+          "enum": [
+            0,
+            90,
+            180,
+            270
+          ],
+          "title": "Rotation",
+          "type": "integer"
+        },
+        "min_char_confidence": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Char Confidence"
+        }
+      },
+      "required": [
+        "field",
+        "box"
+      ],
+      "title": "Region",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,47}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "name": {
+      "maxLength": 60,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "revision": {
+      "default": 1,
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "options": {
+      "items": {
+        "$ref": "#/$defs/Option"
+      },
+      "maxItems": 30,
+      "title": "Options",
+      "type": "array"
+    },
+    "decoder": {
+      "$ref": "#/$defs/Decoder"
+    },
+    "ocr_regions": {
+      "items": {
+        "$ref": "#/$defs/Region"
+      },
+      "maxItems": 30,
+      "title": "Ocr Regions",
+      "type": "array"
+    },
+    "barcode_records": {
+      "additionalProperties": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "type": "object"
+      },
+      "maxProperties": 100000,
+      "title": "Barcode Records",
+      "type": "object"
+    },
+    "note": {
+      "default": "",
+      "maxLength": 3000,
+      "title": "Note",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "name"
+  ],
+  "title": "Brand",
+  "type": "object"
+}

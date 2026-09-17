@@ -1,0 +1,28 @@
+[Unit]
+Description=TXRX offline inspection station
+After=local-fs.target nvargus-daemon.service
+
+[Service]
+Type=simple
+User=txrx
+Group=txrx
+SupplementaryGroups=video dialout gpio render
+WorkingDirectory=/opt/txrx
+Environment=TXRX_DATA=/var/lib/txrx
+Environment=TXRX_CONFIG=/opt/txrx/config/station.json
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=HF_HUB_OFFLINE=1
+Environment=TRANSFORMERS_OFFLINE=1
+ExecStart=/opt/txrx/.venv/bin/python -m station --port 8000
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/txrx
+# CSI Argus uses its local /tmp socket; PrivateTmp would hide that socket.
+PrivateTmp=false
+
+[Install]
+WantedBy=multi-user.target

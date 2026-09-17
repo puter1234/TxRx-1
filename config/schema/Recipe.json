@@ -1,0 +1,59 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "brand_id": {
+      "title": "Brand Id",
+      "type": "string"
+    },
+    "brand_revision": {
+      "minimum": 1,
+      "title": "Brand Revision",
+      "type": "integer"
+    },
+    "targets": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "maxProperties": 30,
+      "minProperties": 1,
+      "title": "Targets",
+      "type": "object"
+    },
+    "channels": {
+      "items": {
+        "enum": [
+          "ocr",
+          "rfid",
+          "barcode"
+        ],
+        "type": "string"
+      },
+      "maxItems": 3,
+      "minItems": 1,
+      "title": "Channels",
+      "type": "array"
+    },
+    "target_count": {
+      "anyOf": [
+        {
+          "maximum": 1000000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Target Count"
+    }
+  },
+  "required": [
+    "brand_id",
+    "brand_revision",
+    "targets",
+    "channels"
+  ],
+  "title": "Recipe",
+  "type": "object"
+}

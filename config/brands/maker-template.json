@@ -1,0 +1,14 @@
+{
+  "id": "example-maker",
+  "name": "새 메이커",
+  "revision": 1,
+  "options": [
+    {"key": "style", "label": "품번", "values": ["EXAMPLE"]},
+    {"key": "color", "label": "색상", "values": ["BK"]},
+    {"key": "size", "label": "사이즈", "values": ["095", "100"]}
+  ],
+  "decoder": {"kind": "none", "records": {}},
+  "ocr_regions": [],
+  "barcode_records": {},
+  "note": "등록 양식입니다. 실제 제조사 기준표와 촬영 영역을 입력하세요."
+}

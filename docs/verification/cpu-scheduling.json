@@ -1,0 +1,43 @@
+{
+  "cpu_count": 16,
+  "opencv_threads": 16,
+  "torch_default": 12,
+  "runs": [
+    {
+      "torch_threads": 12,
+      "barcode_ms": [
+        259.96,
+        264.41,
+        261.95,
+        256.0,
+        241.94
+      ],
+      "median_ms": 259.96,
+      "max_ms": 264.41
+    },
+    {
+      "torch_threads": 2,
+      "barcode_ms": [
+        251.3,
+        250.59,
+        437.09,
+        476.53,
+        436.28
+      ],
+      "median_ms": 436.28,
+      "max_ms": 476.53
+    },
+    {
+      "torch_threads": 4,
+      "barcode_ms": [
+        444.29,
+        327.73,
+        386.8,
+        278.18,
+        251.14
+      ],
+      "median_ms": 327.73,
+      "max_ms": 444.29
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "source": "G:\\내 드라이브\\2026 BLACKANDWHITE",
+  "date": "2026-09-17",
+  "files": {
+    "ocr/core.py": "b30d5608e56c1841472ce703f87f8710c6fdece09b0deafe57fe4c2252d67303",
+    "ocr/normalize.py": "aca118ce60524973a197bdadfbe84fca9643a2b5c57f071f0b805202928e9beb",
+    "ocr/textlines.py": "bcf091037d3389ec02ce27f827ef4c35842cfe04beb8adbb71ad0871b8283e35",
+    "ocr/__init__.py": "1f5aa96540f2ba4aa21064b7d70e6bfc7b82f0efcb589e3783c422d408100abf",
+    "tagreader/crop.py": "70d6c18276ce678962e39cf467aec2304f13467ad69bbde1586c6f3fd6d5fcdf",
+    "tagreader/decode.py": "d8fd036e391b1572c6f85efd693860c6386ed3bc990fa61a7519a9e2e48662e5",
+    "tagreader/detect.py": "94f3a19c3104c78fae55d64aeea46b17aea4d432d40b09be2363a02ff43c22cf",
+    "tagreader/geometry.py": "9f5ce72565b0118a16d189f53a834a16d659e333ab9c90af53af90f3015370df",
+    "tagreader/io.py": "9dfaaa8296cc8403541e9a244f717efe160fea653255a3ca20c960691caa0c59",
+    "tagreader/preprocess.py": "a1ccb667d66f06a4c9592e3b9cf3f67887b4b9f161567a88f30f17d051e3a3e5",
+    "tagreader/__init__.py": "15297a9fbf943970d053106068fa08a13e9d104b2b94a3698a00911f995e6bd4",
+    "pipeline.py": "fed4f752f2aad934290f46af0db147f4ba499bafba4bc663d005175cc5d7d003"
+  }
+}

@@ -1,0 +1,11 @@
+fastapi==0.135.3
+websockets==15.0.1
+uvicorn==0.41.0
+pydantic==2.12.5
+python-multipart==0.0.22
+psutil==7.2.2
+pyserial==3.5
+httpx==0.28.1
+pytest==8.3.5
+# PARSeq/OpenCV/PyTorch runtime is preserved separately in requirements.txt.
+# Jetson libgpiod 2.x bindings must match the installed BSP and be field verified.

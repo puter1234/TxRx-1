@@ -1,0 +1,408 @@
+{
+  "$defs": {
+    "Commissioning": {
+      "additionalProperties": false,
+      "properties": {
+        "settle_ms": {
+          "anyOf": [
+            {
+              "maximum": 30000,
+              "minimum": 10,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Settle Ms"
+        },
+        "inspection_timeout_ms": {
+          "anyOf": [
+            {
+              "maximum": 120000,
+              "minimum": 100,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Inspection Timeout Ms"
+        },
+        "feedback_timeout_ms": {
+          "anyOf": [
+            {
+              "maximum": 10000,
+              "minimum": 20,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Feedback Timeout Ms"
+        },
+        "release_timeout_ms": {
+          "anyOf": [
+            {
+              "maximum": 60000,
+              "minimum": 100,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Release Timeout Ms"
+        },
+        "product_sensor": {
+          "anyOf": [
+            {
+              "enum": [
+                1,
+                2
+              ],
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Product Sensor"
+        },
+        "departure_sensor": {
+          "anyOf": [
+            {
+              "enum": [
+                1,
+                2
+              ],
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Departure Sensor"
+        },
+        "sensor_clear_ms": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 10,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sensor Clear Ms"
+        },
+        "sensor_active_raw": {
+          "anyOf": [
+            {
+              "enum": [
+                0,
+                1
+              ],
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sensor Active Raw"
+        },
+        "detector_module": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detector Module"
+        },
+        "detector_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detector Sha256"
+        },
+        "physical_permit_observed": {
+          "default": false,
+          "title": "Physical Permit Observed",
+          "type": "boolean"
+        },
+        "power_cycle_off_verified": {
+          "default": false,
+          "title": "Power Cycle Off Verified",
+          "type": "boolean"
+        },
+        "process_kill_off_verified": {
+          "default": false,
+          "title": "Process Kill Off Verified",
+          "type": "boolean"
+        },
+        "os_hang_off_verified": {
+          "default": false,
+          "title": "Os Hang Off Verified",
+          "type": "boolean"
+        },
+        "stop_chain_verified": {
+          "default": false,
+          "title": "Stop Chain Verified",
+          "type": "boolean"
+        },
+        "single_product_verified": {
+          "default": false,
+          "title": "Single Product Verified",
+          "type": "boolean"
+        },
+        "camera_calibrated": {
+          "default": false,
+          "title": "Camera Calibrated",
+          "type": "boolean"
+        },
+        "rfid_protocol_verified": {
+          "default": false,
+          "title": "Rfid Protocol Verified",
+          "type": "boolean"
+        },
+        "signed_by": {
+          "default": "",
+          "title": "Signed By",
+          "type": "string"
+        },
+        "evidence_reference": {
+          "default": "",
+          "title": "Evidence Reference",
+          "type": "string"
+        }
+      },
+      "title": "Commissioning",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "mode": {
+      "default": "REPLAY",
+      "enum": [
+        "REPLAY",
+        "HARDWARE"
+      ],
+      "title": "Mode",
+      "type": "string"
+    },
+    "gpio_chip": {
+      "default": "/dev/gpiochip0",
+      "title": "Gpio Chip",
+      "type": "string"
+    },
+    "di_lines": {
+      "default": [
+        105,
+        144,
+        106
+      ],
+      "maxItems": 3,
+      "minItems": 3,
+      "prefixItems": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        }
+      ],
+      "title": "Di Lines",
+      "type": "array"
+    },
+    "do_lines": {
+      "default": [
+        51,
+        52
+      ],
+      "maxItems": 2,
+      "minItems": 2,
+      "prefixItems": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        }
+      ],
+      "title": "Do Lines",
+      "type": "array"
+    },
+    "rfid_port": {
+      "default": "",
+      "title": "Rfid Port",
+      "type": "string"
+    },
+    "camera_source": {
+      "default": "",
+      "title": "Camera Source",
+      "type": "string"
+    },
+    "camera_width": {
+      "anyOf": [
+        {
+          "maximum": 3280,
+          "minimum": 320,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Camera Width"
+    },
+    "camera_height": {
+      "anyOf": [
+        {
+          "maximum": 2464,
+          "minimum": 240,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Camera Height"
+    },
+    "camera_fps": {
+      "anyOf": [
+        {
+          "maximum": 120,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Camera Fps"
+    },
+    "rfid_window_ms": {
+      "anyOf": [
+        {
+          "maximum": 10000,
+          "minimum": 100,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rfid Window Ms"
+    },
+    "io_lease_ms": {
+      "default": 500,
+      "maximum": 2000,
+      "minimum": 100,
+      "title": "Io Lease Ms",
+      "type": "integer"
+    },
+    "do_on_raw": {
+      "anyOf": [
+        {
+          "enum": [
+            0,
+            1
+          ],
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Do On Raw"
+    },
+    "permit_line": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Permit Line"
+    },
+    "permit_active_raw": {
+      "anyOf": [
+        {
+          "enum": [
+            0,
+            1
+          ],
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Permit Active Raw"
+    },
+    "disk_min_free_mb": {
+      "default": 1024,
+      "minimum": 100,
+      "title": "Disk Min Free Mb",
+      "type": "integer"
+    },
+    "retention_days": {
+      "anyOf": [
+        {
+          "maximum": 3650,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Retention Days"
+    },
+    "commissioning": {
+      "$ref": "#/$defs/Commissioning"
+    },
+    "automatic_cycle": {
+      "default": true,
+      "title": "Automatic Cycle",
+      "type": "boolean"
+    }
+  },
+  "title": "StationConfig",
+  "type": "object"
+}

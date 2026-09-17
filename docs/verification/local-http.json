@@ -1,0 +1,13 @@
+{
+  "passed": [
+    "production_static_assets",
+    "authenticated_rfid_session_counts_once",
+    "authenticated_websocket_heartbeat",
+    "backup_download",
+    "equipment_no_fake_hardware",
+    "no_browser_opened"
+  ],
+  "transport": "real HTTP + WebSocket over loopback",
+  "hardware": "NOT_VERIFIED",
+  "browser_opened": false
+}

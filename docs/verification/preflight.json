@@ -1,0 +1,104 @@
+{
+  "platform": "Windows-10-10.0.26200-SP0",
+  "python": "3.11.8 (tags/v3.11.8:db85d51, Feb  6 2024, 22:03:32) [MSC v.1937 64 bit (AMD64)]",
+  "software_ready": true,
+  "hardware_acceptance": "NOT_VERIFIED",
+  "commissioning_required": [
+    "settle_ms",
+    "inspection_timeout_ms",
+    "feedback_timeout_ms",
+    "release_timeout_ms",
+    "product_sensor",
+    "departure_sensor",
+    "sensor_clear_ms",
+    "sensor_active_raw",
+    "detector_module",
+    "detector_sha256",
+    "signed_by",
+    "evidence_reference",
+    "physical_permit_observed",
+    "power_cycle_off_verified",
+    "process_kill_off_verified",
+    "os_hang_off_verified",
+    "stop_chain_verified",
+    "single_product_verified",
+    "camera_calibrated",
+    "rfid_protocol_verified"
+  ],
+  "checks": [
+    {
+      "check": "fastapi",
+      "ok": true,
+      "version": "0.135.3"
+    },
+    {
+      "check": "uvicorn",
+      "ok": true,
+      "version": "0.41.0"
+    },
+    {
+      "check": "websockets",
+      "ok": true,
+      "version": "15.0.1"
+    },
+    {
+      "check": "pydantic",
+      "ok": true,
+      "version": "2.12.5"
+    },
+    {
+      "check": "pillow",
+      "ok": true,
+      "version": "12.3.0"
+    },
+    {
+      "check": "torch",
+      "ok": true,
+      "version": "2.5.1+cpu"
+    },
+    {
+      "check": "torchvision",
+      "ok": true,
+      "version": "0.20.1+cpu"
+    },
+    {
+      "check": "timm",
+      "ok": true,
+      "version": "0.9.16"
+    },
+    {
+      "check": "opencv-python",
+      "ok": true,
+      "version": "4.11.0.86"
+    },
+    {
+      "check": "zxing-cpp",
+      "ok": true,
+      "version": "3.1.1"
+    },
+    {
+      "check": "psutil",
+      "ok": true,
+      "version": "7.2.2"
+    },
+    {
+      "check": "pyserial",
+      "ok": true,
+      "version": "3.5"
+    },
+    {
+      "check": "model_manifest",
+      "ok": true,
+      "sha256": "bf7d3efdf35629be294b3db60a0ee33f8014f0ec67c9c2ebf43fca4c012b281d"
+    },
+    {
+      "check": "frontend_build",
+      "ok": true
+    },
+    {
+      "check": "config",
+      "ok": true,
+      "mode": "REPLAY"
+    }
+  ]
+}
