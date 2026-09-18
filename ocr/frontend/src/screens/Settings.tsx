@@ -393,18 +393,12 @@ export default function Settings() {
     snapshot = useApp((s) => s.snapshot);
   useEffect(() => {
     const expired = () => setAuthed(false);
+    let alive = true;
+    api("/auth").then(result => { if (alive) setAuthed(result.authenticated && result.user?.role === "admin"); }).catch(() => {});
     window.addEventListener("txrx-login-required", expired);
-    return () => window.removeEventListener("txrx-login-required", expired);
+    return () => { alive = false; window.removeEventListener("txrx-login-required", expired); };
   }, []);
   const home = async () => {
-    if (authed) {
-      try {
-        await api("/auth/logout", {});
-      } catch (e) {
-        reportError(e);
-        return;
-      }
-    }
     nav("/");
   };
   return (
@@ -415,6 +409,7 @@ export default function Settings() {
           처음 화면
         </button>
         <h1 className="text-2xl font-extrabold">환경 설정</h1>
+        {authed && <button className="btn btn-outline btn-sm" onClick={async () => { try { await api("/auth/logout", {}); setAuthed(false); } catch(e) { reportError(e); } }}>설정 잠금</button>}
         {authed && (
           <div className="ml-6 flex gap-2">
             {[

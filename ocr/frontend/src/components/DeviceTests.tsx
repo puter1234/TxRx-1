@@ -7,6 +7,9 @@ import { ended } from "../lib/station";
 import Help from "./Help";
 
 export type BenchState = {
+  cooldown_ms?: { motor: number; led: number };
+  feedback?: { channel: number; line: number; raw: number | null; active: boolean | null; changes: number; changed_at: number | null };
+  batch?: { active: boolean; completed: number; target: number };
   connected: boolean; native_busy: boolean; generation: number; error: string | null;
   run: { id: string; target: string; remaining_ms: number } | null;
   io: { km2_on?: boolean; physical_permit?: boolean; motor_requested?: boolean; led_requested?: boolean };
@@ -117,6 +120,8 @@ export function OutputTests({ bench, ledOnly = false }: { bench: BenchHook; ledO
   const state = bench.state, session = useApp(s => s.snapshot?.session);
   const locked = !ended(session) || bench.busy || !!state?.native_busy;
   const canOutput = !!state && state.connected && !state.output_blockers.length && !state.run && !locked;
+  const motorWait = Math.ceil((state?.cooldown_ms?.motor || 0) / 1000);
+  const ledWait = Math.ceil((state?.cooldown_ms?.led || 0) / 1000);
   return <>
     {!ledOnly && <div className="card space-y-4 p-5">
       <div className="flex items-center gap-3"><Play size={26}/><h2 className="text-xl font-extrabold">모터</h2>
@@ -126,7 +131,7 @@ export function OutputTests({ bench, ledOnly = false }: { bench: BenchHook; ledO
         <select className="field mt-2" value={motorTime} onChange={e => setMotorTime(Number(e.target.value))}>
           {[0.5, 1, 2, 5].map(n => <option key={n} value={n}>{n}초</option>)}
         </select></label>
-      <button className="btn btn-primary w-full" disabled={!canOutput} onClick={() => bench.pulse("motor", motorTime)}>모터 시험 가동</button>
+      <button className="btn btn-primary w-full" disabled={!canOutput || motorWait > 0} onClick={() => bench.pulse("motor", motorTime)}>{motorWait > 0 ? `${motorWait}초 후 가동 가능` : "모터 시험 가동"}</button>
     </div>}
     <div className="card space-y-4 p-5">
       <div className="flex items-center gap-3"><Lightbulb size={26}/><h2 className="text-xl font-extrabold">LED</h2>
@@ -136,7 +141,7 @@ export function OutputTests({ bench, ledOnly = false }: { bench: BenchHook; ledO
         <select className="field mt-2" value={ledTime} onChange={e => setLedTime(Number(e.target.value))}>
           {[5, 10, 30, 60].map(n => <option key={n} value={n}>{n}초</option>)}
         </select></label>
-      <button className="btn btn-primary w-full" disabled={!canOutput} onClick={() => bench.pulse("led", ledTime)}>LED 켜기</button>
+      <button className="btn btn-primary w-full" disabled={!canOutput || ledWait > 0} onClick={() => bench.pulse("led", ledTime)}>{ledWait > 0 ? `${ledWait}초 후 점등 가능` : "LED 켜기"}</button>
       <button className="btn btn-outline w-full" onClick={bench.stop}>LED 끄기</button>
     </div>
   </>;
@@ -185,6 +190,7 @@ export function CameraTest({ bench }: { bench: BenchHook }) {
 }
 
 export function SensorTest({ bench }: { bench: BenchHook }) {
+  const feedback = bench.state?.feedback;
   return <section className="card space-y-4 p-5">
     <div className="flex items-center gap-3"><Signal size={26}/><h2 className="text-xl font-extrabold">센서</h2>
       <Help text="감지와 해제 때 입력값 및 변화 횟수가 바뀌는지 확인하세요. 감지 극성을 설정하기 전에는 원시값만 표시합니다."/></div>
@@ -194,5 +200,12 @@ export function SensorTest({ bench }: { bench: BenchHook }) {
       <p className="text-lg font-bold">변화 {s.changes}회</p>
       {s.changed_at && <p className="mt-2 text-lg">{new Date(s.changed_at * 1000).toLocaleTimeString("ko-KR")}</p>}
     </div>)}</div>
+    <div className="rounded-xl bg-panel p-4 space-y-2">
+      <div className="flex items-center gap-3"><h3 className="text-xl font-extrabold">DI3 접촉기 입력</h3><Help text="DI3는 KM2 접촉기 피드백입니다. 문서 기준 입력 0은 접촉기 켜짐, 1은 꺼짐입니다. 실제 벨트 회전을 확인하는 센서는 아닙니다. GPIO 번호는 커넥터의 물리 핀 번호와 다릅니다."/></div>
+      <p className="text-2xl font-black">{feedback?.raw == null ? "입력 미확인" : `입력 ${feedback.raw}`}</p>
+      <p className="text-xl font-bold">{feedback?.active == null ? "접촉기 미확인" : feedback.active ? "접촉기 켜짐" : "접촉기 꺼짐"}</p>
+      <p className="text-lg font-bold">GPIO {feedback?.line ?? bench.state?.pins.feedback ?? "미확인"}, 변화 {feedback?.changes ?? 0}회</p>
+      {feedback?.changed_at && <p className="text-lg">최근 변화 {new Date(feedback.changed_at * 1000).toLocaleTimeString("ko-KR")}</p>}
+    </div>
   </section>;
 }

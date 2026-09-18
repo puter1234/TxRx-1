@@ -152,6 +152,7 @@ def test_led_deadline_and_screen_loss_drop_outputs_without_counts(rig):
     b.run["last_heartbeat"] -= 2
     b._tick()
     assert not b.io.led and b.run is None
+    b.next_output_at["led"] = time.monotonic() - 1
     assert pulse(c, seconds=0.1).status_code == 200
     time.sleep(0.16)
     assert not b.io.led
@@ -213,6 +214,7 @@ def test_motor_permit_loss_feedback_failure_and_led_cross_output(rig):
     c.post("/api/bench/io/disconnect", json={})
     c.post("/api/bench/io/connect", json={})
     b.io.stuck = True
+    b.next_output_at["motor"] = time.monotonic() - 1
     assert pulse(c, "motor", 1).status_code == 200
     b.run["started"] -= 1
     b._tick()
@@ -232,6 +234,39 @@ def test_short_motor_pulse_requires_feedback_before_completion(rig):
     assert b.run is None and not b.io.motor
     assert b.error == "접촉기 가동 응답 없음"
     assert pulse(c).status_code == 409
+
+
+@pytest.mark.parametrize("target", ["motor", "led"])
+def test_output_requires_ten_seconds_after_stop_and_reconnect(rig, target):
+    c, app = rig
+    setup(c)
+    c.post("/api/bench/io/connect", json={})
+    b = app.state.bench
+    assert pulse(c, target, 1).status_code == 200
+    assert c.post("/api/bench/stop", json={}).status_code == 200
+    assert b.run is None and not b.io.motor and not b.io.led
+    assert 9000 < b.status()["cooldown_ms"][target] <= 10000
+    assert pulse(c, target, 1).status_code == 409
+    c.post("/api/bench/io/disconnect", json={})
+    c.post("/api/bench/io/connect", json={})
+    assert pulse(c, target, 1).status_code == 409
+    b.next_output_at[target] = time.monotonic() - 0.01
+    assert pulse(c, target, 1).status_code == 200
+
+
+def test_di3_reports_raw_feedback_and_transitions(rig):
+    c, app = rig
+    c.post("/api/bench/io/connect", json={})
+    b = app.state.bench
+    b.io.raw[2] = 0
+    b._tick()
+    value = c.get("/api/bench").json()["feedback"]
+    assert value["raw"] == 0 and value["active"] is True
+    assert value["line"] == b.config.di_lines[2]
+    assert value["changes"] == 1 and value["changed_at"] is not None
+    c.post("/api/bench/io/disconnect", json={})
+    value = c.get("/api/bench").json()["feedback"]
+    assert value["raw"] is None and value["active"] is None
 
 
 def test_ocr_reports_missing_runtime_package(rig):

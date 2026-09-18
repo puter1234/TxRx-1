@@ -142,6 +142,11 @@ class Bench:
         self.cancel = threading.Event()
         self.generation = 0
         self.run = None
+        # Reconnection must not reset the interval. After a server restart,
+        # previously used outputs wait a full interval before being enabled.
+        used = store.get("bench_outputs_used", [])
+        self.next_output_at = {target: time.monotonic() + (10 if target in used else 0)
+                               for target in ("motor", "led")}
         self.seen = deque(maxlen=256)
         self.transitions = [0, 0, 0]
         self.changed_at = [None, None, None]
@@ -224,6 +229,10 @@ class Bench:
                 raise Conflict("이전 시험 요청입니다. 다시 눌러 주세요.")
             if self.native_busy or self.run:
                 raise Conflict("현재 시험이 끝난 후 다시 시도하세요.")
+            if target not in self.next_output_at:
+                raise ValueError("모터 또는 LED를 선택하세요.")
+            if time.monotonic() < self.next_output_at[target]:
+                raise Conflict("출력 종료 후 10초가 지나야 다시 켤 수 있습니다.")
             blockers = self.output_blockers()
             if blockers:
                 raise Conflict(" ".join(blockers))
@@ -240,6 +249,9 @@ class Bench:
             self.seen.append(request_id)
             # Record before energizing; disk failure must not leave an untracked output.
             self.store.event("BENCH_OUTPUT_START", {"target": target, "seconds": seconds, "id": run["id"]})
+            used = set(self.store.get("bench_outputs_used", []))
+            self.store.put("bench_outputs_used", sorted(used | {target}))
+            self.next_output_at[target] = now + seconds + 10
             self.run = run
             try:
                 self.io.set_output(target, True, allowed=lambda: serial == self.stop_serial)
@@ -264,6 +276,8 @@ class Bench:
             self.generation += 1
             self.cancel.set()
             old, self.run = self.run, None
+            if old:
+                self.next_output_at[old["target"]] = time.monotonic() + 10
             try:
                 if self.io:
                     self.io.stop()
@@ -359,6 +373,12 @@ class Bench:
                        "remaining_ms": max(0, round((self.run["deadline"] - time.monotonic()) * 1000))}
             raw = self.last.get("di_raw")
             return {"connected": self.io is not None and bool(self.last.get("connected")),
+                    "cooldown_ms": {target: max(0, round((deadline - time.monotonic()) * 1000))
+                                    for target, deadline in self.next_output_at.items()},
+                    "feedback": {"channel": 3, "line": self.config.di_lines[2],
+                                 "raw": raw[2] if raw else None,
+                                 "active": self.last.get("km2_on") if raw else None,
+                                 "changes": self.transitions[2], "changed_at": self.changed_at[2]},
                     "native_busy": self.native_busy, "generation": self.generation,
                     "run": run, "error": self.error, "io": dict(self.last),
                     "sensors": [{"channel": i + 1, "line": self.config.di_lines[i],

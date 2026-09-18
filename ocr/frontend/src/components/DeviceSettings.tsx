@@ -4,12 +4,14 @@ import { api } from "../station/shared";
 import { useApp } from "../lib/store";
 import { ended } from "../lib/station";
 import Help from "./Help";
+import BatchCapture from "./BatchCapture";
 import { BenchHeader, CameraView, OutputTests, useBench } from "./DeviceTests";
 
 type Mode = { width: number; height: number; fps: number; pixel_format: string };
 type Control = { name: string; type: string; value: number; min?: number; max?: number; step?: number; flags: string; menu: Record<string, string> };
 const labels: Record<string, string> = {
-  brightness: "밝기", contrast: "대비", saturation: "채도", gain: "게인",
+  brightness: "밝기", contrast: "대비", saturation: "채도", gain: "게인", gain_auto: "자동 게인",
+  hue: "색조", gamma: "감마", zoom_absolute: "줌",
   white_balance_temperature_auto: "자동 화이트밸런스", white_balance_automatic: "자동 화이트밸런스",
   white_balance_temperature: "화이트밸런스 온도", auto_exposure: "노출 방식", exposure_auto: "노출 방식",
   exposure_absolute: "노출값", exposure_time_absolute: "노출값",
@@ -27,6 +29,10 @@ const menuLabel = (value: string) => {
 
 function controlActive(c: Control, controls: Control[], values: Record<string, number>) {
   const auto = (names: string[]) => controls.find(v => names.includes(v.name));
+  if (c.name === "gain") {
+    const mode = auto(["gain_auto"]);
+    if (mode) return (values[mode.name] ?? mode.value) === 0;
+  }
   if (["exposure_absolute", "exposure_time_absolute"].includes(c.name)) {
     const mode = auto(["exposure_auto", "auto_exposure"]);
     if (mode) return /manual|shutter priority/i.test(mode.menu[String(values[mode.name] ?? mode.value)] || "");
@@ -55,7 +61,7 @@ export default function DeviceSettings() {
   const find = async () => {
     const result = await api("/bench/camera/devices");
     setDevices(result.devices || []); setDiscovery(result.error || "");
-    const prior = bench.state?.camera?.saved_profile?.device;
+    const prior = bench.state?.camera?.profile?.device || bench.state?.camera?.saved_profile?.device;
     setDevice(old => old || prior || result.devices?.[0]?.device || "");
     const serial = await api("/bench/ports"); setPorts(serial.ports || []);
   };
@@ -101,14 +107,17 @@ export default function DeviceSettings() {
       <div className="grid gap-5 xl:grid-cols-2">
         <div className="space-y-4"><CameraView connected={bench.state?.camera?.connected === true}/>
           {bench.state?.camera?.width && <p className="text-lg font-bold">실제 영상 {bench.state.camera.width} × {bench.state.camera.height} / {Number(bench.state.camera.mean_received_fps || 0).toFixed(1)} fps</p>}
-          <OutputTests bench={bench} ledOnly/>
+          <BatchCapture bench={bench} locked={locked}/>
+          <details><summary className="cursor-pointer text-lg font-bold">조명 시험</summary><OutputTests bench={bench} ledOnly/></details>
         </div>
         {caps && <div className="space-y-4">
           <label className="block text-lg font-bold">해상도와 촬영 속도
             <select className="field mt-2" value={modeIndex} disabled={disabled} onChange={e => { setModeIndex(Number(e.target.value)); setMessage(""); }}>
               {caps.modes.map((m, i) => <option value={i} key={i}>{m.width} × {m.height} / {m.fps} fps / {m.pixel_format}</option>)}
             </select></label>
-          <div className="grid gap-4 sm:grid-cols-2">{caps.controls.filter(c => labels[c.name]).map(c => {
+          {[true, false].map(primary => <details key={String(primary)} open={primary}>
+          <summary className="mb-3 cursor-pointer text-xl font-bold">{primary ? "노출, 게인, 초점" : "추가 설정"}</summary>
+          <div className="grid gap-4 sm:grid-cols-2">{caps.controls.filter(c => labels[c.name] && (/(exposure|focus|gain)/.test(c.name) === primary)).map(c => {
             const readonly = /read-only|disabled/.test(c.flags);
             // An inactive manual control can be changed with its automatic mode in the same apply.
             const inactive = !controlActive(c, caps.controls, values);
@@ -125,14 +134,15 @@ export default function DeviceSettings() {
                   <button aria-label={label + " 늘리기"} className="btn btn-outline px-4 text-2xl" disabled={disabled || readonly || inactive || value >= (c.max ?? value)} onClick={() => setValues(v => ({ ...v, [c.name]: Math.min(c.max ?? value, value + (c.step || 1)) }))}>+</button>
                 </div>}
             </div>;
-          })}</div>
+          })}</div></details>)}
+          {!caps.controls.some(c => c.name === "gain") && <p className="text-lg font-bold">게인: 카메라 드라이버에서 제어를 제공하지 않습니다.</p>}
           <div className="flex gap-3"><button className="btn btn-outline flex-1" disabled={disabled || !caps.modes.length} onClick={() => apply(false)}>시험 적용</button>
             <button className="btn btn-primary flex-1" disabled={disabled || !caps.modes.length} onClick={() => apply(true)}>적용하고 저장</button></div>
           {message && <p role="status" className="text-lg font-bold">{message}</p>}
         </div>}
       </div>
     </section>
-    {setup && <section className="card space-y-5 p-6">
+    {setup && <details className="card space-y-5 p-6"><summary className="cursor-pointer text-xl font-bold">입출력 및 RFID 설정</summary>
       <div className="flex items-center"><h2 className="text-2xl font-extrabold">입출력 연결</h2><Help text="배선 확인 후 값을 입력하세요. 입력 연결을 종료해야 수정할 수 있습니다. 저장해도 생산 운전 승인은 바뀌지 않습니다."/></div>
       <p className="text-lg font-bold">모터 DO1 ({bench.state?.pins.motor}), LED DO2 ({bench.state?.pins.led}), 접촉기 DI3 ({bench.state?.pins.feedback})</p>
       <fieldset disabled={disabled || !!bench.state?.connected} className="grid gap-5 md:grid-cols-2">
@@ -155,6 +165,6 @@ export default function DeviceSettings() {
       </fieldset>
       <button className="btn btn-primary" disabled={disabled || !!bench.state?.connected} onClick={() => bench.action(async () => { await api("/bench/setup", setup, "PUT"); setMessage("연결 설정을 저장했습니다"); })}>연결 설정 저장</button>
       {message === "연결 설정을 저장했습니다" && <p role="status" className="text-lg font-bold">{message}</p>}
-    </section>}
+    </details>}
   </div>;
 }

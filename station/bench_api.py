@@ -35,9 +35,15 @@ class CameraApply(Model):
     expected_revision: int = Field(ge=0)
 
 
+class BatchCapture(Model):
+    count: int = Field(ge=1, le=500)
+
+
 def install(app, controller, bench, camera, permitted, editable, production_busy, maintenance_active, workers):
     store = controller.store
     captures = store.root / "device-tests"
+    batch = {"active": False, "completed": 0, "target": 0}
+    batch_cancel = threading.Event()
 
     def available(allow_led=False):
         editable()
@@ -77,7 +83,49 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
 
     @app.get("/api/bench")
     def state():
-        return {**bench.status(), "camera": camera.status()}
+        return {**bench.status(), "camera": camera.status(), "batch": dict(batch)}
+
+    @app.post("/api/bench/camera/batch/cancel")
+    def cancel_batch(request: Request):
+        permitted(request)
+        batch_cancel.set()
+        return {"ok": True}
+
+    @app.post("/api/bench/camera/batch")
+    async def batch_capture(body: BatchCapture, request: Request):
+        actor = permitted(request)
+        def execute():
+            from .camera_batch import capture_batch
+            ident = str(uuid.uuid4())
+            captures.mkdir(exist_ok=True)
+            batch_cancel.clear()
+            batch.update(active=True, completed=0, target=body.count)
+            try:
+                result = capture_batch(camera, captures / (ident + ".zip"), body.count,
+                    lambda: batch_cancel.is_set() or bench.cancel.is_set(), controller.check_disk,
+                    lambda completed: batch.update(completed=completed))
+                result.update(id=ident, url="/api/bench/batches/" + ident)
+                store.event("BENCH_CAMERA_BATCH", {**result, "actor": actor})
+                store.put("last_bench_batch", result)
+                return result
+            finally:
+                batch["active"] = False
+        return await native(execute, allow_led=True)
+
+    @app.get("/api/bench/batches/latest")
+    def latest_batch():
+        return store.get("last_bench_batch")
+
+    @app.get("/api/bench/batches/{ident}")
+    def download_batch(ident: str):
+        try:
+            parsed = str(uuid.UUID(ident))
+        except ValueError:
+            raise HTTPException(404)
+        path = captures / (parsed + ".zip")
+        if not path.is_file() or batch["active"]:
+            raise HTTPException(404)
+        return FileResponse(path, media_type="application/zip", filename="camera-" + parsed + ".zip")
 
     @app.get("/api/bench/ports")
     def ports():

@@ -208,7 +208,7 @@ def _capture_process(settings, memory_name, metadata, lock, errors):
 
 
 class UVCStream:
-    def __init__(self, profile):
+    def __init__(self, profile, capture_target=_capture_process, extra_args=()):
         self.profile = profile
         ctx = mp.get_context("spawn")
         self.lock = ctx.Lock()
@@ -218,7 +218,7 @@ class UVCStream:
         self.started = time.monotonic()
         self.error = None
         self.closed = False
-        self.process = ctx.Process(target=_capture_process, args=(profile.model_dump(), self.mem.name, self.metadata, self.lock, self.errors), daemon=True)
+        self.process = ctx.Process(target=capture_target, args=(profile.model_dump(), self.mem.name, self.metadata, self.lock, self.errors, *extra_args), daemon=True)
         try:
             self.process.start()
             deadline = time.monotonic() + 10
@@ -289,6 +289,12 @@ class UVCStream:
 
 
 class CameraManager:
+    def __new__(cls, *args, **kwargs):
+        if cls is CameraManager and platform.system() == "Windows" and kwargs.get("backend") is None and len(args) < 3:
+            from .windows_camera import WindowsCameraManager
+            return object.__new__(WindowsCameraManager)
+        return object.__new__(cls)
+
     def __init__(self, config, store, backend=None, stream_factory=UVCStream):
         self.config, self.store = config, store
         self.backend = backend or V4L2()
