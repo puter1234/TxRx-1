@@ -173,7 +173,7 @@ class Bench:
         # Reconnection must not reset the interval. After a server restart,
         # previously used outputs wait a full interval before being enabled.
         used = store.get("bench_outputs_used", [])
-        self.next_output_at = {target: time.monotonic() + (10 if target in used else 0)
+        self.next_output_at = {target: time.monotonic() + (1 if target in used else 0)
                                for target in ("motor", "led")}
         self.seen = deque(maxlen=256)
         self.transitions = [0, 0, 0]
@@ -274,7 +274,7 @@ class Bench:
             if target not in self.next_output_at:
                 raise ValueError("출력 채널이 올바르지 않습니다.")
             if time.monotonic() < self.next_output_at[target]:
-                raise Conflict("마지막 신호 변경 후 10초가 지나야 끌 수 있습니다. 긴급 상황은 시험 비상정지를 누르세요.")
+                raise Conflict("신호 변경 후 1초 뒤 다시 조작하세요.")
             with self.stop_lock:
                 self.stop_serial += 1
             output_polarity(self.config, self.setup, target)
@@ -286,7 +286,7 @@ class Bench:
             self.generation += 1
             try:
                 self.io.set_output(target, False)
-                self.next_output_at[target] = time.monotonic() + 10
+                self.next_output_at[target] = time.monotonic() + 1
                 self.last = self.io.snapshot()
                 if target == "motor" and self.last.get("km2_on") is not False:
                     self.stop_wait_until = time.monotonic() + 3
@@ -312,18 +312,18 @@ class Bench:
             if target not in self.next_output_at:
                 raise ValueError("모터 또는 LED를 선택하세요.")
             if time.monotonic() < self.next_output_at[target]:
-                raise Conflict("출력 종료 후 10초가 지나야 다시 켤 수 있습니다.")
+                raise Conflict("신호 변경 후 1초 뒤 다시 조작하세요.")
             blockers = self.led_blockers() if target == "led" else self.output_blockers()
             if blockers:
                 raise Conflict(" ".join(blockers))
             snap = self.io.snapshot()
             if not snap.get("connected") or (target == "motor" and not self.document_motor_test() and snap.get("physical_permit") is not True) or snap.get("km2_on") is not False or snap.get("fault") or self.stop_wait_until:
                 raise Conflict("운전 허가와 접촉기 정지 상태를 확인하세요.")
-            if not 10 <= seconds <= 60:
+            if seconds is not None and not 10 <= seconds <= 60:
                 raise ValueError("켜짐 유지 시간은 10초부터 60초까지입니다.")
             self.cancel.clear()
             now = time.monotonic()
-            run = {"id": str(uuid.uuid4()), "target": target, "deadline": now + seconds,
+            run = {"id": str(uuid.uuid4()), "target": target, "deadline": None if seconds is None else now + seconds,
                    "last_heartbeat": now, "started": now, "feedback_seen": False,
                    "feedback_error": None, "feedback_checked": False}
             self.seen.append(request_id)
@@ -331,13 +331,13 @@ class Bench:
             self.store.event("BENCH_OUTPUT_START", {"target": target, "seconds": seconds, "id": run["id"]})
             used = set(self.store.get("bench_outputs_used", []))
             self.store.put("bench_outputs_used", sorted(used | {target}))
-            self.next_output_at[target] = now + 10
+            self.next_output_at[target] = now + 1
             self.run = run
             try:
                 self.io.set_output(target, True, allowed=lambda: serial == self.stop_serial)
                 sent = time.monotonic()
-                run.update(started=sent, deadline=sent + seconds, last_heartbeat=sent)
-                self.next_output_at[target] = sent + 10
+                run.update(started=sent, deadline=None if seconds is None else sent + seconds, last_heartbeat=sent)
+                self.next_output_at[target] = sent + 1
                 self.last = self.io.snapshot()
             except Exception:
                 self.stop("출력 설정 실패")
@@ -381,7 +381,7 @@ class Bench:
             self.cancel.set()
             old, self.run = self.run, None
             if old:
-                self.next_output_at[old["target"]] = time.monotonic() + 10
+                self.next_output_at[old["target"]] = time.monotonic() + 1
             try:
                 if self.io:
                     self.io.stop()
@@ -452,15 +452,14 @@ class Bench:
                         run["feedback_checked"] = True
                         if snap.get("km2_on") is True:
                             run["feedback_seen"] = True
+                            run["feedback_error"] = None
                         elif not run["feedback_error"]:
                             run["feedback_error"] = "접촉기 가동 응답 끊김" if run["feedback_seen"] else "접촉기 가동 응답 없음"
-                        if run["feedback_error"]:
-                            self.error = run["feedback_error"]
                 elif snap.get("km2_on") is not False:
                     self.error = "LED 시험 중 접촉기 켜짐"
                 if self.error:
                     self.stop(self.error)
-                elif now >= run["deadline"] and now - run["started"] >= 10:
+                elif run["deadline"] is not None and now >= run["deadline"]:
                     self.stop("설정한 유지 시간 종료")
 
     def _watch(self):
@@ -479,7 +478,7 @@ class Bench:
                 run = {"id": self.run["id"], "target": self.run["target"],
                        "feedback_checked": self.run.get("feedback_checked", False),
                        "feedback_error": self.run.get("feedback_error"),
-                       "remaining_ms": max(0, round((self.run["deadline"] - time.monotonic()) * 1000))}
+                       "remaining_ms": None if self.run["deadline"] is None else max(0, round((self.run["deadline"] - time.monotonic()) * 1000))}
             raw = self.last.get("di_raw")
             return {"connected": self.io is not None and bool(self.last.get("connected")),
                     "motor_test_max_seconds": 60,

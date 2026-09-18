@@ -221,16 +221,17 @@ def test_motor_permit_loss_feedback_failure_and_led_cross_output(rig):
     assert pulse(c, "motor", 10).status_code == 200
     b.run["started"] -= 11
     b._tick()
-    assert not b.io.motor and b.error == "접촉기 가동 응답 없음"
+    assert b.io.motor and b.error is None
+    assert b.run["feedback_error"] == "접촉기 가동 응답 없음"
 
 
-def test_motor_feedback_failure_stops_at_three_seconds(rig):
+def test_motor_feedback_is_reported_after_three_seconds_without_stopping(rig):
     c, app = rig
     setup(c, feedback_timeout_ms=1000)
     c.post("/api/bench/io/connect", json={})
     b = app.state.bench
     b.io.stuck = True
-    assert pulse(c, "motor", 10).status_code == 200
+    assert pulse(c, "motor", None).status_code == 200
     with b.lock:
         b.run["started"] -= 2.5
         b._tick()
@@ -238,13 +239,16 @@ def test_motor_feedback_failure_stops_at_three_seconds(rig):
         b.run["started"] += 2.5
         b.run["started"] -= 3.1
         b._tick()
-    assert b.run is None and not b.io.motor
-    assert b.error == "접촉기 가동 응답 없음"
+    assert b.run is not None and b.io.motor
+    assert b.error is None and b.run["feedback_error"] == "접촉기 가동 응답 없음"
+    b.io.raw[2] = 0
+    b._tick()
+    assert b.run["feedback_error"] is None and b.run["feedback_seen"]
     assert pulse(c).status_code == 409
 
 
 @pytest.mark.parametrize("target", ["motor", "led"])
-def test_output_requires_ten_seconds_after_stop_and_reconnect(rig, target):
+def test_output_requires_one_second_after_stop_and_reconnect(rig, target):
     c, app = rig
     setup(c)
     c.post("/api/bench/io/connect", json={})
@@ -252,7 +256,7 @@ def test_output_requires_ten_seconds_after_stop_and_reconnect(rig, target):
     assert pulse(c, target, 10).status_code == 200
     assert c.post("/api/bench/stop", json={}).status_code == 200
     assert b.run is None and not b.io.motor and not b.io.led
-    assert 9000 < b.status()["cooldown_ms"][target] <= 10000
+    assert 0 < b.status()["cooldown_ms"][target] <= 1000
     assert pulse(c, target, 10).status_code == 409
     c.post("/api/bench/io/disconnect", json={})
     c.post("/api/bench/io/connect", json={})
@@ -282,7 +286,7 @@ def test_led_off_first_and_led_on_without_motor_commissioning(rig):
     b = app.state.bench
     assert b.setup.do_on_raw is None
     assert b.io.calls == [("led", False)]
-    assert pulse(c).status_code == 409  # Ten-second wait after OFF.
+    assert pulse(c).status_code == 409  # One-second wait after OFF.
     b.next_output_at["led"] = time.monotonic() - 1
     b.io.permit = None
     assert pulse(c).status_code == 200
@@ -310,22 +314,21 @@ def test_document_motor_test_without_extra_permit_has_feedback_and_time_limits(r
     assert b.run["feedback_seen"] is True
     b.io.raw[2] = 1
     b._tick()
-    assert not b.io.motor and b.run is None
-    assert b.error == "접촉기 가동 응답 끊김"
+    assert b.io.motor and b.run is not None
+    assert b.error is None and b.run["feedback_error"] == "접촉기 가동 응답 끊김"
 
 
-def test_document_motor_test_stops_when_start_power_is_absent(rig):
+def test_manual_motor_stays_commanded_on_when_feedback_is_absent(rig):
     c, app = rig
     c.post("/api/bench/io/connect", json={})
     b = app.state.bench
     b.io.stuck = True
-    assert pulse(c, "motor", 10).status_code == 200
+    assert pulse(c, "motor", None).status_code == 200
     with b.lock:
-        b.run["started"] -= 11
-        b.run["deadline"] = time.monotonic() - 1
+        b.run["started"] -= 120
         b._tick()
-    assert not b.io.motor and b.run is None
-    assert b.error == "접촉기 가동 응답 없음"
+    assert b.io.motor and b.run is not None and b.run["deadline"] is None
+    assert b.error is None and b.run["feedback_error"] == "접촉기 가동 응답 없음"
 
 
 def test_real_gpio_led_off_requests_only_do2():
@@ -354,20 +357,32 @@ def test_real_gpio_led_off_requests_only_do2():
     assert all(call[1] == 52 for call in calls if call[0] == "set")
 
 
-def test_running_motor_cannot_normally_stop_before_ten_seconds(rig):
+@pytest.mark.parametrize("target", ["motor", "led"])
+def test_manual_switch_holds_until_off_and_blocks_changes_for_one_second(rig, target):
     c, app = rig
     c.post("/api/bench/io/connect", json={})
     b = app.state.bench
-    assert pulse(c, "motor", 20).status_code == 200
+    assert pulse(c, target, None).status_code == 200
+    assert b.status()["run"]["remaining_ms"] is None
+    calls = b.io.calls[:]
+    assert pulse(c, target, None).status_code == 409
+    assert b.io.calls == calls
+    assert c.post(f"/api/bench/{target}/off", json={}).status_code == 409
+    assert 0 < b.next_output_at[target] - time.monotonic() <= 1
     with b.lock:
-        b.run["started"] -= 3.1
+        b.run["started"] -= 120
         b._tick()
-    assert b.run["feedback_checked"] and b.io.motor
-    assert c.post("/api/bench/motor/off", json={}).status_code == 409
-    assert b.io.motor
-    b.next_output_at["motor"] = time.monotonic() - 0.01
-    assert c.post("/api/bench/motor/off", json={}).status_code == 200
-    assert not b.io.motor and b.run is None
+    assert b.run is not None and getattr(b.io, target)
+    b.next_output_at[target] = time.monotonic() - 0.01
+    assert c.post(f"/api/bench/{target}/off", json={}).status_code == 200
+    assert not getattr(b.io, target) and b.run is None
+    assert pulse(c, target, None).status_code == 409
+    b.next_output_at[target] = time.monotonic() - 0.01
+    assert pulse(c, target, None).status_code == 200
+    with b.lock:
+        b.run["last_heartbeat"] -= 2
+        b._tick()
+    assert not getattr(b.io, target) and b.run is None
 
 
 @pytest.mark.parametrize("target", ["motor", "led"])
@@ -380,7 +395,14 @@ def test_clear_motor_error_allows_retry_without_reconnect_or_cooldown_bypass(rig
     with b.lock:
         b.run["started"] -= 3.1
         b._tick()
-    assert b.error == "접촉기 가동 응답 없음"
+    assert b.run["feedback_error"] == "접촉기 가동 응답 없음"
+    # A separate stop failure remains a blocking error requiring acknowledgement.
+    with b.lock:
+        b.io.fail_off = True
+        b.stop("시험 정지")
+        b.io.fail_off = False
+        b.stop("정지 재시도")
+    assert b.error is not None
     gpio, deadlines, calls = b.io, b.next_output_at.copy(), b.io.calls[:]
     generation = b.generation
     response = c.post("/api/bench/error/clear", json={})

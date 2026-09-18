@@ -15,7 +15,7 @@ from .usb_camera import CameraProfile
 
 class Pulse(Model):
     target: str = Field(pattern="^(motor|led)$")
-    seconds: float = Field(ge=0.1, le=60)
+    seconds: float | None = Field(default=None, ge=0.1, le=60)
     generation: int = Field(ge=0)
     request_id: str = Field(min_length=8, max_length=100)
     issued_at: float
@@ -146,7 +146,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
         permitted(request)
         with bench.lock:
             if bench.run and time.monotonic() < bench.next_output_at[bench.run["target"]]:
-                raise Conflict("신호 변경 후 10초 동안 연결을 유지하세요. 긴급 상황은 시험 비상정지를 누르세요.")
+                raise Conflict("신호 변경 후 1초 뒤 연결을 종료하세요. 긴급 상황은 시험 비상정지를 누르세요.")
         bench.stop("점검 종료")
         return await native(bench.disconnect)
 
