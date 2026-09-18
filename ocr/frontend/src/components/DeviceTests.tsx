@@ -12,7 +12,7 @@ export type BenchState = {
   feedback?: { channel: number; line: number; raw: number | null; active: boolean | null; changes: number; changed_at: number | null };
   batch?: { active: boolean; completed: number; target: number };
   connected: boolean; native_busy: boolean; generation: number; error: string | null;
-  run: { id: string; target: string; remaining_ms: number } | null;
+  run: { id: string; target: string; remaining_ms: number; feedback_checked?: boolean; feedback_error?: string | null } | null;
   io: { km2_on?: boolean; physical_permit?: boolean; motor_requested?: boolean; led_requested?: boolean };
   sensors: { channel: number; line: number; raw: number | null; active: boolean | null; changes: number; changed_at: number | null }[];
   events: { channel: number; raw: number; time: number }[];
@@ -118,7 +118,7 @@ export function CameraView({ connected }: { connected: boolean }) {
 
 export function OutputTests({ bench, ledOnly = false }: { bench: BenchHook; ledOnly?: boolean }) {
   const nav = useNavigate();
-  const [motorTime, setMotorTime] = useState(0.5), [ledTime, setLedTime] = useState(10);
+  const [motorTime, setMotorTime] = useState(10), [ledTime, setLedTime] = useState(10);
   const state = bench.state, session = useApp(s => s.snapshot?.session);
   const locked = !ended(session) || bench.busy || !!state?.native_busy;
   const canOutput = !!state && state.connected && !state.output_blockers.length && !state.run && !locked;
@@ -131,11 +131,13 @@ export function OutputTests({ bench, ledOnly = false }: { bench: BenchHook; ledO
       <div className="flex items-center gap-3"><Play size={26}/><h2 className="text-xl font-extrabold">모터</h2>
         <Help text="DO1로 짧게 가동합니다. 속도는 US-52에서 조절합니다. 접촉기 상태는 실제 벨트 속도와 다릅니다."/></div>
       <p className="text-xl font-bold">{state?.io.km2_on === true ? "접촉기 켜짐" : state?.io.km2_on === false ? "접촉기 꺼짐" : "접촉기 미확인"}</p>
-      <label className="block text-lg font-bold">시험 시간
-        <select className="field mt-2" value={Math.min(motorTime, state?.motor_test_max_seconds ?? 0.5)} onChange={e => setMotorTime(Number(e.target.value))}>
-          {[0.5, 1, 2, 5].filter(n => n <= (state?.motor_test_max_seconds ?? 0.5)).map(n => <option key={n} value={n}>{n}초</option>)}
+      <label className="block text-lg font-bold">켜짐 유지 시간
+        <select className="field mt-2" value={motorTime} onChange={e => setMotorTime(Number(e.target.value))}>
+          {[10, 20, 30, 60].map(n => <option key={n} value={n}>{n}초</option>)}
         </select></label>
-      <button className="btn btn-primary w-full" disabled={!canOutput || motorWait > 0} onClick={() => bench.pulse("motor", Math.min(motorTime, state?.motor_test_max_seconds ?? 0.5))}>{motorWait > 0 ? `${motorWait}초 후 가동 가능` : "모터 시험 가동"}</button>
+      <button className="btn btn-primary w-full" disabled={!canOutput || motorWait > 0} onClick={() => bench.pulse("motor", motorTime)}>{motorWait > 0 ? `${motorWait}초 후 변경 가능` : "모터 켜기"}</button>
+      <button className="btn btn-outline w-full" disabled={motorWait > 0 || locked} onClick={() => bench.action(() => api("/bench/motor/off", {}))}>모터 끄기</button>
+      {state?.run?.target === "motor" && <p className="text-lg font-bold">{state.run.feedback_error ? state.run.feedback_error : state.run.feedback_checked ? "DI3 응답 확인" : "DI3 응답 대기 (3초)"}</p>}
       {!!state?.output_blockers.length && <div className="space-y-2"><p className="text-lg font-bold">가동할 수 없는 이유</p>{state.output_blockers.map(reason => <p className="text-lg" key={reason}>{reason}</p>)}
         <button className="btn btn-outline w-full" onClick={() => nav("/settings?tab=devices#io")}>모터 연결 설정</button></div>}
     </div>}
@@ -145,10 +147,10 @@ export function OutputTests({ bench, ledOnly = false }: { bench: BenchHook; ledO
       <p className="text-xl font-bold">{state?.io.led_requested ? "켜기 명령 중" : "점등 상태는 현장에서 확인"}</p>
       <label className="block text-lg font-bold">점등 시간
         <select className="field mt-2" value={ledTime} onChange={e => setLedTime(Number(e.target.value))}>
-          {[5, 10, 30, 60].map(n => <option key={n} value={n}>{n}초</option>)}
+          {[10, 20, 30, 60].map(n => <option key={n} value={n}>{n}초</option>)}
         </select></label>
       <button className="btn btn-primary w-full" disabled={!canLed || ledWait > 0} onClick={() => { setLedMessage(""); return bench.pulse("led", ledTime); }}>{ledWait > 0 ? `${ledWait}초 후 점등 가능` : "LED 켜기"}</button>
-      <button className="btn btn-outline w-full" onClick={async () => { setLedMessage(""); try { await api("/bench/led/off", {}); setLedMessage("DO2 끄기 신호 전송 완료"); await bench.refresh(); } catch(e) { setLedMessage((e as Error).message); } }}>LED 끄기</button>
+      <button className="btn btn-outline w-full" disabled={ledWait > 0} onClick={async () => { setLedMessage(""); try { await api("/bench/led/off", {}); setLedMessage("DO2 끄기 신호 전송 완료"); await bench.refresh(); } catch(e) { setLedMessage((e as Error).message); } }}>LED 끄기</button>
       {ledMessage && <p role="status" className="text-lg font-bold">{ledMessage}</p>}
     </div>
   </>;
@@ -164,7 +166,7 @@ export function BenchHeader({ bench }: { bench: BenchHook }) {
         onClick={() => bench.action(() => api(state?.connected ? "/bench/io/disconnect" : "/bench/io/connect", {}))}>
         {state?.connected ? "입력 연결 종료" : "입력 연결"}
       </button>
-      <button className="btn btn-danger ml-auto !min-h-[60px] px-8 text-xl" onClick={bench.stop}><Square size={24}/>시험 전체 정지</button>
+      <button className="btn btn-danger ml-auto !min-h-[60px] px-8 text-xl" onClick={bench.stop}><Square size={24}/>시험 비상정지</button>
     </div>
     {state?.run && <p role="status" className="text-2xl font-extrabold text-warn">{state.run.target === "motor" ? "모터 가동" : "LED 점등"} {Math.ceil(state.run.remaining_ms / 1000)}초 남음</p>}
     {locked && <p className="text-xl font-bold">작업 종료 후 시험할 수 있습니다</p>}

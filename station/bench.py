@@ -88,15 +88,21 @@ class BenchGPIO:
         if on and not allowed():
             raise Conflict("정지 요청이 우선합니다.")
         if target not in self.outputs:
-            off = self.Value.ACTIVE if polarity == 0 else self.Value.INACTIVE
+            raw = polarity if on else 1 - polarity
             self.outputs[target] = self.gpiod.request_lines(
                 self.config.gpio_chip, consumer="txrx-output-test",
-                config={line: self.gpiod.LineSettings(direction=self.Direction.OUTPUT, output_value=off)},
+                config={line: self.gpiod.LineSettings(direction=self.Direction.OUTPUT, output_value=self.Value.ACTIVE if raw else self.Value.INACTIVE)},
             )
-        if on and not allowed():
-            raise Conflict("정지 요청이 우선합니다.")
-        raw = polarity if on else 1 - polarity
-        self.outputs[target].set_value(line, self.Value.ACTIVE if raw else self.Value.INACTIVE)
+            if on and not allowed():
+                self.outputs[target].set_value(line, self.Value.ACTIVE if not polarity else self.Value.INACTIVE)
+                raise Conflict("정지 요청이 우선합니다.")
+        else:
+            if getattr(self, target + "_requested") == on:
+                return
+            if on and not allowed():
+                raise Conflict("정지 요청이 우선합니다.")
+            raw = polarity if on else 1 - polarity
+            self.outputs[target].set_value(line, self.Value.ACTIVE if raw else self.Value.INACTIVE)
         if target == "motor":
             self.motor_requested = on
         else:
@@ -238,8 +244,6 @@ class Bench:
             reasons.append("출력 ON 값을 지정하세요.")
         if s.permit_line is None or s.permit_active_raw is None:
             reasons.append("운전 허가 입력을 지정하세요.")
-        if not s.feedback_timeout_ms:
-            reasons.append("접촉기 응답 시간을 지정하세요.")
         if not s.output_wiring_confirmed:
             reasons.append("출력 배선 확인이 필요합니다.")
         if not s.stop_circuit_confirmed:
@@ -265,27 +269,36 @@ class Bench:
             reasons.append(self.error)
         return reasons
 
-    def led_off(self):
-        with self.stop_lock:
-            self.stop_serial += 1
+    def output_off(self, target):
         with self.lock:
-            output_polarity(self.config, self.setup, "led")
+            if target not in self.next_output_at:
+                raise ValueError("출력 채널이 올바르지 않습니다.")
+            if time.monotonic() < self.next_output_at[target]:
+                raise Conflict("마지막 신호 변경 후 10초가 지나야 끌 수 있습니다. 긴급 상황은 시험 비상정지를 누르세요.")
+            with self.stop_lock:
+                self.stop_serial += 1
+            output_polarity(self.config, self.setup, target)
             if not self.io:
                 self.connect()
-            old = self.run if self.run and self.run["target"] == "led" else None
+            old = self.run if self.run and self.run["target"] == target else None
             if old:
                 self.run = None
-            self.next_output_at["led"] = time.monotonic() + 10
             self.generation += 1
             try:
-                self.io.set_output("led", False)
+                self.io.set_output(target, False)
+                self.next_output_at[target] = time.monotonic() + 10
                 self.last = self.io.snapshot()
+                if target == "motor" and self.last.get("km2_on") is not False:
+                    self.stop_wait_until = time.monotonic() + 3
             except Exception as exc:
-                self.error = "LED 끄기 명령 실패: " + str(exc)
+                self.error = "끄기 명령 실패: " + str(exc)
                 raise Conflict(self.error) from exc
-            self.store.put("bench_outputs_used", sorted(set(self.store.get("bench_outputs_used", [])) | {"led"}))
-            self.store.event("BENCH_LED_OFF", {"line": self.config.do_lines[1], "raw": 1 - output_polarity(self.config, self.setup, "led")})
+            self.store.put("bench_outputs_used", sorted(set(self.store.get("bench_outputs_used", [])) | {target}))
+            self.store.event("BENCH_OUTPUT_OFF", {"target": target, "raw": 1 - output_polarity(self.config, self.setup, target)})
             return self.status()
+
+    def led_off(self):
+        return self.output_off("led")
 
     def pulse(self, target, seconds, generation, request_id, issued_at):
         serial = self.stop_serial
@@ -306,22 +319,25 @@ class Bench:
             snap = self.io.snapshot()
             if not snap.get("connected") or (target == "motor" and not self.document_motor_test() and snap.get("physical_permit") is not True) or snap.get("km2_on") is not False or snap.get("fault") or self.stop_wait_until:
                 raise Conflict("운전 허가와 접촉기 정지 상태를 확인하세요.")
-            maximum = (0.5 if self.document_motor_test() else 5) if target == "motor" else 60
-            if not 0.1 <= seconds <= maximum:
-                raise ValueError(f"시험 시간은 0.1초부터 {maximum}초까지입니다.")
+            if not 10 <= seconds <= 60:
+                raise ValueError("켜짐 유지 시간은 10초부터 60초까지입니다.")
             self.cancel.clear()
             now = time.monotonic()
             run = {"id": str(uuid.uuid4()), "target": target, "deadline": now + seconds,
-                   "last_heartbeat": now, "started": now, "feedback_seen": False}
+                   "last_heartbeat": now, "started": now, "feedback_seen": False,
+                   "feedback_error": None, "feedback_checked": False}
             self.seen.append(request_id)
             # Record before energizing; disk failure must not leave an untracked output.
             self.store.event("BENCH_OUTPUT_START", {"target": target, "seconds": seconds, "id": run["id"]})
             used = set(self.store.get("bench_outputs_used", []))
             self.store.put("bench_outputs_used", sorted(used | {target}))
-            self.next_output_at[target] = now + seconds + 10
+            self.next_output_at[target] = now + 10
             self.run = run
             try:
                 self.io.set_output(target, True, allowed=lambda: serial == self.stop_serial)
+                sent = time.monotonic()
+                run.update(started=sent, deadline=sent + seconds, last_heartbeat=sent)
+                self.next_output_at[target] = sent + 10
                 self.last = self.io.snapshot()
             except Exception:
                 self.stop("출력 설정 실패")
@@ -350,7 +366,7 @@ class Bench:
                     self.io.stop()
                     self.last = self.io.snapshot()
                     if old and old["target"] == "motor" and self.last.get("km2_on") is not False:
-                        self.stop_wait_until = time.monotonic() + (self.setup.feedback_timeout_ms or 1000) / 1000
+                        self.stop_wait_until = time.monotonic() + 3
             except Exception as exc:
                 self.error = "출력 OFF 확인 실패: " + str(exc)
             if old:
@@ -408,22 +424,23 @@ class Bench:
                 elif now - run["last_heartbeat"] > 1.5:
                     self.stop("화면 연결 끊김")
                     return
-                elif now >= run["deadline"]:
-                    if run["target"] == "motor" and not (run["feedback_seen"] or snap.get("km2_on") is True):
-                        self.error = "접촉기 가동 응답 없음"
-                    self.stop(self.error or "시험 시간 종료")
-                    return
                 elif run["target"] == "motor":
-                    if snap.get("km2_on") is True:
-                        run["feedback_seen"] = True
-                    elif run["feedback_seen"]:
-                        self.error = "접촉기 가동 응답 끊김"
-                    if now - run["started"] > (self.setup.feedback_timeout_ms or 500) / 1000 and snap.get("km2_on") is not True:
-                        self.error = "접촉기 가동 응답 없음"
+                    # Feedback settling time is independent of output switching.
+                    delay = 3
+                    if now - run["started"] >= delay:
+                        run["feedback_checked"] = True
+                        if snap.get("km2_on") is True:
+                            run["feedback_seen"] = True
+                        elif not run["feedback_error"]:
+                            run["feedback_error"] = "접촉기 가동 응답 끊김" if run["feedback_seen"] else "접촉기 가동 응답 없음"
+                        if run["feedback_error"]:
+                            self.error = run["feedback_error"]
                 elif snap.get("km2_on") is not False:
                     self.error = "LED 시험 중 접촉기 켜짐"
                 if self.error:
                     self.stop(self.error)
+                elif now >= run["deadline"] and now - run["started"] >= 10:
+                    self.stop("설정한 유지 시간 종료")
 
     def _watch(self):
         while not self.closed.wait(0.01):
@@ -439,10 +456,12 @@ class Bench:
             run = None
             if self.run:
                 run = {"id": self.run["id"], "target": self.run["target"],
+                       "feedback_checked": self.run.get("feedback_checked", False),
+                       "feedback_error": self.run.get("feedback_error"),
                        "remaining_ms": max(0, round((self.run["deadline"] - time.monotonic()) * 1000))}
             raw = self.last.get("di_raw")
             return {"connected": self.io is not None and bool(self.last.get("connected")),
-                    "motor_test_max_seconds": 0.5 if self.document_motor_test() else 5,
+                    "motor_test_max_seconds": 60,
                     "cooldown_ms": {target: max(0, round((deadline - time.monotonic()) * 1000))
                                     for target, deadline in self.next_output_at.items()},
                     "feedback": {"channel": 3, "line": self.config.di_lines[2],

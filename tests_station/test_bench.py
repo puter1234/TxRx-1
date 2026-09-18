@@ -117,7 +117,7 @@ def setup(client, **extra):
     return body
 
 
-def pulse(client, target="led", seconds=5, **extra):
+def pulse(client, target="led", seconds=10, **extra):
     body = {"target": target, "seconds": seconds,
             "generation": client.get("/api/bench").json()["generation"],
             "request_id": "test-" + str(uuid.uuid4()), "issued_at": time.time()}
@@ -130,7 +130,7 @@ def test_inputs_independent_of_output_setup_and_production_config(rig):
     assert c.post("/api/bench/io/connect", json={}).status_code == 200
     b = app.state.bench
     assert b.io.calls == []
-    assert pulse(c, "motor", 1).status_code == 422  # Document wiring permits only 0.5-second tests.
+    assert pulse(c, "motor", 1).status_code == 422
     b.io.raw[0] = 0
     b._tick()
     sensor = c.get("/api/bench").json()["sensors"][0]
@@ -153,8 +153,11 @@ def test_led_deadline_and_screen_loss_drop_outputs_without_counts(rig):
     b._tick()
     assert not b.io.led and b.run is None
     b.next_output_at["led"] = time.monotonic() - 1
-    assert pulse(c, seconds=0.1).status_code == 200
-    time.sleep(0.16)
+    assert pulse(c, seconds=10).status_code == 200
+    with b.lock:
+        b.run["started"] -= 11
+        b.run["deadline"] -= 11
+        b._tick()
     assert not b.io.led
     assert c.get("/api/status").json()["session"] is None
     assert c.get("/api/history").json()["inspections"] == []
@@ -206,7 +209,7 @@ def test_motor_permit_loss_feedback_failure_and_led_cross_output(rig):
     setup(c)
     c.post("/api/bench/io/connect", json={})
     b = app.state.bench
-    assert pulse(c, "motor", 1).status_code == 200
+    assert pulse(c, "motor", 10).status_code == 200
     b.io.permit = False
     b._tick()
     assert not b.io.motor and b.error == "운전 허가 끊김"
@@ -215,21 +218,25 @@ def test_motor_permit_loss_feedback_failure_and_led_cross_output(rig):
     c.post("/api/bench/io/connect", json={})
     b.io.stuck = True
     b.next_output_at["motor"] = time.monotonic() - 1
-    assert pulse(c, "motor", 1).status_code == 200
-    b.run["started"] -= 1
+    assert pulse(c, "motor", 10).status_code == 200
+    b.run["started"] -= 11
     b._tick()
     assert not b.io.motor and b.error == "접촉기 가동 응답 없음"
 
 
-def test_short_motor_pulse_requires_feedback_before_completion(rig):
+def test_motor_feedback_failure_stops_at_three_seconds(rig):
     c, app = rig
     setup(c, feedback_timeout_ms=1000)
     c.post("/api/bench/io/connect", json={})
     b = app.state.bench
     b.io.stuck = True
-    assert pulse(c, "motor", 0.5).status_code == 200
+    assert pulse(c, "motor", 10).status_code == 200
     with b.lock:
-        b.run["deadline"] = time.monotonic() - 0.01
+        b.run["started"] -= 2.5
+        b._tick()
+        assert b.run is not None and b.io.motor
+        b.run["started"] += 2.5
+        b.run["started"] -= 3.1
         b._tick()
     assert b.run is None and not b.io.motor
     assert b.error == "접촉기 가동 응답 없음"
@@ -242,16 +249,16 @@ def test_output_requires_ten_seconds_after_stop_and_reconnect(rig, target):
     setup(c)
     c.post("/api/bench/io/connect", json={})
     b = app.state.bench
-    assert pulse(c, target, 1).status_code == 200
+    assert pulse(c, target, 10).status_code == 200
     assert c.post("/api/bench/stop", json={}).status_code == 200
     assert b.run is None and not b.io.motor and not b.io.led
     assert 9000 < b.status()["cooldown_ms"][target] <= 10000
-    assert pulse(c, target, 1).status_code == 409
+    assert pulse(c, target, 10).status_code == 409
     c.post("/api/bench/io/disconnect", json={})
     c.post("/api/bench/io/connect", json={})
-    assert pulse(c, target, 1).status_code == 409
+    assert pulse(c, target, 10).status_code == 409
     b.next_output_at[target] = time.monotonic() - 0.01
-    assert pulse(c, target, 1).status_code == 200
+    assert pulse(c, target, 10).status_code == 200
 
 
 def test_di3_reports_raw_feedback_and_transitions(rig):
@@ -281,6 +288,8 @@ def test_led_off_first_and_led_on_without_motor_commissioning(rig):
     assert pulse(c).status_code == 200
     b._tick()
     assert b.io.led and not b.io.motor
+    assert c.post("/api/bench/led/off", json={}).status_code == 409
+    b.next_output_at["led"] = time.monotonic() - 1
     assert c.post("/api/bench/led/off", json={}).status_code == 200
     assert not b.io.led and b.run is None
     assert pulse(c, "motor", 1).status_code == 422
@@ -293,7 +302,10 @@ def test_document_motor_test_without_extra_permit_has_feedback_and_time_limits(r
     b.io.permit = None
     assert b.status()["output_blockers"] == []
     assert pulse(c, "motor", 1).status_code == 422
-    assert pulse(c, "motor", 0.5).status_code == 200
+    assert pulse(c, "motor", 20).status_code == 200
+    b._tick()
+    assert b.run["feedback_checked"] is False
+    b.run["started"] -= 3.1
     b._tick()
     assert b.run["feedback_seen"] is True
     b.io.raw[2] = 1
@@ -307,8 +319,9 @@ def test_document_motor_test_stops_when_start_power_is_absent(rig):
     c.post("/api/bench/io/connect", json={})
     b = app.state.bench
     b.io.stuck = True
-    assert pulse(c, "motor", 0.5).status_code == 200
+    assert pulse(c, "motor", 10).status_code == 200
     with b.lock:
+        b.run["started"] -= 11
         b.run["deadline"] = time.monotonic() - 1
         b._tick()
     assert not b.io.motor and b.run is None
@@ -336,9 +349,25 @@ def test_real_gpio_led_off_requests_only_do2():
     gpio.Direction = SimpleNamespace(OUTPUT="out")
     gpio.gpiod = SimpleNamespace(request_lines=request, LineSettings=lambda **kw: SimpleNamespace(**kw))
     gpio.set_output("led", False)
-    assert calls == [("request", "/dev/gpiochip0", {52: 0}), ("set", 52, 0)]
+    assert calls == [("request", "/dev/gpiochip0", {52: 0})]
     gpio.stop()
     assert all(call[1] == 52 for call in calls if call[0] == "set")
+
+
+def test_running_motor_cannot_normally_stop_before_ten_seconds(rig):
+    c, app = rig
+    c.post("/api/bench/io/connect", json={})
+    b = app.state.bench
+    assert pulse(c, "motor", 20).status_code == 200
+    with b.lock:
+        b.run["started"] -= 3.1
+        b._tick()
+    assert b.run["feedback_checked"] and b.io.motor
+    assert c.post("/api/bench/motor/off", json={}).status_code == 409
+    assert b.io.motor
+    b.next_output_at["motor"] = time.monotonic() - 0.01
+    assert c.post("/api/bench/motor/off", json={}).status_code == 200
+    assert not b.io.motor and b.run is None
 
 
 def test_ocr_reports_missing_runtime_package(rig):
@@ -357,11 +386,11 @@ def test_unconfirmed_off_remains_blocked(rig):
     setup(c)
     c.post("/api/bench/io/connect", json={})
     b = app.state.bench
-    pulse(c, "motor", 2)
+    pulse(c, "motor", 10)
     b.io.stuck = True
     c.post("/api/bench/stop", json={})
     assert b.stop_wait_until
-    b.stop_wait_until -= 1
+    b.stop_wait_until -= 4
     b._tick()
     assert b.error == "접촉기 정지 응답 없음"
     assert c.post("/api/bench/io/disconnect", json={}).status_code == 409

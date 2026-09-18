@@ -144,6 +144,9 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
     @app.post("/api/bench/io/disconnect")
     async def disconnect(request: Request):
         permitted(request)
+        with bench.lock:
+            if bench.run and time.monotonic() < bench.next_output_at[bench.run["target"]]:
+                raise Conflict("신호 변경 후 10초 동안 연결을 유지하세요. 긴급 상황은 시험 비상정지를 누르세요.")
         bench.stop("점검 종료")
         return await native(bench.disconnect)
 
@@ -169,6 +172,15 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
             if production_busy() or maintenance_active.is_set():
                 raise Conflict("작업 종료 후 LED를 시험하세요.")
             return bench.led_off()
+
+    @app.post("/api/bench/motor/off")
+    def motor_off(request: Request):
+        permitted(request)
+        with controller.lock, bench.lock:
+            editable()
+            if production_busy() or maintenance_active.is_set():
+                raise Conflict("작업 종료 후 모터를 시험하세요.")
+            return bench.output_off("motor")
 
     @app.post("/api/bench/stop")
     def stop(request: Request):
