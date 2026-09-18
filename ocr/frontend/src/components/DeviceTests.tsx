@@ -171,6 +171,11 @@ export function BenchHeader({ bench }: { bench: BenchHook }) {
     {state?.run && <p role="status" className="text-2xl font-extrabold text-warn">{state.run.target === "motor" ? "모터 가동" : "LED 점등"} {Math.ceil(state.run.remaining_ms / 1000)}초 남음</p>}
     {locked && <p className="text-xl font-bold">작업 종료 후 시험할 수 있습니다</p>}
     {(bench.error || state?.error) && <p role="alert" className="text-lg font-bold text-danger">{bench.error || state?.error}</p>}
+    {state?.error && <div className="flex items-center gap-3">
+      <button className="btn btn-primary" disabled={bench.busy || locked || !!state.native_busy || !!state.run}
+        onClick={() => bench.action(() => api("/bench/error/clear", {}))}>오류 해제</button>
+      <Help text="출력 OFF와 DI3 접촉기 꺼짐을 확인한 뒤 오류를 해제합니다. 자동으로 켜지지 않으며, 기존 10초 대기 후 다시 시험할 수 있습니다."/>
+    </div>}
     {!!state?.output_blockers.length && <div className="flex items-center"><span className="text-lg font-bold">출력 시험 준비 필요</span><Help text={state.output_blockers.join(" ")}/></div>}
   </div>;
 }

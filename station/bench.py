@@ -345,6 +345,27 @@ class Bench:
             self.generation += 1
             return self.status()
 
+    def clear_error(self):
+        with self.lock:
+            if self.run or self.native_busy:
+                raise Conflict("진행 중인 시험을 종료하세요.")
+            if not self.io:
+                raise Conflict("입력 연결을 먼저 시작하세요.")
+            snap = self.io.snapshot()
+            if not snap.get("connected") or snap.get("fault"):
+                raise Conflict("입력 연결 상태를 확인하세요.")
+            if snap.get("motor_requested") is not False or snap.get("led_requested") is not False:
+                raise Conflict("모터와 LED 끄기 명령을 먼저 완료하세요.")
+            if snap.get("km2_on") is not False:
+                raise Conflict("DI3 접촉기 꺼짐을 확인하세요.")
+            # Acknowledge only: never switch outputs or shorten the retry interval.
+            self.store.event("BENCH_ERROR_CLEARED", {"error": self.error})
+            self.last = snap
+            self.error = None
+            self.stop_wait_until = None
+            self.generation += 1
+            return self.status()
+
     def heartbeat(self, run_id):
         with self.lock:
             if self.run and self.run["id"] == run_id:

@@ -159,6 +159,13 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
                 raise Conflict("진행 중인 점검이 끝난 후 다시 시도하세요.")
             return bench.pulse(**body.model_dump())
 
+    @app.post("/api/bench/error/clear")
+    def clear_error(request: Request):
+        permitted(request)
+        with controller.lock, bench.lock:
+            available()
+            return bench.clear_error()
+
     @app.post("/api/bench/heartbeat")
     def heartbeat(body: Heartbeat, request: Request):
         permitted(request)

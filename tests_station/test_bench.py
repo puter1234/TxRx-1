@@ -370,6 +370,57 @@ def test_running_motor_cannot_normally_stop_before_ten_seconds(rig):
     assert not b.io.motor and b.run is None
 
 
+@pytest.mark.parametrize("target", ["motor", "led"])
+def test_clear_motor_error_allows_retry_without_reconnect_or_cooldown_bypass(rig, target):
+    c, app = rig
+    c.post("/api/bench/io/connect", json={})
+    b = app.state.bench
+    b.io.stuck = True
+    assert pulse(c, "motor", 10).status_code == 200
+    with b.lock:
+        b.run["started"] -= 3.1
+        b._tick()
+    assert b.error == "접촉기 가동 응답 없음"
+    gpio, deadlines, calls = b.io, b.next_output_at.copy(), b.io.calls[:]
+    generation = b.generation
+    response = c.post("/api/bench/error/clear", json={})
+    assert response.status_code == 200, response.text
+    assert response.json()["error"] is None
+    assert b.io is gpio and b.io.calls == calls
+    assert b.next_output_at == deadlines and b.generation > generation
+    assert not b.io.motor and not b.io.led and b.run is None
+    assert pulse(c, "motor", 10).status_code == 409
+    b.next_output_at[target] = time.monotonic() - 1
+    b.io.stuck = False
+    assert pulse(c, target, 10).status_code == 200
+
+
+@pytest.mark.parametrize("condition", ["disconnected", "feedback_on", "output_on", "fault", "running"])
+def test_clear_error_rejects_unresolved_conditions(rig, condition):
+    c, app = rig
+    b = app.state.bench
+    if condition != "disconnected":
+        c.post("/api/bench/io/connect", json={})
+    if condition == "running":
+        assert pulse(c, "led", 10).status_code == 200
+    with b.lock:
+        if condition == "feedback_on":
+            b.io.raw[2] = 0
+        elif condition == "output_on":
+            b.io.led = True
+        elif condition == "fault":
+            snapshot = b.io.snapshot
+            b.io.snapshot = lambda: {**snapshot(), "fault": "read failure"}
+        if condition != "running":
+            b.error = "시험 오류"
+    response = c.post("/api/bench/error/clear", json={})
+    assert response.status_code == 409, response.text
+    if condition != "running":
+        assert b.error is not None
+    else:
+        assert b.run is not None and b.io.led
+
+
 def test_ocr_reports_missing_runtime_package(rig):
     c, app = rig
     def missing():
