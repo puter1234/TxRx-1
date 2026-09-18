@@ -22,7 +22,7 @@ def main():
         raise SystemExit("Run without sudo. Only setup_jetson_access.py needs sudo.")
     if not importlib.util.find_spec("ensurepip") or not shutil.which("v4l2-ctl"):
         raise SystemExit("Install Ubuntu prerequisites: sudo apt install python3.10-venv v4l-utils")
-    print(verify(ROOT), flush=True)
+    print(verify(ROOT, allow_source=True), flush=True)
     env = ROOT / ".venv-bench"
     marker = env / ".txrx-bench-environment"
     if env.exists() and not marker.is_file():
