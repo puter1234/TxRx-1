@@ -142,9 +142,11 @@ export default function DeviceSettings() {
         </div>}
       </div>
     </section>
-    {setup && <details className="card space-y-5 p-6"><summary className="cursor-pointer text-xl font-bold">입출력 및 RFID 설정</summary>
+    {setup && <details id="io" open={window.location.hash === "#io"} className="card space-y-5 p-6"><summary className="cursor-pointer text-xl font-bold">입출력 및 RFID 설정</summary>
       <div className="flex items-center"><h2 className="text-2xl font-extrabold">입출력 연결</h2><Help text="배선 확인 후 값을 입력하세요. 입력 연결을 종료해야 수정할 수 있습니다. 저장해도 생산 운전 승인은 바뀌지 않습니다."/></div>
       <p className="text-lg font-bold">모터 DO1 ({bench.state?.pins.motor}), LED DO2 ({bench.state?.pins.led}), 접촉기 DI3 ({bench.state?.pins.feedback})</p>
+      {bench.state?.connected && <div className="space-y-3"><p className="text-lg font-bold">입력 연결 중에는 설정이 잠깁니다.</p>
+        <button className="btn btn-primary" disabled={disabled} onClick={() => bench.action(async () => { await api("/bench/io/disconnect", {}); setMessage("입력 연결을 종료했습니다. 설정을 수정하고 저장하세요."); })}>시험 정지하고 설정 수정</button></div>}
       <fieldset disabled={disabled || !!bench.state?.connected} className="grid gap-5 md:grid-cols-2">
         <label className="text-lg font-bold">출력 ON 값<select className="field mt-2" value={setup.do_on_raw ?? ""} onChange={e => field("do_on_raw", e.target.value === "" ? null : Number(e.target.value))}><option value="">미확인</option><option value="0">0</option><option value="1">1</option></select></label>
         <label className="text-lg font-bold">운전 허가 GPIO<input className="field mt-2" type="number" min="0" max="1023" value={setup.permit_line ?? ""} onChange={e => field("permit_line", e.target.value === "" ? null : Number(e.target.value))}/></label>

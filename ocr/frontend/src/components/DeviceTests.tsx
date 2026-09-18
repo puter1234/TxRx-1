@@ -116,6 +116,7 @@ export function CameraView({ connected }: { connected: boolean }) {
 }
 
 export function OutputTests({ bench, ledOnly = false }: { bench: BenchHook; ledOnly?: boolean }) {
+  const nav = useNavigate();
   const [motorTime, setMotorTime] = useState(1), [ledTime, setLedTime] = useState(10);
   const state = bench.state, session = useApp(s => s.snapshot?.session);
   const locked = !ended(session) || bench.busy || !!state?.native_busy;
@@ -134,6 +135,8 @@ export function OutputTests({ bench, ledOnly = false }: { bench: BenchHook; ledO
           {[0.5, 1, 2, 5].map(n => <option key={n} value={n}>{n}초</option>)}
         </select></label>
       <button className="btn btn-primary w-full" disabled={!canOutput || motorWait > 0} onClick={() => bench.pulse("motor", motorTime)}>{motorWait > 0 ? `${motorWait}초 후 가동 가능` : "모터 시험 가동"}</button>
+      {!!state?.output_blockers.length && <div className="space-y-2"><p className="text-lg font-bold">가동할 수 없는 이유</p>{state.output_blockers.map(reason => <p className="text-lg" key={reason}>{reason}</p>)}
+        <button className="btn btn-outline w-full" onClick={() => nav("/settings?tab=devices#io")}>모터 연결 설정</button></div>}
     </div>}
     <div className="card space-y-4 p-5">
       <div className="flex items-center gap-3"><Lightbulb size={26}/><h2 className="text-xl font-extrabold">LED</h2>
