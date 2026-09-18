@@ -130,7 +130,7 @@ def test_inputs_independent_of_output_setup_and_production_config(rig):
     assert c.post("/api/bench/io/connect", json={}).status_code == 200
     b = app.state.bench
     assert b.io.calls == []
-    assert pulse(c).status_code == 409
+    assert pulse(c, "motor", 1).status_code == 409
     b.io.raw[0] = 0
     b._tick()
     sensor = c.get("/api/bench").json()["sensors"][0]
@@ -267,6 +267,49 @@ def test_di3_reports_raw_feedback_and_transitions(rig):
     c.post("/api/bench/io/disconnect", json={})
     value = c.get("/api/bench").json()["feedback"]
     assert value["raw"] is None and value["active"] is None
+
+
+def test_led_off_first_and_led_on_without_motor_commissioning(rig):
+    c, app = rig
+    assert c.post("/api/bench/led/off", json={}).status_code == 200
+    b = app.state.bench
+    assert b.setup.do_on_raw is None
+    assert b.io.calls == [("led", False)]
+    assert pulse(c).status_code == 409  # Ten-second wait after OFF.
+    b.next_output_at["led"] = time.monotonic() - 1
+    b.io.permit = None
+    assert pulse(c).status_code == 200
+    b._tick()
+    assert b.io.led and not b.io.motor
+    assert c.post("/api/bench/led/off", json={}).status_code == 200
+    assert not b.io.led and b.run is None
+    assert pulse(c, "motor", 1).status_code == 409
+
+
+def test_real_gpio_led_off_requests_only_do2():
+    from types import SimpleNamespace
+    from enum import Enum
+    from station.schema import StationConfig
+    class Value(Enum):
+        INACTIVE = 0
+        ACTIVE = 1
+    calls = []
+    class Request:
+        def set_value(self, line, value): calls.append(("set", line, value.value))
+    def request(chip, consumer, config):
+        calls.append(("request", chip, {line: setting.output_value.value for line, setting in config.items()}))
+        return Request()
+    gpio = BenchGPIO.__new__(BenchGPIO)
+    gpio.config = StationConfig()
+    gpio.setup = BenchSetup()
+    gpio.outputs = {}
+    gpio.Value = Value
+    gpio.Direction = SimpleNamespace(OUTPUT="out")
+    gpio.gpiod = SimpleNamespace(request_lines=request, LineSettings=lambda **kw: SimpleNamespace(**kw))
+    gpio.set_output("led", False)
+    assert calls == [("request", "/dev/gpiochip0", {52: 0}), ("set", 52, 0)]
+    gpio.stop()
+    assert all(call[1] == 52 for call in calls if call[0] == "set")
 
 
 def test_ocr_reports_missing_runtime_package(rig):

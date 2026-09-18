@@ -161,6 +161,15 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
         permitted(request)
         return bench.heartbeat(body.run_id)
 
+    @app.post("/api/bench/led/off")
+    def led_off(request: Request):
+        permitted(request)
+        with controller.lock, bench.lock:
+            editable()
+            if production_busy() or maintenance_active.is_set():
+                raise Conflict("작업 종료 후 LED를 시험하세요.")
+            return bench.led_off()
+
     @app.post("/api/bench/stop")
     def stop(request: Request):
         permitted(request)

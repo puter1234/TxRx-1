@@ -15,7 +15,7 @@ export type BenchState = {
   io: { km2_on?: boolean; physical_permit?: boolean; motor_requested?: boolean; led_requested?: boolean };
   sensors: { channel: number; line: number; raw: number | null; active: boolean | null; changes: number; changed_at: number | null }[];
   events: { channel: number; raw: number; time: number }[];
-  output_blockers: string[]; setup: any; pins: { motor: number; led: number; feedback: number; chip: string };
+  output_blockers: string[]; led_blockers?: string[]; setup: any; pins: { motor: number; led: number; feedback: number; chip: string };
   camera: any; rfid: any;
 };
 export function stopTests() {
@@ -120,6 +120,8 @@ export function OutputTests({ bench, ledOnly = false }: { bench: BenchHook; ledO
   const state = bench.state, session = useApp(s => s.snapshot?.session);
   const locked = !ended(session) || bench.busy || !!state?.native_busy;
   const canOutput = !!state && state.connected && !state.output_blockers.length && !state.run && !locked;
+  const canLed = !!state && state.connected && !(state.led_blockers ?? state.output_blockers).length && !state.run && !locked;
+  const [ledMessage, setLedMessage] = useState("");
   const motorWait = Math.ceil((state?.cooldown_ms?.motor || 0) / 1000);
   const ledWait = Math.ceil((state?.cooldown_ms?.led || 0) / 1000);
   return <>
@@ -136,13 +138,14 @@ export function OutputTests({ bench, ledOnly = false }: { bench: BenchHook; ledO
     <div className="card space-y-4 p-5">
       <div className="flex items-center gap-3"><Lightbulb size={26}/><h2 className="text-xl font-extrabold">LED</h2>
         <Help text="DO2로 조명을 켜고 끕니다. 표시값은 출력 명령입니다. 실제 점등은 직접 확인하세요. 화면을 벗어나면 시험 출력을 끕니다."/></div>
-      <p className="text-xl font-bold">{state?.io.led_requested ? "켜기 명령 중" : "끄기 명령"}</p>
+      <p className="text-xl font-bold">{state?.io.led_requested ? "켜기 명령 중" : "점등 상태는 현장에서 확인"}</p>
       <label className="block text-lg font-bold">점등 시간
         <select className="field mt-2" value={ledTime} onChange={e => setLedTime(Number(e.target.value))}>
           {[5, 10, 30, 60].map(n => <option key={n} value={n}>{n}초</option>)}
         </select></label>
-      <button className="btn btn-primary w-full" disabled={!canOutput || ledWait > 0} onClick={() => bench.pulse("led", ledTime)}>{ledWait > 0 ? `${ledWait}초 후 점등 가능` : "LED 켜기"}</button>
-      <button className="btn btn-outline w-full" onClick={bench.stop}>LED 끄기</button>
+      <button className="btn btn-primary w-full" disabled={!canLed || ledWait > 0} onClick={() => { setLedMessage(""); return bench.pulse("led", ledTime); }}>{ledWait > 0 ? `${ledWait}초 후 점등 가능` : "LED 켜기"}</button>
+      <button className="btn btn-outline w-full" onClick={async () => { setLedMessage(""); try { await api("/bench/led/off", {}); setLedMessage("DO2 끄기 신호 전송 완료"); await bench.refresh(); } catch(e) { setLedMessage((e as Error).message); } }}>LED 끄기</button>
+      {ledMessage && <p role="status" className="text-lg font-bold">{ledMessage}</p>}
     </div>
   </>;
 }
