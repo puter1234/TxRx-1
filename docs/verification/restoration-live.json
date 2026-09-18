@@ -1,0 +1,11 @@
+{
+  "server": "http://127.0.0.1:8000",
+  "mode": "REPLAY",
+  "existing_password_preserved": true,
+  "database_integrity": "ok",
+  "work_without_password": true,
+  "settings_password_required": true,
+  "spa_routes_and_assets": true,
+  "browser_opened": false,
+  "hardware_acceptance": "NOT_VERIFIED"
+}

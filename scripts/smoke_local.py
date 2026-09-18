@@ -56,9 +56,18 @@ def run():
                 )
                 checks.append("production_static_assets")
                 assert client.get("/api/status").status_code == 401
+                assert client.post("/api/auth/local", json={}).status_code == 200
+                assert client.get("/api/status").status_code == 200
+                assert (
+                    client.put("/api/settings", json={"save_photos": False}).status_code
+                    == 403
+                )
+                assert client.get("/api/users").status_code == 404
+                checks.append("main_without_account_and_password_only_settings")
+                password = secrets.token_urlsafe(20)
                 assert (
                     client.post(
-                        "/api/auth/setup", json={"password": secrets.token_urlsafe(20)}
+                        "/api/auth/setup", json={"password": password}
                     ).status_code
                     == 200
                 )
@@ -77,6 +86,7 @@ def run():
                 }
                 result = client.post("/api/brands", json={"brand": brand})
                 assert result.status_code == 200, result.text
+                assert client.post("/api/auth/logout", json={}).status_code == 200
                 recipe = {
                     "brand_id": "smoke",
                     "brand_revision": 1,
@@ -94,7 +104,7 @@ def run():
                 )
                 assert result.json()["status"] == "PASS", result.text
                 assert client.get("/api/status").json()["session"]["count"] == 1
-                checks.append("authenticated_rfid_session_counts_once")
+                checks.append("local_rfid_session_counts_once")
                 cookie = "; ".join(
                     f"{key}={value}" for key, value in client.cookies.items()
                 )
@@ -111,12 +121,87 @@ def run():
                         >= message["event_seq"]
                     )
                 checks.append("authenticated_websocket_heartbeat")
+                assert client.post("/api/backup", json={}).status_code == 403
+                assert (
+                    client.post(
+                        "/api/auth/login", json={"password": password}
+                    ).status_code
+                    == 200
+                )
                 backup = client.post("/api/backup", json={})
                 assert backup.status_code == 200, backup.text
                 assert client.get(
                     "/api/backups/" + backup.json()["name"]
                 ).content.startswith(b"SQLite format 3")
                 assert client.get("/api/equipment").json()["io"]["source"] == "REPLAY"
+                assert client.get("/api/camera/frame").status_code == 503
+                assert not client.post("/api/device/test/sensor", json={}).is_success
+                import uuid
+
+                def command(action, reason="제품 상태 확인 완료"):
+                    state = client.get("/api/status").json()
+                    result = client.post(
+                        "/api/commands",
+                        json={
+                            "request_id": str(uuid.uuid4()),
+                            "session_id": state["session"]["id"],
+                            "expected_revision": state["revision"],
+                            "action": action,
+                            "reason": reason,
+                        },
+                    )
+                    assert result.status_code == 200, result.text
+
+                command("release")
+                failed = client.post(
+                    "/api/replay", data={"product_id": "unread-product"}
+                )
+                assert failed.json()["status"] == "FAIL"
+                assert client.get("/api/status").json()["session"]["phase"] == "HOLD"
+                command("reset")
+                assert client.get("/api/status").json()["session"]["phase"] == "READY"
+                command("finish")
+                simple = {
+                    "kind": "simple",
+                    "brand_id": "__simple__",
+                    "brand_revision": 1,
+                    "targets": {},
+                    "channels": [],
+                }
+                assert client.post("/api/sessions", json=simple).status_code == 200
+                from PIL import Image
+                import io
+
+                image = io.BytesIO()
+                Image.new("RGB", (8, 8), "white").save(image, format="PNG")
+                photo = client.post(
+                    "/api/replay",
+                    data={"product_id": "simple-product"},
+                    files={"image": ("sample.png", image.getvalue(), "image/png")},
+                ).json()
+                assert photo["status"] == "PASS"
+                assert client.get(photo["evidence"]["url"]).status_code == 200
+                sid = client.get("/api/status").json()["session"]["id"]
+                rows = client.get("/api/history", params={"session_id": sid}).json()[
+                    "inspections"
+                ]
+                assert len(rows) == 1 and rows[0]["id"] == photo["id"]
+                command("release")
+                assert (
+                    client.post(
+                        "/api/replay",
+                        data={"product_id": "simple-product"},
+                        files={"image": ("sample.png", image.getvalue(), "image/png")},
+                    ).status_code
+                    == 409
+                )
+                assert client.get("/api/status").json()["session"]["count"] == 1
+                checks += [
+                    "missing_read_holds_without_auto_resume",
+                    "simple_count_evidence_and_duplicate_rejection",
+                    "history_filters_actual_session",
+                    "disconnected_camera_returns_unavailable",
+                ]
                 checks += [
                     "backup_download",
                     "equipment_no_fake_hardware",

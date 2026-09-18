@@ -126,8 +126,10 @@ class Controller:
             + self.io.blockers()
             + self.runtime_blockers()
         )
-        if self.session and not {"ocr", "rfid"} <= set(
-            self.session["recipe"]["channels"]
+        if (
+            self.session
+            and self.session["recipe"].get("kind", "condition") != "simple"
+            and not {"ocr", "rfid"} <= set(self.session["recipe"]["channels"])
         ):
             reasons.append(
                 "실물 운전은 OCR과 RFID 대조가 모두 필요합니다. 바코드만 선택 항목입니다."
@@ -162,8 +164,11 @@ class Controller:
                 raise Conflict("현재 작업을 종료한 후 새 작업을 만드세요.")
             self.stop_outputs()
             self.check_disk()
-            brand = Brand.model_validate(self.store.brand(recipe.brand_id))
-            validate_recipe(recipe, brand)
+            if recipe.kind == "simple":
+                brand = Brand(id="simple-count", name="단순 계수")
+            else:
+                brand = Brand.model_validate(self.store.brand(recipe.brand_id))
+                validate_recipe(recipe, brand)
             self.session = {
                 "id": str(uuid.uuid4()),
                 "created_at": utc(),
@@ -180,6 +185,7 @@ class Controller:
                 "adjustments": 0,
                 "active_product": None,
                 "fault": None,
+                "save_pass_photos": self.store.get("save_pass_photos", True),
             }
             self.session["software_version"] = "0.3.0"
             self.session["created_by"] = actor
@@ -536,7 +542,45 @@ class Controller:
                 raise
             finally:
                 self.busy = False
+            if (
+                status == "PASS"
+                and s
+                and not s.get("save_pass_photos", True)
+                and evidence
+            ):
+                self._apply_photo_policy(inspection)
             return copy.deepcopy(inspection)
+
+    def _apply_photo_policy(self, inspection):
+        # Counts are already committed. Cleanup must never turn a committed
+        # product into a failed/retryable inspection.
+        try:
+            ident = str(uuid.UUID(inspection["id"]))
+            directory = (self.store.root / "evidence").resolve()
+            paths = [
+                (directory / (ident + ext)).resolve()
+                for ext in (".png", ".jpg", ".original")
+            ]
+            if any(path.parent != directory for path in paths):
+                raise ValueError("Evidence path outside data directory")
+            updated = copy.deepcopy(inspection)
+            updated["evidence"].pop("url", None)
+            updated["evidence"]["retained"] = False
+            with self.store.transaction() as c:
+                c.execute(
+                    "UPDATE inspections SET body=? WHERE id=?", (dump(updated), ident)
+                )
+                self.store.event("PASS_PHOTO_NOT_RETAINED", {"id": ident}, c)
+            inspection.update(updated)
+            for path in paths:
+                path.unlink(missing_ok=True)
+        except Exception as exc:
+            try:
+                self.store.event(
+                    "PHOTO_POLICY_FAILED", {"id": inspection["id"], "error": str(exc)}
+                )
+            except Exception:
+                pass
 
     def adjust(self, item: Adjustment, actor):
         fingerprint = hashlib.sha256(dump(item.model_dump()).encode()).hexdigest()

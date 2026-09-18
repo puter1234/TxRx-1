@@ -88,7 +88,7 @@ describe("operator flows without browser or screenshots", () => {
       />,
     );
     await user.type(
-      screen.getByLabelText("작업자 조치·보정 사유"),
+      screen.getByLabelText("작업자 조치, 보정 사유"),
       "실측 수량 확인",
     );
     const button = screen.getByRole("button", {
@@ -265,7 +265,6 @@ describe("operator flows without browser or screenshots", () => {
       />,
     );
     await user.click(screen.getByRole("button", { name: "헤지스" }));
-    await user.type(screen.getByLabelText("새 옵션 키"), "season");
     await user.type(screen.getByLabelText("새 옵션 이름"), "시즌");
     await user.click(screen.getByRole("button", { name: "옵션 추가" }));
     expect(screen.getByLabelText("시즌 선택값")).toBeTruthy();
@@ -335,11 +334,11 @@ describe("operator flows without browser or screenshots", () => {
         .disabled,
     ).toBe(true);
     const reset = screen.getByRole("button", {
-      name: "조치 확인 · 오류 해제",
+      name: "조치 확인, 오류 해제",
     }) as HTMLButtonElement;
     expect(reset.disabled).toBe(true);
     await user.type(
-      screen.getByLabelText("작업자 조치·보정 사유"),
+      screen.getByLabelText("작업자 조치, 보정 사유"),
       "제품 확인 후 재검사",
     );
     await user.click(reset);

@@ -104,16 +104,21 @@ class Brand(Model):
 
 
 class Recipe(Model):
+    kind: Literal["condition", "simple"] = "condition"
     brand_id: str
     brand_revision: int = Field(ge=1)
-    targets: dict[str, str] = Field(min_length=1, max_length=30)
-    channels: list[Literal["ocr", "rfid", "barcode"]] = Field(
-        min_length=1, max_length=3
-    )
+    targets: dict[str, str] = Field(max_length=30)
+    channels: list[Literal["ocr", "rfid", "barcode"]] = Field(max_length=3)
     target_count: int | None = Field(default=None, ge=1, le=1000000)
 
     @model_validator(mode="after")
     def channels_unique(self):
+        if self.kind == "condition" and (not self.targets or not self.channels):
+            raise ValueError("조건 계수는 목표값과 검사 항목이 필요합니다.")
+        if self.kind == "simple" and (
+            self.targets or self.channels or self.brand_id != "__simple__"
+        ):
+            raise ValueError("단순 계수에는 검사 조건을 지정할 수 없습니다.")
         if len(self.channels) != len(set(self.channels)):
             raise ValueError("중복 검사 항목")
         return self

@@ -1,6 +1,15 @@
 {
   "additionalProperties": false,
   "properties": {
+    "kind": {
+      "default": "condition",
+      "enum": [
+        "condition",
+        "simple"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
     "brand_id": {
       "title": "Brand Id",
       "type": "string"
@@ -15,7 +24,6 @@
         "type": "string"
       },
       "maxProperties": 30,
-      "minProperties": 1,
       "title": "Targets",
       "type": "object"
     },
@@ -29,7 +37,6 @@
         "type": "string"
       },
       "maxItems": 3,
-      "minItems": 1,
       "title": "Channels",
       "type": "array"
     },

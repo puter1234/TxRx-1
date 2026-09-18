@@ -25,10 +25,10 @@ export default function Users({
   }, []);
   return (
     <div className="card space-y-5 p-6">
-      <h2 className="text-2xl font-extrabold">사용자·권한 관리</h2>
+      <h2 className="text-2xl font-extrabold">사용자, 권한 관리</h2>
       <p>
-        작업자는 운전·조회, 엔지니어는 복구·수량 보정·OCR 영역 설정, 관리자는
-        기준 데이터·계정 관리가 가능합니다.
+        작업자는 운전, 조회, 엔지니어는 복구, 수량 보정, OCR 영역 설정, 관리자는
+        기준 데이터, 계정 관리가 가능합니다.
       </p>
       {error && <p role="alert">{error}</p>}
       {locked && (
@@ -43,7 +43,7 @@ export default function Users({
             key={u.username}
             onClick={() => setDraft({ ...u, password: "", reason: "" })}
           >
-            {u.username} · {u.role} · {u.enabled ? "활성" : "중지"}
+            {u.username}, {u.role}, {u.enabled ? "활성" : "중지"}
           </button>
         ))}
         <button className="btn btn-outline" onClick={() => setDraft(blank)}>

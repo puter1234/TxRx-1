@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { Plus, Trash2, Save, Upload, Download } from "lucide-react";
-import { api, Field, Badge, download } from "./shared";
+import Help from "../components/Help";
+import { api, Field, Badge, download, uuid } from "./shared";
 import type { Action, Brand, Fields, Option, Region } from "./shared";
 
 const empty = (): Brand => ({
-  id: "",
+  id: uuid(),
   name: "",
   revision: 1,
   options: [],
@@ -28,7 +29,7 @@ export default function Config({
 }) {
   const [draft, setDraft] = useState<Brand>(empty()),
     [existing, setExisting] = useState(false),
-    [key, setKey] = useState(""),
+    [key, setKey] = useState("option_" + uuid().slice(0, 8)),
     [label, setLabel] = useState(""),
     [reason, setReason] = useState("");
   const option = (index: number, patch: Partial<Option>) =>
@@ -121,7 +122,7 @@ export default function Config({
   return (
     <div className="grid gap-5 xl:grid-cols-[250px_1fr]">
       <aside className="card space-y-3 self-start p-5">
-        <h2 className="text-xl font-extrabold">메이커 설정</h2>
+        <h2 className="text-xl font-extrabold">브랜드 설정</h2>
         {brands.map((b) => (
           <button
             className={
@@ -146,7 +147,7 @@ export default function Config({
           }}
         >
           <Plus size={20} />
-          메이커 추가
+          브랜드 추가
         </button>
         <label className="btn btn-outline w-full cursor-pointer">
           <Upload size={18} />
@@ -162,29 +163,17 @@ export default function Config({
       <div className="space-y-5">
         {locked && (
           <p role="alert" className="rounded-xl bg-warn-bg p-4 font-bold">
-            현재 작업을 종료한 후 설정을 저장할 수 있습니다. 진행 중인 검사는
-            시작 시점의 설정을 유지합니다.
+            작업 종료 후 설정을 저장하세요.
           </p>
         )}
         <fieldset disabled={role !== "admin"} className="space-y-5">
           <div className="card space-y-5 p-6">
             <div className="flex flex-wrap justify-between gap-3">
               <h2 className="text-2xl font-extrabold">
-                목표 옵션과 메이커 규칙
+                목표 옵션과 브랜드 규칙
               </h2>
-              <Badge>개정 {draft.revision}</Badge>
             </div>
             <div className="grid gap-4 md:grid-cols-2">
-              <Field label="메이커 ID (영문/숫자/-/_)">
-                <input
-                  className="field"
-                  value={draft.id}
-                  disabled={existing}
-                  onChange={(e) =>
-                    setDraft({ ...draft, id: e.target.value.toLowerCase() })
-                  }
-                />
-              </Field>
               <Field label="표시 이름">
                 <input
                   className="field"
@@ -194,17 +183,13 @@ export default function Config({
               </Field>
             </div>
             <h3 className="text-lg font-extrabold">선택 가능한 옵션</h3>
-            <p className="text-ink-500">
-              값은 쉼표 또는 줄바꿈으로 구분합니다. 검사 화면에서 각 옵션의
-              목표값을 선택합니다.
-            </p>
+            <div className="flex justify-end">
+              <Help text="사이즈나 색상의 선택값을 쉼표 또는 줄바꿈으로 나눠 입력합니다. 계수할 때는 등록한 값 중 하나를 선택합니다." />
+            </div>
             {draft.options.map((o, i) => (
               <div className="rounded-xl border border-line p-4" key={o.key}>
                 <div className="mb-3 flex items-center justify-between gap-3">
-                  <strong>
-                    {o.label}{" "}
-                    <span className="text-sm text-ink-500">({o.key})</span>
-                  </strong>
+                  <strong className="text-xl">{o.label}</strong>
                   <button
                     className="btn btn-outline btn-sm"
                     onClick={() =>
@@ -244,13 +229,6 @@ export default function Config({
             ))}
             <div className="flex flex-wrap gap-3">
               <input
-                aria-label="새 옵션 키"
-                className="field !w-44"
-                placeholder="예: size"
-                value={key}
-                onChange={(e) => setKey(e.target.value)}
-              />
-              <input
                 aria-label="새 옵션 이름"
                 className="field !w-44"
                 placeholder="예: 사이즈"
@@ -269,7 +247,7 @@ export default function Config({
                     ...draft,
                     options: [...draft.options, { key, label, values: [""] }],
                   });
-                  setKey("");
+                  setKey("option_" + uuid().slice(0, 8));
                   setLabel("");
                 }}
               >
@@ -279,7 +257,7 @@ export default function Config({
             </div>
           </div>
           <div className="card space-y-5 p-6">
-            <h3 className="text-xl font-extrabold">RFID · 바코드 기준</h3>
+            <h3 className="text-xl font-extrabold">RFID와 바코드 기준</h3>
             <Field label="RFID 해독 방식">
               <select
                 className="field"
@@ -294,19 +272,14 @@ export default function Config({
                   })
                 }
               >
-                <option value="none">미등록 · RFID 검사 시작 차단</option>
-                <option value="hazzys_6bit_crc8">
-                  헤지스 · 제공 표본의 6-bit/CRC 규칙
-                </option>
-                <option value="lookup">메이커별 EPC 기준표</option>
+                <option value="none">미등록</option>
+                <option value="hazzys_6bit_crc8">헤지스 제공 규칙</option>
+                <option value="lookup">브랜드별 EPC 기준표</option>
               </select>
             </Field>
-            {draft.decoder.kind === "hazzys_6bit_crc8" && (
-              <p className="rounded-xl bg-warn-bg p-4">
-                품번·색상·사이즈만 해독합니다. 후행 01·일련번호 의미는
-                미확정이며 CRC는 정품 인증이 아닙니다.
-              </p>
-            )}
+            <div className="flex justify-end">
+              <Help text="제공한 헤지스 규칙으로 품번, 색상, 사이즈를 읽습니다. 다른 브랜드는 해당 브랜드의 기준표를 가져옵니다." />
+            </div>
             <div className="flex flex-wrap gap-3">
               <label className="btn btn-outline cursor-pointer">
                 <Upload size={18} />
@@ -345,12 +318,11 @@ export default function Config({
                 기준표 양식
               </button>
             </div>
-            <p className="text-ink-500">
-              EPC {Object.keys(draft.decoder.records).length}건 · 바코드{" "}
-              {Object.keys(draft.barcode_records).length}건. 바코드는 검사 시작
-              시 선택한 경우에만 필수 판정에 포함됩니다.
+            <p className="text-lg font-bold">
+              RFID 기준 {Object.keys(draft.decoder.records).length}건, 바코드
+              기준 {Object.keys(draft.barcode_records).length}건
             </p>
-            <Field label="규칙 근거·메모">
+            <Field label="메모">
               <textarea
                 className="field min-h-24 py-3"
                 value={draft.note}
@@ -359,13 +331,13 @@ export default function Config({
             </Field>
           </div>
         </fieldset>
-        <div className="card space-y-4 p-6">
-          <h3 className="text-xl font-extrabold">OCR 촬영 영역</h3>
-          <p className="text-ink-500">
-            정지 촬영 이미지에서 각 옵션의 한 줄 영역을 지정합니다. 좌표는
-            이미지 대비 0~1입니다. 기존 PARSeq 인식기를 사용하며 바코드 검출을
-            요구하지 않습니다.
-          </p>
+        <details className="card space-y-4 p-6">
+          <summary className="cursor-pointer text-xl font-extrabold">
+            문자 인식 세부 설정
+          </summary>
+          <div className="flex justify-end">
+            <Help text="사진에서 각 글자를 읽을 위치를 지정하는 기존 연결 설정입니다. 이 방식은 현장 촬영 시험과 사용자 검토 전까지 확정된 검사 방식이 아닙니다." />
+          </div>
           {draft.options.map((o) => {
             const r = region(o.key);
             return (
@@ -449,7 +421,7 @@ export default function Config({
               </div>
             );
           })}
-        </div>
+        </details>
         <Field label="설정 변경 사유">
           <input
             className="field"
@@ -473,7 +445,7 @@ export default function Config({
                 setDraft(updated);
                 setExisting(true);
                 await refresh();
-              }, "메이커 설정을 저장했습니다.")
+              }, "브랜드 설정을 저장했습니다.")
             }
           >
             <Save size={20} />
@@ -501,7 +473,7 @@ export default function Config({
                   )
                     return;
                   await api(
-                    `/brands/${encodeURIComponent(draft.id)}?revision=${draft.revision}&reason=${encodeURIComponent(reason || "메이커 삭제 확인")}`,
+                    `/brands/${encodeURIComponent(draft.id)}?revision=${draft.revision}&reason=${encodeURIComponent(reason || "브랜드 삭제 확인")}`,
                     undefined,
                     "DELETE",
                   );
@@ -512,7 +484,7 @@ export default function Config({
               }
             >
               <Trash2 size={20} />
-              메이커 삭제
+              브랜드 삭제
             </button>
           )}
         </div>

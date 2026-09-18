@@ -117,6 +117,20 @@ class Store:
                 for r in self.conn.execute("SELECT body FROM brands ORDER BY id")
             ]
 
+    def event_page(self, since, until, before=None, limit=200):
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT * FROM events WHERE created_at>=? AND created_at<? "
+                + ("AND seq<? " if before is not None else "")
+                + "ORDER BY seq DESC LIMIT ?",
+                (
+                    (since, until, before, limit)
+                    if before is not None
+                    else (since, until, limit)
+                ),
+            ).fetchall()
+        return [{**dict(r), "body": json.loads(r["body"])} for r in rows]
+
     def last_event_seq(self):
         with self.lock:
             return self.conn.execute(
@@ -268,11 +282,13 @@ class Store:
             ).fetchall()
         return [json.loads(r[0]) for r in rows]
 
-    def inspection_rows(self, limit=100, offset=0):
+    def inspection_rows(self, limit=100, offset=0, session_id=None):
         with self.lock:
             rows = self.conn.execute(
-                "SELECT body FROM inspections ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                (limit, offset),
+                "SELECT body FROM inspections "
+                + ("WHERE session_id=? " if session_id else "")
+                + "ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (session_id, limit, offset) if session_id else (limit, offset),
             ).fetchall()
         return [json.loads(r[0]) for r in rows]
 

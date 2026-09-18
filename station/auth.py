@@ -127,7 +127,7 @@ class Auth:
                 or not hmac.compare_digest(digest, check["digest"])
             ):
                 self.failures.append(now)
-                raise ValueError("사용자 ID 또는 비밀번호를 확인하세요.")
+                raise ValueError("비밀번호를 확인하세요.")
             self.failures.clear()
             token = secrets.token_urlsafe(32)
             self.sessions = {
@@ -139,6 +139,21 @@ class Auth:
                 "expires": now + 12 * 3600,
             }
             self.store.event("LOGIN", {"actor": username, "role": saved["role"]})
+            return token
+
+    def local_session(self):
+        """Local work-screen access, without creating a person or a saved account."""
+        with self.lock:
+            now = time.monotonic()
+            self.sessions = {
+                t: s for t, s in self.sessions.items() if s["expires"] > now
+            }
+            token = secrets.token_urlsafe(32)
+            self.sessions[token] = {
+                "username": "local-station",
+                "role": "operator",
+                "expires": now + 12 * 3600,
+            }
             return token
 
     def profile(self, token):

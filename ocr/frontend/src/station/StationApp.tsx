@@ -10,12 +10,12 @@ import {
   RefreshCw,
 } from "lucide-react";
 import Work from "./Work";
+import Help from "../components/Help";
 import Config from "./Config";
-import Users from "./Users";
 import { api, Field, Badge, ResultCard, PHASE, display } from "./shared";
 import type { Action, Snapshot, Brand, Session, Result } from "./shared";
 
-function Login({
+export function Login({
   configured,
   onLogin,
   action,
@@ -26,50 +26,50 @@ function Login({
 }) {
   const [pin, setPin] = useState(""),
     [again, setAgain] = useState(""),
-    [username, setUsername] = useState("admin");
+    [submitting, setSubmitting] = useState(false);
   return (
     <main className="mx-auto flex min-h-screen max-w-lg items-center p-6">
       <form
         className="card w-full space-y-6 p-8"
         onSubmit={(e) => {
           e.preventDefault();
+          if (submitting) return;
+          setSubmitting(true);
           action(async () => {
-            await api(configured ? "/auth/login" : "/auth/setup", {
-              password: pin,
-              username,
-            });
-            onLogin();
+            try {
+              await api(configured ? "/auth/login" : "/auth/setup", {
+                password: pin,
+              });
+              onLogin();
+            } catch (error) {
+              if (
+                error instanceof Error &&
+                error.message === "사용자 ID 또는 비밀번호를 확인하세요."
+              ) {
+                throw new Error("비밀번호를 확인하세요.");
+              }
+              throw error;
+            } finally {
+              setSubmitting(false);
+            }
           });
         }}
       >
         <div>
           <p className="text-sm font-extrabold tracking-widest text-brand-700">
-            TXRX · LOCAL STATION
+            TXRX
           </p>
           <h1 className="mt-3 text-3xl font-black">
-            {configured ? "작업자 로그인" : "최초 운영 설정"}
+            {configured ? "비밀번호 입력" : "비밀번호 설정"}
           </h1>
-          <p className="mt-3 text-ink-500">
-            이 컴퓨터 안에서 검사와 기록을 처리합니다.
-          </p>
         </div>
-        {configured && (
-          <Field label="사용자 ID">
-            <input
-              className="field"
-              autoComplete="username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-            />
-          </Field>
-        )}
-        <Field
-          label={configured ? "비밀번호" : "새 관리자 비밀번호 (6자 이상)"}
-        >
+        <Field label={configured ? "비밀번호" : "새 비밀번호 (6자 이상)"}>
           <input
             autoComplete={configured ? "current-password" : "new-password"}
             className="field"
             type="password"
+            autoFocus
+            disabled={submitting}
             value={pin}
             onChange={(e) => setPin(e.target.value)}
             maxLength={64}
@@ -80,6 +80,7 @@ function Login({
             <input
               className="field"
               type="password"
+              disabled={submitting}
               value={again}
               onChange={(e) => setAgain(e.target.value)}
             />
@@ -87,9 +88,13 @@ function Login({
         )}
         <button
           className="btn btn-primary w-full"
-          disabled={!pin || (!configured && (pin.length < 6 || pin !== again))}
+          disabled={
+            submitting ||
+            !pin ||
+            (!configured && (pin.length < 6 || pin !== again))
+          }
         >
-          {configured ? "로그인" : "비밀번호 설정 후 시작"}
+          {submitting ? "확인 중…" : configured ? "들어가기" : "설정 후 시작"}
         </button>
       </form>
     </main>
@@ -99,7 +104,7 @@ function Login({
 const BLOCKERS: Record<string, string> = {
   departure_sensor: "배출 감지 센서 역할 지정",
   sensor_clear_ms: "센서 해제 안정 시간 실측",
-  rfid_protocol_verified: "RFID 명령·응답 실기 검증",
+  rfid_protocol_verified: "RFID 명령, 응답 실기 검증",
   settle_ms: "정지 후 촬영 안정화 시간 실측",
   inspection_timeout_ms: "최대 검사 시간 확정",
   feedback_timeout_ms: "접촉기 응답 시간 검증",
@@ -118,7 +123,7 @@ const BLOCKERS: Record<string, string> = {
   single_product_verified: "제품 한 개 검출 확인",
   camera_calibrated: "카메라 촬영 조건 검증",
 };
-function Equipment({ action, role }: { action: Action; role: string }) {
+export function Equipment({ action, role }: { action: Action; role: string }) {
   const [info, setInfo] = useState<any>(null),
     [error, setError] = useState("");
   useEffect(() => {
@@ -184,19 +189,22 @@ function Equipment({ action, role }: { action: Action; role: string }) {
     <div className="space-y-5">
       {error && (
         <p role="alert" className="rounded-xl bg-danger-bg p-4 text-danger">
-          갱신 실패 · 아래 정보는 과거 값입니다. {error}
+          갱신 실패, 아래 정보는 과거 값입니다. {error}
         </p>
       )}
       <div className="card p-6">
-        <h2 className="text-2xl font-extrabold">확인 가능한 장비 정보</h2>
-        <p className="mt-2 text-ink-500">
-          미확인은 정상이나 0을 의미하지 않습니다. 최종 수집:{" "}
+        <div className="flex items-center">
+          <h2 className="text-2xl font-extrabold">장비 정보</h2>
+          <Help text="미확인은 장비에서 읽은 값이 없다는 뜻입니다." />
+        </div>
+        <p className="mt-2 text-lg font-bold">
+          수집 시각{" "}
           {new Date(sys.observed_at * 1000).toLocaleTimeString("ko-KR")}
         </p>
         <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {items.map(([k, v]) => (
             <div className="rounded-xl bg-panel p-4" key={k}>
-              <div className="text-sm font-bold text-ink-500">{k}</div>
+              <div className="text-lg font-bold text-ink-900">{k}</div>
               <div className="mt-2 break-all text-lg font-bold">
                 {display(v)}
               </div>
@@ -205,7 +213,7 @@ function Equipment({ action, role }: { action: Action; role: string }) {
         </div>
       </div>
       <div className="card p-6">
-        <h3 className="text-xl font-extrabold">온도 · 전원 · 팬 센서</h3>
+        <h3 className="text-xl font-extrabold">온도, 전원, 팬 센서</h3>
         {Object.entries(sys.temperatures).map(([k, v]) => (
           <p className="mt-3" key={k}>
             <strong>{k}</strong> {display(v)}
@@ -218,30 +226,27 @@ function Equipment({ action, role }: { action: Action; role: string }) {
         ))}
         {!Object.keys(sys.temperatures).length &&
           !sys.hardware_sensors.length && (
-            <p className="mt-3 text-ink-500">
-              현재 환경에서 읽을 수 있는 온도·전원 센서가 없습니다.
-            </p>
+            <p className="mt-3 text-lg font-bold">센서 정보 미확인</p>
           )}
       </div>
       <div className="card p-6">
         <h3 className="text-xl font-extrabold">최근 검사 지표</h3>
         <p className="mt-3">
-          최근 {info.metrics?.sample_count}건 · 지연 p50/p95/p99(ms):{" "}
+          최근 {info.metrics?.sample_count}건, 지연 p50/p95/p99(ms):{" "}
           {display(info.metrics?.latency_ms)}
         </p>
         <p>{display(info.metrics?.decisions)}</p>
-        <p>채널 요청·판독: {display(info.metrics?.channels)}</p>
+        <p>채널 요청, 판독: {display(info.metrics?.channels)}</p>
         <p>
-          DB {info.metrics?.db_bytes} bytes · WAL {info.metrics?.wal_bytes}{" "}
-          bytes · 중단 복구 {info.metrics?.recovery_restarts}회
+          DB {info.metrics?.db_bytes} bytes, WAL {info.metrics?.wal_bytes}{" "}
+          bytes, 중단 복구 {info.metrics?.recovery_restarts}회
         </p>
       </div>
       <div className="card p-6">
-        <h3 className="text-xl font-extrabold">실물 운전 전 확인할 항목</h3>
-        <p className="mt-2 text-ink-500">
-          실측·제품 검출기·정지 회로·고장 시험을 완료하기 전에는 실물 운전을
-          허용하지 않습니다.
-        </p>
+        <div className="flex items-center">
+          <h3 className="text-xl font-extrabold">실물 운전 전 확인할 항목</h3>
+          <Help text="장비 실측과 아래 시험을 완료한 후 실물 운전을 사용할 수 있습니다." />
+        </div>
         <ul className="mt-4 list-inside list-disc space-y-2">
           {info.blockers.map((b: string) => (
             <li key={b}>{BLOCKERS[b] || b}</li>
@@ -251,28 +256,29 @@ function Equipment({ action, role }: { action: Action; role: string }) {
           <summary className="cursor-pointer font-bold">
             상세 진단 정보 전체 보기
           </summary>
-          <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-all text-xs">
+          <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-all text-base">
             {JSON.stringify(info, null, 2)}
           </pre>
         </details>
         {info.io.fault && <p className="mt-3 text-danger">{info.io.fault}</p>}
       </div>
-      <button
-        disabled={role !== "admin"}
-        className="btn btn-outline"
-        onClick={() =>
-          action(async () => {
-            const b = await api("/backup", {});
-            const a = document.createElement("a");
-            a.href = "/api/backups/" + b.name;
-            a.download = b.name;
-            a.click();
-          }, "백업과 무결성 검사를 완료했습니다.")
-        }
-      >
-        <Download size={20} />
-        검사 기록 DB 백업
-      </button>
+      {role === "admin" && (
+        <button
+          className="btn btn-outline"
+          onClick={() =>
+            action(async () => {
+              const b = await api("/backup", {});
+              const a = document.createElement("a");
+              a.href = "/api/backups/" + b.name;
+              a.download = b.name;
+              a.click();
+            }, "백업과 무결성 검사를 완료했습니다.")
+          }
+        >
+          <Download size={20} />
+          검사 기록 DB 백업
+        </button>
+      )}
     </div>
   );
 }
@@ -327,7 +333,7 @@ function History({ action }: { action: Action }) {
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-extrabold">작업·검사 이력</h2>
+        <h2 className="text-2xl font-extrabold">작업, 검사 이력</h2>
         <button className="btn btn-outline" onClick={() => action(refresh)}>
           <RefreshCw size={20} />
           새로고침
@@ -376,7 +382,7 @@ function History({ action }: { action: Action }) {
           </tbody>
         </table>
         {!history.inspections.length && (
-          <p className="p-8 text-center text-ink-500">
+          <p className="p-8 text-center text-ink-700">
             저장된 검사 결과가 없습니다.
           </p>
         )}
@@ -395,8 +401,8 @@ function History({ action }: { action: Action }) {
             key={s.id}
           >
             <span>
-              {new Date(s.created_at).toLocaleString("ko-KR")} · {s.brand.name}{" "}
-              · {s.mode}
+              {new Date(s.created_at).toLocaleString("ko-KR")}, {s.brand.name} ,{" "}
+              {s.mode}
             </span>
             <strong>
               {s.count}개 / 합격 {s.passed} / 수동 보정 {s.adjustments} /{" "}
@@ -407,7 +413,7 @@ function History({ action }: { action: Action }) {
       </div>
       <div className="card p-6">
         <h3 className="text-xl font-extrabold">
-          최근 변경·정지 기록 (최대 200건)
+          최근 변경, 정지 기록 (최대 200건)
         </h3>
         {events
           .slice()
@@ -415,7 +421,7 @@ function History({ action }: { action: Action }) {
           .map((e) => (
             <details className="mt-3 border-t border-line pt-3" key={e.seq}>
               <summary className="cursor-pointer">
-                {new Date(e.created_at).toLocaleString("ko-KR")} · {e.kind} ·{" "}
+                {new Date(e.created_at).toLocaleString("ko-KR")}, {e.kind} ,{" "}
                 {e.body.actor || "시스템"}
               </summary>
               <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all text-xs">
@@ -574,7 +580,7 @@ export default function StationApp() {
     );
   const tabs = [
     { id: "work", label: "검사 운전", icon: Play },
-    { id: "settings", label: "목표·메이커 설정", icon: Settings },
+    { id: "settings", label: "목표, 메이커 설정", icon: Settings },
     { id: "equipment", label: "장비 정보", icon: Monitor },
     { id: "history", label: "검사 이력", icon: ClipboardList },
   ];
@@ -582,8 +588,6 @@ export default function StationApp() {
   const locked =
     !!state?.session &&
     !["FINISHED", "DONE", "ABORTED"].includes(state.session.phase);
-  if (role === "admin")
-    tabs.push({ id: "users", label: "사용자 관리", icon: Settings });
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-20 border-b border-line bg-white px-5 py-4">
@@ -592,15 +596,12 @@ export default function StationApp() {
             <strong className="text-2xl font-black tracking-tight text-brand-800">
               TXRX
             </strong>
-            <span className="ml-3 font-bold text-ink-500">
-              정지 검사 스테이션
+            <span className="ml-3 font-bold text-ink-700">
+              자동 계수 시스템
             </span>
           </div>
-          <Badge>
-            {auth.user?.username} · {role}
-          </Badge>
           <Badge red={!online}>
-            {online ? "로컬 연결됨" : "연결 끊김 · 갱신 중단"}
+            {online ? "로컬 연결됨" : "연결 끊김, 갱신 중단"}
           </Badge>
           <Badge>
             {state?.mode === "HARDWARE" ? "실물 모드" : "사진 검증 모드"}
@@ -670,8 +671,6 @@ export default function StationApp() {
           />
         ) : tab === "equipment" ? (
           <Equipment action={action} role={role} />
-        ) : tab === "users" && role === "admin" ? (
-          <Users action={action} locked={locked} />
         ) : (
           <History action={action} />
         )}

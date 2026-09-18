@@ -1,0 +1,18 @@
+{
+  "passed": [
+    "production_static_assets",
+    "main_without_account_and_password_only_settings",
+    "local_rfid_session_counts_once",
+    "authenticated_websocket_heartbeat",
+    "missing_read_holds_without_auto_resume",
+    "simple_count_evidence_and_duplicate_rejection",
+    "history_filters_actual_session",
+    "disconnected_camera_returns_unavailable",
+    "backup_download",
+    "equipment_no_fake_hardware",
+    "no_browser_opened"
+  ],
+  "transport": "real HTTP + WebSocket over loopback",
+  "hardware": "NOT_VERIFIED",
+  "browser_opened": false
+}

@@ -5,6 +5,8 @@ import json
 import os
 import re
 import time
+import threading
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlparse
@@ -39,7 +41,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class Password(Model):
     password: str = Field(min_length=1, max_length=64)
-    username: str = Field(default="admin", min_length=1, max_length=40)
+
+
+class PasswordChange(Model):
+    current: str = Field(min_length=1, max_length=64)
+    next: str = Field(min_length=6, max_length=64)
 
 
 class BrandSave(Model):
@@ -48,12 +54,8 @@ class BrandSave(Model):
     reason: str = Field(default="메이커 설정 저장", min_length=3, max_length=500)
 
 
-class UserSave(Model):
-    username: str
-    role: str
-    enabled: bool = True
-    password: str = Field(default="", max_length=64)
-    reason: str = Field(min_length=3, max_length=500)
+class OperatorSettings(Model):
+    save_photos: bool = True
 
 
 def create_app(data_dir: Path | None = None, io=None, vision=None):
@@ -108,6 +110,10 @@ def create_app(data_dir: Path | None = None, io=None, vision=None):
         controller.external_busy = (
             lambda: vision.status().get("busy", False) or hardware_monitor.worker_busy()
         )
+    maintenance_active = threading.Event()
+    maintenance_workers = set()
+    prior_busy = controller.external_busy
+    controller.external_busy = lambda: maintenance_active.is_set() or prior_busy()
 
     async def watch():
         nonlocal hardware_monitor
@@ -199,6 +205,8 @@ def create_app(data_dir: Path | None = None, io=None, vision=None):
             pass
         if hardware_monitor:
             await hardware_monitor.close()
+        if maintenance_workers:
+            await asyncio.gather(*maintenance_workers, return_exceptions=True)
         if camera:
             camera.close()
         io.close()
@@ -303,16 +311,23 @@ def create_app(data_dir: Path | None = None, io=None, vision=None):
     def permitted(request, roles=("operator", "engineer", "admin")):
         profile = auth.profile(request.cookies.get("txrx_session"))
         if not profile or profile["role"] not in roles:
-            raise HTTPException(403, "이 작업에 필요한 권한이 없습니다.")
+            raise HTTPException(403, "환경 설정 비밀번호를 입력하세요.")
         return profile["username"]
 
-    def login_response(pin, username="admin"):
-        token = auth.login(pin, username)
+    def cookie_response(token):
         result = JSONResponse({"ok": True})
         result.set_cookie(
             "txrx_session", token, httponly=True, samesite="strict", max_age=12 * 3600
         )
         return result
+
+    def login_response(pin):
+        return cookie_response(auth.login(pin))
+
+    @app.post("/api/auth/local")
+    def local_entry(request: Request):
+        token = request.cookies.get("txrx_session")
+        return cookie_response(token if auth.valid(token) else auth.local_session())
 
     @app.post("/api/auth/setup")
     def setup(body: Password):
@@ -324,30 +339,21 @@ def create_app(data_dir: Path | None = None, io=None, vision=None):
 
     @app.post("/api/auth/login")
     def login(body: Password):
-        return login_response(body.password, body.username)
+        return login_response(body.password)
 
-    @app.get("/api/users")
-    def users(request: Request):
+    @app.post("/api/auth/password")
+    def change_password(body: PasswordChange, request: Request):
         permitted(request, ("admin",))
-        return auth.users()
-
-    @app.post("/api/users")
-    def save_user(body: UserSave, request: Request):
-        actor = permitted(request, ("admin",))
         editable()
-        return auth.save_user(
-            body.username, body.role, body.enabled, body.password, actor, body.reason
-        )
+        temporary = auth.login(body.current)
+        auth.sessions.pop(temporary, None)
+        auth.save_user("admin", "admin", True, body.next, "admin", "비밀번호 변경")
+        return login_response(body.next)
 
     @app.post("/api/auth/logout")
     def logout(request: Request):
-        controller.stop_outputs()
-        if controller.session:
-            controller.fault("OPERATOR_LOGOUT")
         auth.sessions.pop(request.cookies.get("txrx_session"), None)
-        result = JSONResponse({"ok": True})
-        result.delete_cookie("txrx_session")
-        return result
+        return cookie_response(auth.local_session())
 
     @app.get("/api/health/live")
     def live():
@@ -419,16 +425,8 @@ def create_app(data_dir: Path | None = None, io=None, vision=None):
 
     @app.post("/api/brands")
     def save_brand(body: BrandSave, request: Request):
-        actor = permitted(request, ("admin", "engineer"))
+        actor = permitted(request, ("admin",))
         editable()
-        if auth.profile(request.cookies.get("txrx_session"))["role"] == "engineer":
-            prior = store.brand(body.brand.id)
-            if {k: v for k, v in prior.items() if k not in ("ocr_regions", "note")} != {
-                k: v
-                for k, v in body.brand.model_dump().items()
-                if k not in ("ocr_regions", "note")
-            }:
-                raise HTTPException(403, "제품 master 변경은 관리자 권한이 필요합니다.")
         return store.save_brand(
             body.brand.model_dump(), body.expected_revision, actor, body.reason
         )
@@ -436,6 +434,31 @@ def create_app(data_dir: Path | None = None, io=None, vision=None):
     @app.post("/api/brands/validate")
     def validate_brand(body: Brand):
         return body.model_dump()
+
+    @app.get("/api/settings")
+    def operator_settings():
+        return {
+            "save_photos": store.get("save_pass_photos", True),
+            "data_dir": str(store.root),
+            "count_method": "stopped_product",
+        }
+
+    @app.put("/api/settings")
+    def save_operator_settings(body: OperatorSettings, request: Request):
+        actor = permitted(request, ("admin",))
+        with controller.lock:
+            editable()
+            with store.transaction() as c:
+                c.execute(
+                    "INSERT OR REPLACE INTO meta VALUES(?,?)",
+                    ("save_pass_photos", json.dumps(body.save_photos)),
+                )
+                store.event(
+                    "PHOTO_POLICY_CHANGED",
+                    {"save_photos": body.save_photos, "actor": actor},
+                    c,
+                )
+        return operator_settings()
 
     @app.delete("/api/brands/{ident}")
     def delete_brand(
@@ -454,14 +477,7 @@ def create_app(data_dir: Path | None = None, io=None, vision=None):
 
     @app.post("/api/commands")
     def command(cmd: Command, request: Request):
-        actor = permitted(
-            request,
-            (
-                ("engineer", "admin")
-                if cmd.action in ("reset", "discard")
-                else ("operator", "engineer", "admin")
-            ),
-        )
+        actor = permitted(request)
         return controller.command(cmd, actor)
 
     @app.get("/api/commands/{ident}")
@@ -474,15 +490,15 @@ def create_app(data_dir: Path | None = None, io=None, vision=None):
 
     @app.post("/api/adjustments")
     def adjust(body: Adjustment, request: Request):
-        return controller.adjust(body, permitted(request, ("engineer", "admin")))
+        return controller.adjust(body, permitted(request))
 
     @app.get("/api/history")
-    def history(offset: int = 0):
+    def history(offset: int = 0, session_id: str | None = None):
         if offset < 0:
             raise ValueError("이력 위치는 0 이상이어야 합니다.")
         return {
             "sessions": store.histories(offset=offset),
-            "inspections": store.inspection_rows(offset=offset),
+            "inspections": store.inspection_rows(offset=offset, session_id=session_id),
         }
 
     @app.get("/api/events")
@@ -491,9 +507,19 @@ def create_app(data_dir: Path | None = None, io=None, vision=None):
             "events": store.events(max(0, after_seq) if after_seq is not None else None)
         }
 
+    @app.get("/api/event-history")
+    def event_history(since: datetime, until: datetime, before_seq: int | None = None):
+        if since.tzinfo is None or until.tzinfo is None or since >= until:
+            raise ValueError("조회 시작과 종료 시각을 확인하세요.")
+        # Stored UTC timestamps use isoformat with an explicit +00:00 offset.
+        start = since.astimezone(timezone.utc).isoformat()
+        end = until.astimezone(timezone.utc).isoformat()
+        return {"events": store.event_page(start, end, before_seq)}
+
     @app.get("/api/equipment")
     def equipment():
         return {
+            "data_dir": str(store.root),
             "system": collect(store.root),
             "io": io.snapshot(),
             "vision": vision.status(),
@@ -510,6 +536,82 @@ def create_app(data_dir: Path | None = None, io=None, vision=None):
             + controller.runtime_blockers()
             + hardware_errors,
         }
+
+    @app.get("/api/camera/frame")
+    async def camera_frame():
+        if camera is None or not camera.status()["connected"]:
+            raise HTTPException(503, "카메라가 연결되지 않았습니다.")
+        import cv2
+        from fastapi.responses import Response
+
+        def encode():
+            with camera.lock:
+                frame = camera.frame.copy()
+            ok, data = cv2.imencode(".jpg", frame)
+            if not ok:
+                raise RuntimeError("카메라 영상 변환 실패")
+            return data.tobytes()
+
+        return Response(await asyncio.to_thread(encode), media_type="image/jpeg")
+
+    @app.post("/api/device/test/{kind}")
+    async def device_test(kind: str, request: Request):
+        permitted(request)
+        if kind not in ("sensor", "rfid", "ocr"):
+            raise HTTPException(404)
+        with controller.lock:
+            editable()
+            if controller.external_busy():
+                raise Conflict("진행 중인 점검이 끝난 후 다시 시도하세요.")
+            maintenance_active.set()
+            controller.stop_outputs()
+
+        def check():
+            try:
+                snap = io.snapshot()
+                if config.mode == "HARDWARE" and snap.get("km2_on") is not False:
+                    raise Conflict("장비 정지 상태를 확인할 수 없습니다.")
+                if kind == "sensor":
+                    raw = snap.get("di_raw")
+                    return {
+                        "ok": bool(snap.get("connected") and raw is not None),
+                        "detail": (
+                            "센서 미연결"
+                            if raw is None
+                            else "입력 신호 " + ", ".join(map(str, raw))
+                        ),
+                    }
+                if kind == "rfid":
+                    if config.mode != "HARDWARE" or not snap.get("rfid_ready"):
+                        return {"ok": False, "detail": "RFID 미연결"}
+                    if not config.rfid_window_ms:
+                        raise Conflict("RFID 읽기 시간이 미설정입니다.")
+                    tags = io.inventory(config.rfid_window_ms, threading.Event())
+                    return {
+                        "ok": len(tags) == 1,
+                        "detail": "읽은 태그 " + str(len(tags)) + "개",
+                        "tags": tags,
+                    }
+                vision.load()
+                return {"ok": vision.status()["loaded"], "detail": "OCR 모델 준비 완료"}
+            finally:
+                # An abandoned HTTP request must not clear native-worker ownership.
+                maintenance_active.clear()
+
+        try:
+            future = asyncio.get_running_loop().run_in_executor(None, check)
+        except BaseException:
+            maintenance_active.clear()
+            raise
+        maintenance_workers.add(future)
+
+        def completed(worker):
+            maintenance_workers.discard(worker)
+            if not worker.cancelled():
+                worker.exception()  # Observe errors even after an HTTP disconnect.
+
+        future.add_done_callback(completed)
+        return await asyncio.shield(future)
 
     @app.post("/api/backup")
     def backup(request: Request):
@@ -598,7 +700,9 @@ def create_app(data_dir: Path | None = None, io=None, vision=None):
                     observations.update(result["observations"])
                     failures.extend(result["failures"])
                     inspection["vision"] = result
-            elif any(c in recipe.channels for c in ("ocr", "barcode")):
+            elif recipe.kind == "simple" or any(
+                c in recipe.channels for c in ("ocr", "barcode")
+            ):
                 failures.append({"code": "IMAGE_MISSING"})
         except asyncio.TimeoutError:
             failures.append({"code": "VISION_TIMEOUT"})

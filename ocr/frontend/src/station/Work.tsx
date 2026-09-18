@@ -118,14 +118,14 @@ export default function Work({
         <div className="card p-6">
           <div className="flex flex-wrap justify-between gap-3">
             <div>
-              <p className="text-sm font-bold text-ink-500">현재 작업</p>
+              <p className="text-sm font-bold text-ink-700">현재 작업</p>
               <h2 className="mt-1 text-3xl font-black">
                 {s ? PHASE[s.phase] || s.phase : "작업을 준비하세요"}
               </h2>
             </div>
             <Badge red={["HOLD", "FAULT", "ABORTED"].includes(s?.phase || "")}>
               {state.mode === "REPLAY"
-                ? "사진 검증 · 실물 출력 없음"
+                ? "사진 검증, 실물 출력 없음"
                 : "실물 장비 모드"}
             </Badge>
           </div>
@@ -205,12 +205,12 @@ export default function Work({
                   운전 준비 조건: {state.blockers.join(", ")}
                 </p>
               ) : null}
-              <p className="mt-3 text-sm text-ink-500">
+              <p className="mt-3 text-sm text-ink-700">
                 화면 정지는 소프트웨어 요청이며 현장 비상정지 버튼의 기능과
                 구분됩니다.
               </p>
               <div className="mt-5 border-t border-line pt-5">
-                <Field label="작업자 조치·보정 사유">
+                <Field label="작업자 조치, 보정 사유">
                   <input
                     className="field"
                     value={reason}
@@ -232,7 +232,7 @@ export default function Work({
                       !["HOLD", "FAULT", "PAUSED"].includes(s.phase)
                     }
                   >
-                    조치 확인 · 오류 해제
+                    조치 확인, 오류 해제
                   </button>
                   <button
                     className="btn btn-outline"
@@ -283,7 +283,7 @@ export default function Work({
                   >
                     수량 수동 보정
                   </button>
-                  <span className="text-sm text-ink-500">
+                  <span className="text-sm text-ink-700">
                     누적 보정 {s.adjustments}개
                   </span>
                 </div>
@@ -347,9 +347,9 @@ export default function Work({
                 </label>
               ))}
             </div>
-            <p className="text-sm text-ink-500">
+            <p className="text-sm text-ink-700">
               선택한 항목에서 목표값을 하나라도 못 읽거나 값이 다르면 즉시
-              보류·정지합니다.
+              보류, 정지합니다.
             </p>
             <Field label="목표 수량 (비워 두면 계속 계수)">
               <input
@@ -392,7 +392,7 @@ export default function Work({
         {state.mode === "REPLAY" && !ended && (
           <div className="card space-y-4 p-6">
             <h2 className="text-xl font-extrabold">정지 사진으로 검사 검증</h2>
-            <p className="text-ink-500">
+            <p className="text-ink-700">
               재검사는 같은 제품 식별자를 유지하세요. 사진 검증 결과는 생산
               계수와 구분해 저장합니다.
             </p>
