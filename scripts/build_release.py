@@ -21,6 +21,13 @@ def main():
     if args.output.exists():
         raise SystemExit("Output exists. Choose a new release filename.")
     files = []
+    # Model verification covers upstream dotfiles too; keep every manifest entry.
+    model_files = {
+        "models/parseq/" + name
+        for name in json.loads(
+            (ROOT / "models/parseq/manifest.json").read_text(encoding="utf-8")
+        )
+    }
     for name in (
         "station",
         "ocr",
@@ -37,7 +44,10 @@ def main():
                 x in rel.parts for x in ("node_modules", "__pycache__", ".pytest_cache")
             ):
                 continue
-            if any(x.startswith(".") for x in rel.parts) or path.name in (
+            if (
+                any(x.startswith(".") for x in rel.parts)
+                and rel.as_posix() not in model_files
+            ) or path.name in (
                 "temp.txt",
                 "spec.pdf",
             ):
@@ -85,6 +95,12 @@ def main():
     )
     release["source_commit"] = (
         revision.stdout.strip() if revision.returncode == 0 else None
+    )
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True
+    )
+    release["source_worktree_dirty"] = (
+        bool(status.stdout.strip()) if status.returncode == 0 else None
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(

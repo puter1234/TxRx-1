@@ -2,11 +2,13 @@
 
 현재 상태는 NOT_VERIFIED다. Windows의 모의 I/O 시험 통과는 J4012·접촉기·모터의 실제 동작 보장이 아니다. 현장 수치가 빈 상태에서 `mode`만 HARDWARE로 바꿔도 운전을 허용하지 않는다.
 
+2026년 9월 18일 추가 요구에 따라 모터, LED, 센서와 카메라를 모두 초기 시험에 포함한다. 이동 중 촬영 요구도 접수했으며 구현 변경은 보류했다. 아래 정지 영상 시험은 현재 코드에 대한 기준이다. 후속 공정 변경 시 해당 기준도 개정한다. 상세 범위는 [J4012_B0478_BRINGUP.md](J4012_B0478_BRINGUP.md)를 따른다.
+
 ## 인수인계 v1.1 하드웨어 기준
 
 | 항목 | 기준과 확인 방법 |
 |---|---|
-| 제어기 | reComputer Industrial J4012, 실제 BSP/L4T/JetPack·CSI GStreamer·GPIO 접근 권한 확인 |
+| 제어기 | reComputer Industrial J4012, 실제 BSP/L4T/JetPack, USB V4L2와 GStreamer, GPIO 접근 권한 확인 |
 | 모터 | 1대, US-52 공장 하네스 유지. 제조사 명판·보호 정격 대조 |
 | DI1/DI2 | J2 GPIO line offset 105/144. 검사/배출 역할과 감지 논리는 실측 지정 |
 | DI3 | offset 106, KM2 피드백 raw 0 활성. 명령 상태와 별도로 표시 |
@@ -14,7 +16,7 @@
 | 운전 허가 | 원 배선에 소프트웨어 관측이 충분한지 확인. 추가 입력은 설계 승인 필요. DI4를 임의 배정하지 않음 |
 | RFID | USB-TTL YRM1006, 115200 8N1. 실제 3.3V 신호/전원/공통 기준점 확인. EN 고정 구성에는 자동 EN reset 없음 |
 | 전원 | PS1 24V/16A 및 12V/5V DC/DC, K0 SAFE24/RUN24. 외부 전압·모터 전류는 측정 센서 없으면 미확인 |
-| 카메라 | IMX219 CSI0/1, 실제 지원 해상도·FPS 지정. 4K를 가정하지 않음 |
+| 카메라 | 2026년 9월 18일 사용자 확인: Arducam B0478 USB UVC. 기존 IMX219 CSI 구현과 연결 방식이 다르며 USB 지원은 미구현. 실제 해상도, FPS, 노출과 초점은 J4012_B0478_BRINGUP.md에 따라 시험 |
 
 `config/station.json`은 엔지니어가 서비스 정지 상태에서 편집하고 릴리스/현장 기록에 해시를 보관한다. HMI는 운전 중 실물 핀 배치를 바꾸지 못한다. 설정의 `signed_by`, `evidence_reference`는 실제 시험 책임자와 기록 경로를 입력해야 한다.
 
@@ -39,7 +41,7 @@ def detect_products(frame_bgr):
 
 ## 실측 후 채울 설정
 
-`settle_ms`, `inspection_timeout_ms`, `feedback_timeout_ms`, `release_timeout_ms`, `product_sensor`, `departure_sensor`, `sensor_clear_ms`, `sensor_active_raw`, `do_on_raw`, `permit_line`, `permit_active_raw`, CSI 크기/FPS, RFID window, 검출 모듈/해시, 메이커 OCR 영역/신뢰도.
+`settle_ms`, `inspection_timeout_ms`, `feedback_timeout_ms`, `release_timeout_ms`, `product_sensor`, `departure_sensor`, `sensor_clear_ms`, `sensor_active_raw`, `do_on_raw`, `permit_line`, `permit_active_raw`, B0478 장치 식별자와 실제 크기/FPS 및 노출/초점, RFID window, 검출 모듈/해시, 메이커 OCR 영역/신뢰도. USB 카메라 설정 지원을 먼저 구현해야 하며 현재 CSI 설정값만 바꿔 운전하지 않는다.
 
 고정 소프트웨어 보호 시간은 화면 heartbeat 3초, 명령 TTL 3초, I/O lease 기본 500ms다. 이는 실측된 기계 정지시간이 아니다. 타이머 동작과 false trip 여부도 현장 시험에 포함한다. 카메라 시간은 host 수신 시각이며 센서 노출 시각은 현재 제공되지 않는다.
 

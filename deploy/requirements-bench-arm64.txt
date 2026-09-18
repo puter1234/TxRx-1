@@ -1,0 +1,8 @@
+# Component tests only. AI dependencies are installed separately for JetPack.
+-r ../requirements-station.txt
+numpy==1.26.4
+opencv-python-headless==4.11.0.86
+gpiod==2.5.0
+# Include Python 3.10 dependencies explicitly when preparing on a newer host.
+exceptiongroup>=1
+tomli>=1

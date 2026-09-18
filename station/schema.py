@@ -214,8 +214,8 @@ class StationConfig(Model):
     do_lines: tuple[int, int] = (51, 52)
     rfid_port: str = ""
     camera_source: str = ""
-    camera_width: int | None = Field(default=None, ge=320, le=3280)
-    camera_height: int | None = Field(default=None, ge=240, le=2464)
+    camera_width: int | None = Field(default=None, ge=320, le=8000)
+    camera_height: int | None = Field(default=None, ge=240, le=6000)
     camera_fps: int | None = Field(default=None, ge=1, le=120)
     rfid_window_ms: int | None = Field(default=None, ge=100, le=10000)
     io_lease_ms: int = Field(default=500, ge=100, le=2000)

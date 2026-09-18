@@ -35,6 +35,8 @@ from .storage import Store, utc
 from .telemetry import collect
 from .vision import Vision
 from .runtime import HardwareCycle
+from .bench import Bench
+from .usb_camera import CameraManager
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -58,7 +60,7 @@ class OperatorSettings(Model):
     save_photos: bool = True
 
 
-def create_app(data_dir: Path | None = None, io=None, vision=None):
+def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, bench_factory=Bench):
     store = Store(data_dir or Path(os.environ.get("TXRX_DATA", ROOT / "runtime")))
     config_path = Path(os.environ.get("TXRX_CONFIG", ROOT / "config/station.json"))
     config = (
@@ -66,23 +68,23 @@ def create_app(data_dir: Path | None = None, io=None, vision=None):
         if config_path.exists()
         else StationConfig()
     )
-    camera = None
+    camera = camera or CameraManager(config, store)
     detector = None
     hardware_errors = []
     if io is None:
         if config.mode == "REPLAY":
             io = ReplayIO()
         else:
-            from .hardware import GpioIO, Camera, ProductDetector
+            from .hardware import GpioIO, ProductDetector
 
             try:
                 io = GpioIO(config)
             except Exception as exc:
                 io = UnavailableIO(str(exc))
             try:
-                camera = Camera(config)
+                camera.connect()
             except Exception as exc:
-                hardware_errors.append(str(exc))
+                camera.error = str(exc)
             try:
                 detector = ProductDetector(
                     config.commissioning.detector_module,
@@ -113,7 +115,8 @@ def create_app(data_dir: Path | None = None, io=None, vision=None):
     maintenance_active = threading.Event()
     maintenance_workers = set()
     prior_busy = controller.external_busy
-    controller.external_busy = lambda: maintenance_active.is_set() or prior_busy()
+    bench = bench_factory(config, io, store)
+    controller.external_busy = lambda: maintenance_active.is_set() or prior_busy() or bench.busy()
 
     async def watch():
         nonlocal hardware_monitor
@@ -186,6 +189,7 @@ def create_app(data_dir: Path | None = None, io=None, vision=None):
         task = asyncio.create_task(watch())
         maintenance = asyncio.create_task(maintain())
         yield
+        bench.stop("서비스 종료")
         controller.stop_outputs()
         if controller.session and controller.session["phase"] not in (
             "DONE",
@@ -209,6 +213,7 @@ def create_app(data_dir: Path | None = None, io=None, vision=None):
             await asyncio.gather(*maintenance_workers, return_exceptions=True)
         if camera:
             camera.close()
+        bench.close()
         io.close()
         store.close()
 
@@ -224,6 +229,7 @@ def create_app(data_dir: Path | None = None, io=None, vision=None):
     app.add_middleware(BodyLimit)
     app.state.store, app.state.controller, app.state.auth = store, controller, auth
     app.state.vision = vision
+    app.state.bench, app.state.camera = bench, camera
 
     @app.middleware("http")
     async def local_boundary(request: Request, call_next):
@@ -286,6 +292,7 @@ def create_app(data_dir: Path | None = None, io=None, vision=None):
 
     @app.exception_handler(Exception)
     async def unexpected(request, exc):
+        bench.stop("처리 오류")
         controller.stop_outputs()
         try:
             controller.fault("APPLICATION_ERROR")
@@ -478,6 +485,8 @@ def create_app(data_dir: Path | None = None, io=None, vision=None):
     @app.post("/api/commands")
     def command(cmd: Command, request: Request):
         actor = permitted(request)
+        if cmd.action in ("stop", "pause", "finish"):
+            bench.stop("작업 정지")
         return controller.command(cmd, actor)
 
     @app.get("/api/commands/{ident}")
@@ -545,8 +554,10 @@ def create_app(data_dir: Path | None = None, io=None, vision=None):
         from fastapi.responses import Response
 
         def encode():
-            with camera.lock:
-                frame = camera.frame.copy()
+            frame, _ = camera.read_latest()
+            # Preview is bounded; saved test captures keep the original resolution.
+            if frame.shape[1] > 1280:
+                frame = cv2.resize(frame, (1280, max(1, round(frame.shape[0] * 1280 / frame.shape[1]))))
             ok, data = cv2.imencode(".jpg", frame)
             if not ok:
                 raise RuntimeError("카메라 영상 변환 실패")
@@ -612,6 +623,11 @@ def create_app(data_dir: Path | None = None, io=None, vision=None):
 
         future.add_done_callback(completed)
         return await asyncio.shield(future)
+
+    from .bench_api import install as install_bench
+
+    install_bench(app, controller, bench, camera, permitted, editable, prior_busy,
+                  maintenance_active, maintenance_workers)
 
     @app.post("/api/backup")
     def backup(request: Request):

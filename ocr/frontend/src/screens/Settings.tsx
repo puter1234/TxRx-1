@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Lock, Delete, KeyRound, Download } from "lucide-react";
 import { api } from "../station/shared";
 import Config from "../station/Config";
 import { useApp } from "../lib/store";
 import { ended, refreshBrands, reportError } from "../lib/station";
 import Help from "../components/Help";
+import DeviceSettings from "../components/DeviceSettings";
 
 export function LoginGate({ onOk }: { onOk: () => void }) {
   const [pw, setPw] = useState(""),
@@ -384,9 +385,10 @@ function LogTab() {
   );
 }
 export default function Settings() {
+  const [params] = useSearchParams();
   const nav = useNavigate(),
     [authed, setAuthed] = useState(false),
-    [tab, setTab] = useState("general");
+    [tab, setTab] = useState(params.get("tab") === "devices" ? "devices" : "general");
   const brands = useApp((s) => s.brands),
     snapshot = useApp((s) => s.snapshot);
   useEffect(() => {
@@ -418,6 +420,7 @@ export default function Settings() {
             {[
               { id: "general", label: "일반" },
               { id: "brands", label: "브랜드 관리" },
+              { id: "devices", label: "장비 연결" },
               { id: "logs", label: "작업 로그" },
             ].map((t) => (
               <button
@@ -441,6 +444,8 @@ export default function Settings() {
           <LoginGate onOk={() => setAuthed(true)} />
         ) : tab === "general" ? (
           <GeneralTab />
+        ) : tab === "devices" ? (
+          <DeviceSettings />
         ) : tab === "brands" ? (
           <Config
             brands={brands.map((b) => b.source)}

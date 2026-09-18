@@ -123,7 +123,7 @@ class GpioIO:
                 with self.lock:
                     snap = self._read()
                     if (
-                        self.requested
+                        (self.requested or self.led_requested)
                         and time.monotonic() - self.last_lease
                         > self.config.io_lease_ms / 1000
                     ):
@@ -172,11 +172,14 @@ class GpioIO:
             self.last_lease = time.monotonic()
             self._outputs(on, self.led_requested)
 
-    def light(self, on):
+    def light(self, on, allowed=None):
         with self.lock:
             snap = self._read()
             if on and (self.fault or not snap["physical_permit"]):
                 raise RuntimeError("조명 운전 허가 없음")
+            if on and allowed is not None and not allowed():
+                raise RuntimeError("STOP_REQUEST_HAS_PRIORITY")
+            self.last_lease = time.monotonic()
             self._outputs(self.requested, on)
 
     def reset(self):
@@ -291,6 +294,12 @@ class Camera:
                 self.seq += 1
                 self.received_ns = time.monotonic_ns()
                 self.lock.notify_all()
+
+    def read_latest(self):
+        with self.lock:
+            if self.frame is None or not self.status()["connected"]:
+                raise ValueError("새 카메라 영상이 없습니다.")
+            return self.frame.copy(), {"seq": self.seq, "host_received_ns": self.received_ns, "sensor_timestamp": None}
 
     def after(self, minimum_ns, timeout):
         deadline = time.monotonic() + timeout
