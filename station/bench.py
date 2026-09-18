@@ -31,12 +31,17 @@ class BenchSetup(Model):
         return self
 
 
+def documented_wiring(config):
+    return (config.gpio_chip == "/dev/gpiochip0" and list(config.do_lines) == [51, 52]
+            and list(config.di_lines) == [105, 144, 106])
+
+
 def output_polarity(config, setup, target):
     if setup.do_on_raw is not None:
         return setup.do_on_raw
     # REV 1.1 p13/p15: DO2 -> K2 A2, K2 NO -> LED. Seeed J40:
-    # GPIO 1 energizes the load. This default applies only to that LED channel.
-    if target == "led" and config.gpio_chip == "/dev/gpiochip0" and list(config.do_lines) == [51, 52]:
+    # GPIO 1 energizes the load. Defaults apply only to the documented channels.
+    if target in ("motor", "led") and documented_wiring(config):
         return 1
     raise Conflict("출력 ON 값을 확인하세요.")
 
@@ -223,6 +228,12 @@ class Bench:
         reasons = []
         if not self.io:
             reasons.append("입력 연결을 먼저 시작하세요.")
+        if self.document_motor_test():
+            if self.error:
+                reasons.append(self.error)
+            if self.io and self.last.get("km2_on") is not False:
+                reasons.append("DI3 접촉기 꺼짐을 확인하세요.")
+            return reasons
         if s.do_on_raw is None:
             reasons.append("출력 ON 값을 지정하세요.")
         if s.permit_line is None or s.permit_active_raw is None:
@@ -236,6 +247,11 @@ class Bench:
         if self.error:
             reasons.append(self.error)
         return reasons
+
+    def document_motor_test(self):
+        # REV 1.1: RUN24 is hardwired, DI4 is spare. This bounded manual test
+        # does not assert software observation of START or production readiness.
+        return documented_wiring(self.config) and self.setup.permit_line is None
 
     def led_blockers(self):
         reasons = []
@@ -288,9 +304,9 @@ class Bench:
             if blockers:
                 raise Conflict(" ".join(blockers))
             snap = self.io.snapshot()
-            if not snap.get("connected") or (target == "motor" and snap.get("physical_permit") is not True) or snap.get("km2_on") is not False or snap.get("fault") or self.stop_wait_until:
+            if not snap.get("connected") or (target == "motor" and not self.document_motor_test() and snap.get("physical_permit") is not True) or snap.get("km2_on") is not False or snap.get("fault") or self.stop_wait_until:
                 raise Conflict("운전 허가와 접촉기 정지 상태를 확인하세요.")
-            maximum = 5 if target == "motor" else 60
+            maximum = (0.5 if self.document_motor_test() else 5) if target == "motor" else 60
             if not 0.1 <= seconds <= maximum:
                 raise ValueError(f"시험 시간은 0.1초부터 {maximum}초까지입니다.")
             self.cancel.clear()
@@ -387,7 +403,7 @@ class Bench:
             run = self.run
             if run:
                 now = time.monotonic()
-                if run["target"] == "motor" and snap.get("physical_permit") is not True:
+                if run["target"] == "motor" and not self.document_motor_test() and snap.get("physical_permit") is not True:
                     self.error = "운전 허가 끊김"
                 elif now - run["last_heartbeat"] > 1.5:
                     self.stop("화면 연결 끊김")
@@ -400,7 +416,9 @@ class Bench:
                 elif run["target"] == "motor":
                     if snap.get("km2_on") is True:
                         run["feedback_seen"] = True
-                    if now - run["started"] > self.setup.feedback_timeout_ms / 1000 and snap.get("km2_on") is not True:
+                    elif run["feedback_seen"]:
+                        self.error = "접촉기 가동 응답 끊김"
+                    if now - run["started"] > (self.setup.feedback_timeout_ms or 500) / 1000 and snap.get("km2_on") is not True:
                         self.error = "접촉기 가동 응답 없음"
                 elif snap.get("km2_on") is not False:
                     self.error = "LED 시험 중 접촉기 켜짐"
@@ -424,6 +442,7 @@ class Bench:
                        "remaining_ms": max(0, round((self.run["deadline"] - time.monotonic()) * 1000))}
             raw = self.last.get("di_raw")
             return {"connected": self.io is not None and bool(self.last.get("connected")),
+                    "motor_test_max_seconds": 0.5 if self.document_motor_test() else 5,
                     "cooldown_ms": {target: max(0, round((deadline - time.monotonic()) * 1000))
                                     for target, deadline in self.next_output_at.items()},
                     "feedback": {"channel": 3, "line": self.config.di_lines[2],

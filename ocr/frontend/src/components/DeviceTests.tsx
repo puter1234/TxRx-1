@@ -7,6 +7,7 @@ import { ended } from "../lib/station";
 import Help from "./Help";
 
 export type BenchState = {
+  motor_test_max_seconds?: number;
   cooldown_ms?: { motor: number; led: number };
   feedback?: { channel: number; line: number; raw: number | null; active: boolean | null; changes: number; changed_at: number | null };
   batch?: { active: boolean; completed: number; target: number };
@@ -117,7 +118,7 @@ export function CameraView({ connected }: { connected: boolean }) {
 
 export function OutputTests({ bench, ledOnly = false }: { bench: BenchHook; ledOnly?: boolean }) {
   const nav = useNavigate();
-  const [motorTime, setMotorTime] = useState(1), [ledTime, setLedTime] = useState(10);
+  const [motorTime, setMotorTime] = useState(0.5), [ledTime, setLedTime] = useState(10);
   const state = bench.state, session = useApp(s => s.snapshot?.session);
   const locked = !ended(session) || bench.busy || !!state?.native_busy;
   const canOutput = !!state && state.connected && !state.output_blockers.length && !state.run && !locked;
@@ -131,10 +132,10 @@ export function OutputTests({ bench, ledOnly = false }: { bench: BenchHook; ledO
         <Help text="DO1로 짧게 가동합니다. 속도는 US-52에서 조절합니다. 접촉기 상태는 실제 벨트 속도와 다릅니다."/></div>
       <p className="text-xl font-bold">{state?.io.km2_on === true ? "접촉기 켜짐" : state?.io.km2_on === false ? "접촉기 꺼짐" : "접촉기 미확인"}</p>
       <label className="block text-lg font-bold">시험 시간
-        <select className="field mt-2" value={motorTime} onChange={e => setMotorTime(Number(e.target.value))}>
-          {[0.5, 1, 2, 5].map(n => <option key={n} value={n}>{n}초</option>)}
+        <select className="field mt-2" value={Math.min(motorTime, state?.motor_test_max_seconds ?? 0.5)} onChange={e => setMotorTime(Number(e.target.value))}>
+          {[0.5, 1, 2, 5].filter(n => n <= (state?.motor_test_max_seconds ?? 0.5)).map(n => <option key={n} value={n}>{n}초</option>)}
         </select></label>
-      <button className="btn btn-primary w-full" disabled={!canOutput || motorWait > 0} onClick={() => bench.pulse("motor", motorTime)}>{motorWait > 0 ? `${motorWait}초 후 가동 가능` : "모터 시험 가동"}</button>
+      <button className="btn btn-primary w-full" disabled={!canOutput || motorWait > 0} onClick={() => bench.pulse("motor", Math.min(motorTime, state?.motor_test_max_seconds ?? 0.5))}>{motorWait > 0 ? `${motorWait}초 후 가동 가능` : "모터 시험 가동"}</button>
       {!!state?.output_blockers.length && <div className="space-y-2"><p className="text-lg font-bold">가동할 수 없는 이유</p>{state.output_blockers.map(reason => <p className="text-lg" key={reason}>{reason}</p>)}
         <button className="btn btn-outline w-full" onClick={() => nav("/settings?tab=devices#io")}>모터 연결 설정</button></div>}
     </div>}

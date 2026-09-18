@@ -130,7 +130,7 @@ def test_inputs_independent_of_output_setup_and_production_config(rig):
     assert c.post("/api/bench/io/connect", json={}).status_code == 200
     b = app.state.bench
     assert b.io.calls == []
-    assert pulse(c, "motor", 1).status_code == 409
+    assert pulse(c, "motor", 1).status_code == 422  # Document wiring permits only 0.5-second tests.
     b.io.raw[0] = 0
     b._tick()
     sensor = c.get("/api/bench").json()["sensors"][0]
@@ -283,7 +283,36 @@ def test_led_off_first_and_led_on_without_motor_commissioning(rig):
     assert b.io.led and not b.io.motor
     assert c.post("/api/bench/led/off", json={}).status_code == 200
     assert not b.io.led and b.run is None
-    assert pulse(c, "motor", 1).status_code == 409
+    assert pulse(c, "motor", 1).status_code == 422
+
+
+def test_document_motor_test_without_extra_permit_has_feedback_and_time_limits(rig):
+    c, app = rig
+    c.post("/api/bench/io/connect", json={})
+    b = app.state.bench
+    b.io.permit = None
+    assert b.status()["output_blockers"] == []
+    assert pulse(c, "motor", 1).status_code == 422
+    assert pulse(c, "motor", 0.5).status_code == 200
+    b._tick()
+    assert b.run["feedback_seen"] is True
+    b.io.raw[2] = 1
+    b._tick()
+    assert not b.io.motor and b.run is None
+    assert b.error == "접촉기 가동 응답 끊김"
+
+
+def test_document_motor_test_stops_when_start_power_is_absent(rig):
+    c, app = rig
+    c.post("/api/bench/io/connect", json={})
+    b = app.state.bench
+    b.io.stuck = True
+    assert pulse(c, "motor", 0.5).status_code == 200
+    with b.lock:
+        b.run["deadline"] = time.monotonic() - 1
+        b._tick()
+    assert not b.io.motor and b.run is None
+    assert b.error == "접촉기 가동 응답 없음"
 
 
 def test_real_gpio_led_off_requests_only_do2():
