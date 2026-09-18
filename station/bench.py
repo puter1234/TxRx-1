@@ -169,7 +169,7 @@ class Bench:
         self.native_busy = False
         self.cancel = threading.Event()
         self.generation = 0
-        self.run = None
+        self.runs = {}
         # Reconnection must not reset the interval. After a server restart,
         # previously used outputs wait a full interval before being enabled.
         used = store.get("bench_outputs_used", [])
@@ -183,6 +183,11 @@ class Bench:
         self.closed = threading.Event()
         self.thread = threading.Thread(target=self._watch, daemon=True, name="device-test-watchdog")
         self.thread.start()
+
+    @property
+    def run(self):
+        # Legacy single-output status; simultaneous tests use runs by target.
+        return self.runs.get("motor") or self.runs.get("led")
 
     def busy(self):
         return self.io is not None or self.native_busy or self.run is not None or bool(self.error)
@@ -237,7 +242,7 @@ class Bench:
         if self.document_motor_test():
             if self.error:
                 reasons.append(self.error)
-            if self.io and self.last.get("km2_on") is not False:
+            if self.io and "motor" not in self.runs and self.last.get("km2_on") is not False:
                 reasons.append("DI3 접촉기 꺼짐을 확인하세요.")
             return reasons
         if s.do_on_raw is None:
@@ -280,9 +285,7 @@ class Bench:
             output_polarity(self.config, self.setup, target)
             if not self.io:
                 self.connect()
-            old = self.run if self.run and self.run["target"] == target else None
-            if old:
-                self.run = None
+            self.runs.pop(target, None)
             self.generation += 1
             try:
                 self.io.set_output(target, False)
@@ -307,7 +310,7 @@ class Bench:
                 return self.status()
             if generation != self.generation or abs(time.time() - issued_at) > 3:
                 raise Conflict("이전 시험 요청입니다. 다시 눌러 주세요.")
-            if self.native_busy or self.run:
+            if self.native_busy or target in self.runs:
                 raise Conflict("현재 시험이 끝난 후 다시 시도하세요.")
             if target not in self.next_output_at:
                 raise ValueError("모터 또는 LED를 선택하세요.")
@@ -317,7 +320,8 @@ class Bench:
             if blockers:
                 raise Conflict(" ".join(blockers))
             snap = self.io.snapshot()
-            if not snap.get("connected") or (target == "motor" and not self.document_motor_test() and snap.get("physical_permit") is not True) or snap.get("km2_on") is not False or snap.get("fault") or self.stop_wait_until:
+            motor_running = "motor" in self.runs
+            if not snap.get("connected") or (target == "motor" and not self.document_motor_test() and snap.get("physical_permit") is not True) or (snap.get("km2_on") is not False and not (target == "led" and motor_running)) or snap.get("fault") or self.stop_wait_until:
                 raise Conflict("운전 허가와 접촉기 정지 상태를 확인하세요.")
             if seconds is not None and not 10 <= seconds <= 60:
                 raise ValueError("켜짐 유지 시간은 10초부터 60초까지입니다.")
@@ -332,7 +336,7 @@ class Bench:
             used = set(self.store.get("bench_outputs_used", []))
             self.store.put("bench_outputs_used", sorted(used | {target}))
             self.next_output_at[target] = now + 1
-            self.run = run
+            self.runs[target] = run
             try:
                 self.io.set_output(target, True, allowed=lambda: serial == self.stop_serial)
                 sent = time.monotonic()
@@ -368,9 +372,11 @@ class Bench:
 
     def heartbeat(self, run_id):
         with self.lock:
-            if self.run and self.run["id"] == run_id:
-                self.run["last_heartbeat"] = time.monotonic()
-            return {"active": bool(self.run and self.run["id"] == run_id)}
+            for run in self.runs.values():
+                if run["id"] == run_id:
+                    run["last_heartbeat"] = time.monotonic()
+                    return {"active": True}
+            return {"active": False}
 
     def stop(self, reason="정지"):
         # Invalidate pending ON before waiting for a database operation or GPIO lock.
@@ -379,20 +385,20 @@ class Bench:
         with self.lock:
             self.generation += 1
             self.cancel.set()
-            old, self.run = self.run, None
-            if old:
-                self.next_output_at[old["target"]] = time.monotonic() + 1
+            old, self.runs = self.runs, {}
+            for target in old:
+                self.next_output_at[target] = time.monotonic() + 1
             try:
                 if self.io:
                     self.io.stop()
                     self.last = self.io.snapshot()
-                    if old and old["target"] == "motor" and self.last.get("km2_on") is not False:
+                    if "motor" in old and self.last.get("km2_on") is not False:
                         self.stop_wait_until = time.monotonic() + 3
             except Exception as exc:
                 self.error = "출력 OFF 확인 실패: " + str(exc)
-            if old:
+            for run in old.values():
                 try:
-                    self.store.event("BENCH_OUTPUT_STOP", {"id": old["id"], "reason": reason, "error": self.error})
+                    self.store.event("BENCH_OUTPUT_STOP", {"id": run["id"], "reason": reason, "error": self.error})
                 except Exception:
                     self.error = self.error or "시험 기록 저장 실패"
             return self.status()
@@ -437,8 +443,7 @@ class Bench:
                 elif time.monotonic() >= self.stop_wait_until:
                     self.error = "접촉기 정지 응답 없음"
                     self.stop(self.error)
-            run = self.run
-            if run:
+            for run in list(self.runs.values()):
                 now = time.monotonic()
                 if run["target"] == "motor" and not self.document_motor_test() and snap.get("physical_permit") is not True:
                     self.error = "운전 허가 끊김"
@@ -455,12 +460,14 @@ class Bench:
                             run["feedback_error"] = None
                         elif not run["feedback_error"]:
                             run["feedback_error"] = "접촉기 가동 응답 끊김" if run["feedback_seen"] else "접촉기 가동 응답 없음"
-                elif snap.get("km2_on") is not False:
+                elif "motor" not in self.runs and not self.stop_wait_until and snap.get("km2_on") is not False:
                     self.error = "LED 시험 중 접촉기 켜짐"
                 if self.error:
                     self.stop(self.error)
+                    return
                 elif run["deadline"] is not None and now >= run["deadline"]:
-                    self.stop("설정한 유지 시간 종료")
+                    self.output_off(run["target"])
+                    return
 
     def _watch(self):
         while not self.closed.wait(0.01):
@@ -473,12 +480,12 @@ class Bench:
 
     def status(self):
         with self.lock:
-            run = None
-            if self.run:
-                run = {"id": self.run["id"], "target": self.run["target"],
-                       "feedback_checked": self.run.get("feedback_checked", False),
-                       "feedback_error": self.run.get("feedback_error"),
-                       "remaining_ms": None if self.run["deadline"] is None else max(0, round((self.run["deadline"] - time.monotonic()) * 1000))}
+            runs = {target: {"id": run["id"], "target": target,
+                            "feedback_checked": run.get("feedback_checked", False),
+                            "feedback_error": run.get("feedback_error"),
+                            "remaining_ms": None if run["deadline"] is None else max(0, round((run["deadline"] - time.monotonic()) * 1000))}
+                    for target, run in self.runs.items()}
+            run = runs.get("motor") or runs.get("led")
             raw = self.last.get("di_raw")
             return {"connected": self.io is not None and bool(self.last.get("connected")),
                     "motor_test_max_seconds": 60,
@@ -489,7 +496,7 @@ class Bench:
                                  "active": self.last.get("km2_on") if raw else None,
                                  "changes": self.transitions[2], "changed_at": self.changed_at[2]},
                     "native_busy": self.native_busy, "generation": self.generation,
-                    "run": run, "error": self.error, "io": dict(self.last),
+                    "run": run, "runs": runs, "error": self.error, "io": dict(self.last),
                     "sensors": [{"channel": i + 1, "line": self.config.di_lines[i],
                                  "raw": raw[i] if raw else None,
                                  "active": (raw[i] == self.setup.sensor_active_raw[i]) if raw and self.setup.sensor_active_raw[i] is not None else None,

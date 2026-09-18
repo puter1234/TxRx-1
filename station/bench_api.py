@@ -49,7 +49,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
         editable()
         if production_busy() or maintenance_active.is_set() or bench.native_busy:
             raise Conflict("진행 중인 점검이 끝난 후 다시 시도하세요.")
-        if bench.run and not (allow_led and bench.run["target"] == "led"):
+        if bench.runs and not (allow_led and set(bench.runs) == {"led"}):
             raise Conflict("출력 시험을 먼저 정지하세요.")
 
     async def native(function, *, allow_led=False):
@@ -145,7 +145,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
     async def disconnect(request: Request):
         permitted(request)
         with bench.lock:
-            if bench.run and time.monotonic() < bench.next_output_at[bench.run["target"]]:
+            if any(time.monotonic() < bench.next_output_at[target] for target in bench.runs):
                 raise Conflict("신호 변경 후 1초 뒤 연결을 종료하세요. 긴급 상황은 시험 비상정지를 누르세요.")
         bench.stop("점검 종료")
         return await native(bench.disconnect)

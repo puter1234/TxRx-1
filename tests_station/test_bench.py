@@ -157,6 +157,7 @@ def test_led_deadline_and_screen_loss_drop_outputs_without_counts(rig):
     with b.lock:
         b.run["started"] -= 11
         b.run["deadline"] -= 11
+        b.next_output_at["led"] = time.monotonic() - 1
         b._tick()
     assert not b.io.led
     assert c.get("/api/status").json()["session"] is None
@@ -244,7 +245,8 @@ def test_motor_feedback_is_reported_after_three_seconds_without_stopping(rig):
     b.io.raw[2] = 0
     b._tick()
     assert b.run["feedback_error"] is None and b.run["feedback_seen"]
-    assert pulse(c).status_code == 409
+    assert pulse(c).status_code == 200
+    assert b.io.motor and b.io.led
 
 
 @pytest.mark.parametrize("target", ["motor", "led"])
@@ -441,6 +443,76 @@ def test_clear_error_rejects_unresolved_conditions(rig, condition):
         assert b.error is not None
     else:
         assert b.run is not None and b.io.led
+
+
+@pytest.mark.parametrize("first", ["motor", "led"])
+@pytest.mark.parametrize("turn_off", ["motor", "led"])
+def test_outputs_run_together_and_switch_independently(rig, first, turn_off):
+    c, app = rig
+    c.post("/api/bench/io/connect", json={})
+    b = app.state.bench
+    second = "led" if first == "motor" else "motor"
+    assert pulse(c, first, None).status_code == 200
+    first_run = b.runs[first]
+    first_cooldown = b.next_output_at[first]
+    assert pulse(c, second, None).status_code == 200
+    assert b.runs[first] is first_run
+    assert b.next_output_at[first] == first_cooldown
+    b._tick()
+    assert b.io.motor and b.io.led and b.error is None
+    assert set(c.get("/api/bench").json()["runs"]) == {"motor", "led"}
+    for run in b.runs.values():
+        assert c.post("/api/bench/heartbeat", json={"run_id": run["id"]}).json()["active"]
+    # Camera/native work remains blocked while a motor is running, even if LED started first.
+    assert c.post("/api/bench/ocr", json={}).status_code == 409
+    other = "led" if turn_off == "motor" else "motor"
+    other_run = b.runs[other]
+    other_cooldown = b.next_output_at[other]
+    stopped_id = b.runs[turn_off]["id"]
+    b.next_output_at[turn_off] = time.monotonic() - 1
+    assert c.post(f"/api/bench/{turn_off}/off", json={}).status_code == 200
+    b._tick()
+    assert not getattr(b.io, turn_off) and getattr(b.io, other)
+    assert b.runs == {other: other_run} and b.error is None
+    assert b.next_output_at[other] == other_cooldown
+    assert not c.post("/api/bench/heartbeat", json={"run_id": stopped_id}).json()["active"]
+    assert c.post("/api/bench/heartbeat", json={"run_id": other_run["id"]}).json()["active"]
+    assert pulse(c, turn_off, None).status_code == 409
+    b.next_output_at[turn_off] = time.monotonic() - 1
+    assert pulse(c, turn_off, None).status_code == 200
+    assert b.io.motor and b.io.led
+
+
+@pytest.mark.parametrize("cause", ["emergency", "motor_heartbeat", "led_heartbeat"])
+def test_simultaneous_outputs_both_stop_on_emergency_or_connection_loss(rig, cause):
+    c, app = rig
+    c.post("/api/bench/io/connect", json={})
+    b = app.state.bench
+    assert pulse(c, "motor", None).status_code == 200
+    assert pulse(c, "led", None).status_code == 200
+    if cause == "emergency":
+        assert c.post("/api/bench/stop", json={}).status_code == 200
+    else:
+        with b.lock:
+            b.runs[cause.split("_")[0]]["last_heartbeat"] -= 2
+            b._tick()
+    assert not b.io.motor and not b.io.led and not b.runs
+    assert all(0 < value <= 1000 for value in b.status()["cooldown_ms"].values())
+
+
+def test_timed_output_completion_does_not_stop_other_output(rig):
+    c, app = rig
+    c.post("/api/bench/io/connect", json={})
+    b = app.state.bench
+    assert pulse(c, "motor", 10).status_code == 200
+    assert pulse(c, "led", None).status_code == 200
+    with b.lock:
+        b.runs["motor"]["deadline"] = time.monotonic() - 1
+        b.next_output_at["motor"] = time.monotonic() - 1
+        b._tick()
+        b._tick()
+    assert not b.io.motor and b.io.led and set(b.runs) == {"led"}
+    assert b.error is None
 
 
 def test_ocr_reports_missing_runtime_package(rig):

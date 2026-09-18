@@ -6,13 +6,15 @@ import { useApp } from "../lib/store";
 import { ended } from "../lib/station";
 import Help from "./Help";
 
+type BenchRun = { id: string; target: string; remaining_ms: number | null; feedback_checked?: boolean; feedback_error?: string | null };
 export type BenchState = {
   motor_test_max_seconds?: number;
   cooldown_ms?: { motor: number; led: number };
   feedback?: { channel: number; line: number; raw: number | null; active: boolean | null; changes: number; changed_at: number | null };
   batch?: { active: boolean; completed: number; target: number };
   connected: boolean; native_busy: boolean; generation: number; error: string | null;
-  run: { id: string; target: string; remaining_ms: number | null; feedback_checked?: boolean; feedback_error?: string | null } | null;
+  run: BenchRun | null;
+  runs: Partial<Record<"motor" | "led", BenchRun>>;
   io: { km2_on?: boolean; physical_permit?: boolean; motor_requested?: boolean; led_requested?: boolean };
   sensors: { channel: number; line: number; raw: number | null; active: boolean | null; changes: number; changed_at: number | null }[];
   events: { channel: number; raw: number; time: number }[];
@@ -25,7 +27,7 @@ export function stopTests() {
 export function useBench() {
   const [state, setState] = useState<BenchState | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
-  const mounted = useRef(true), ownedRun = useRef<string | null>(null), pending = useRef(false);
+  const mounted = useRef(true), ownedRuns = useRef(new Set<string>()), pending = useRef(false);
   const refresh = useCallback(async () => {
     const next = await api<BenchState>("/bench");
     if (mounted.current) setState(next);
@@ -39,15 +41,16 @@ export function useBench() {
       if (mounted.current) timer = setTimeout(poll, 500);
     };
     void poll();
-    const stop = () => { ownedRun.current = null; void stopTests().catch(() => {}); };
-    const stopOwned = () => { if (ownedRun.current || pending.current) stop(); };
+    const stop = () => { ownedRuns.current.clear(); void stopTests().catch(() => {}); };
+    const stopOwned = () => { if (ownedRuns.current.size || pending.current) stop(); };
     const hidden = () => { if (document.visibilityState === "hidden") stopOwned(); };
     const heartbeat = setInterval(() => {
-      const run_id = ownedRun.current;
-      if (run_id && document.visibilityState !== "hidden") {
-        void api("/bench/heartbeat", { run_id }).then(r => {
-          if (!r.active) ownedRun.current = null;
-        }).catch(stop);
+      if (document.visibilityState !== "hidden") {
+        for (const run_id of ownedRuns.current) {
+          void api("/bench/heartbeat", { run_id }).then(r => {
+            if (!r.active) ownedRuns.current.delete(run_id);
+          }).catch(stop);
+        }
       }
     }, 400);
     window.addEventListener("pagehide", stopOwned);
@@ -57,7 +60,7 @@ export function useBench() {
       clearTimeout(timer); clearInterval(heartbeat);
       window.removeEventListener("pagehide", stopOwned);
       document.removeEventListener("visibilitychange", hidden);
-      if (ownedRun.current || pending.current) stop();
+      if (ownedRuns.current.size || pending.current) stop();
     };
   }, [refresh]);
   const action = async (fn: () => Promise<any>) => {
@@ -78,11 +81,12 @@ export function useBench() {
     if (!mounted.current || document.visibilityState === "hidden") {
       await stopTests(); return;
     }
-    ownedRun.current = result.run?.id || null;
+    const started = result.runs[target];
+    if (started) ownedRuns.current.add(started.id);
     setState({ ...state, ...result });
   });
   const stop = async () => {
-    ownedRun.current = null;
+    ownedRuns.current.clear();
     try { await stopTests(); await refresh(); }
     catch { setError("정지 요청을 확인하지 못했습니다. 현장 정지 버튼을 누르세요."); }
   };
@@ -120,8 +124,9 @@ export function OutputTests({ bench, ledOnly = false }: { bench: BenchHook; ledO
   const nav = useNavigate();
   const state = bench.state, session = useApp(s => s.snapshot?.session);
   const locked = !ended(session) || bench.busy || !!state?.native_busy;
-  const canOutput = !!state && state.connected && !state.output_blockers.length && !state.run && !locked;
-  const canLed = !!state && state.connected && !(state.led_blockers ?? state.output_blockers).length && !state.run && !locked;
+  const canOutput = !!state && state.connected && !state.output_blockers.length && !state.runs.motor && !locked;
+  const canLed = !!state && state.connected && !(state.led_blockers ?? state.output_blockers).length && !state.runs.led && !locked;
+  const motorRun = state?.runs.motor;
   const motorOn = state?.io.motor_requested === true;
   const ledOn = state?.io.led_requested === true;
   const motorWait = Math.ceil((state?.cooldown_ms?.motor || 0) / 1000);
@@ -135,7 +140,7 @@ export function OutputTests({ bench, ledOnly = false }: { bench: BenchHook; ledO
         <button aria-pressed={!motorOn} className={`btn !min-h-[72px] text-2xl ${!motorOn ? "btn-primary" : "btn-outline"}`} disabled={motorWait > 0 || locked} onClick={() => bench.action(() => api("/bench/motor/off", {}))}>끄기</button>
         <button aria-pressed={motorOn} className={`btn !min-h-[72px] text-2xl ${motorOn ? "btn-primary" : "btn-outline"}`} disabled={!canOutput || motorWait > 0} onClick={() => bench.pulse("motor")}>켜기</button>
       </div>
-      {state?.run?.target === "motor" && <p role="status" className={`text-lg font-bold ${state.run.feedback_error ? "text-danger" : ""}`}>{state.run.feedback_error ? `${state.run.feedback_error} (켜기 명령 유지)` : state.run.feedback_checked ? "DI3 응답 확인" : "DI3 응답 대기 (3초)"}</p>}
+      {motorRun && <p role="status" className={`text-lg font-bold ${motorRun.feedback_error ? "text-danger" : ""}`}>{motorRun.feedback_error ? `${motorRun.feedback_error} (켜기 명령 유지)` : motorRun.feedback_checked ? "DI3 응답 확인" : "DI3 응답 대기 (3초)"}</p>}
       {!!state?.output_blockers.length && <div className="space-y-2"><p className="text-lg font-bold">가동할 수 없는 이유</p>{state.output_blockers.map(reason => <p className="text-lg" key={reason}>{reason}</p>)}
         <button className="btn btn-outline w-full" onClick={() => nav("/settings?tab=devices#io")}>모터 연결 설정</button></div>}
     </div>}
@@ -163,7 +168,7 @@ export function BenchHeader({ bench }: { bench: BenchHook }) {
       </button>
       <button className="btn btn-danger ml-auto !min-h-[60px] px-8 text-xl" onClick={bench.stop}><Square size={24}/>시험 비상정지</button>
     </div>
-    {state?.run && <p role="status" className="text-2xl font-extrabold text-warn">{state.run.target === "motor" ? "모터 켜기 명령 중" : "LED 켜기 명령 중"}{state.run.remaining_ms !== null && ` ${Math.ceil(state.run.remaining_ms / 1000)}초 남음`}</p>}
+    {state && Object.values(state.runs).map(run => run && <p key={run.id} role="status" className="text-2xl font-extrabold text-warn">{run.target === "motor" ? "모터 켜기 명령 중" : "LED 켜기 명령 중"}{run.remaining_ms !== null && ` ${Math.ceil(run.remaining_ms / 1000)}초 남음`}</p>)}
     {locked && <p className="text-xl font-bold">작업 종료 후 시험할 수 있습니다</p>}
     {(bench.error || state?.error) && <p role="alert" className="text-lg font-bold text-danger">{bench.error || state?.error}</p>}
     {state?.error && <div className="flex items-center gap-3">
