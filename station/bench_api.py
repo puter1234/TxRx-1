@@ -130,7 +130,10 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
     async def ocr(request: Request):
         permitted(request)
         def execute():
-            app.state.vision.load()
+            try:
+                app.state.vision.load()
+            except ModuleNotFoundError as exc:
+                return {"ok": False, "detail": "OCR 실행 패키지가 설치되지 않았습니다: " + str(exc.name)}
             return {"ok": app.state.vision.status()["loaded"], "detail": "OCR 모델 준비 완료"}
         return await native(execute, allow_led=True)
 

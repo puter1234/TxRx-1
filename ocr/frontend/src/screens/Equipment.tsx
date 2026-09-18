@@ -12,8 +12,20 @@ export default function Equipment() {
   const nav = useNavigate(), bench = useBench();
   const state = useApp(s => s.snapshot), online = useApp(s => s.connected);
   const [ocr, setOcr] = useState<{ok: boolean; detail: string} | null>(null);
+  const [ocrBusy, setOcrBusy] = useState(false);
   const locked = !online || !ended(state?.session) || bench.busy || !!bench.state?.native_busy || !!bench.state?.run;
   const rfid = bench.state?.rfid;
+  const checkOcr = () => bench.action(async () => {
+    setOcr(null);
+    setOcrBusy(true);
+    try {
+      setOcr(await api("/bench/ocr", {}));
+    } catch (error) {
+      setOcr({ ok: false, detail: error instanceof Error ? error.message : "OCR 모델을 불러오지 못했습니다." });
+    } finally {
+      setOcrBusy(false);
+    }
+  });
   return <div className="flex h-full flex-col">
     <div className="flex shrink-0 items-center gap-4 px-6 pt-5">
       <button className="btn btn-outline btn-sm" onClick={() => nav("/")}><ArrowLeft size={20}/>처음 화면</button>
@@ -41,7 +53,7 @@ export default function Equipment() {
         <section className="card space-y-4 p-5">
           <div className="flex items-center gap-3"><ScanText size={26}/><h2 className="text-xl font-extrabold">OCR 인식 확인</h2>
             <Help text="문자 인식 모델이 이 컴퓨터에서 열리는지 확인합니다. 카메라 영상 확인과 사진 촬영은 위 카메라 항목에서 시험합니다."/></div>
-          <button className="btn btn-outline w-full" disabled={locked} onClick={() => bench.action(async () => setOcr(await api("/bench/ocr", {})))}>모델 확인</button>
+          <button className="btn btn-outline w-full" disabled={locked || ocrBusy} onClick={checkOcr}>{ocrBusy ? "모델 확인 중" : "모델 확인"}</button>
           {ocr && <p role="status" className={"text-lg font-bold " + (ocr.ok ? "text-ok" : "text-danger")}>{ocr.detail}</p>}
         </section>
       </div>

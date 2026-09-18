@@ -234,6 +234,17 @@ def test_short_motor_pulse_requires_feedback_before_completion(rig):
     assert pulse(c).status_code == 409
 
 
+def test_ocr_reports_missing_runtime_package(rig):
+    c, app = rig
+    def missing():
+        raise ModuleNotFoundError("No module named torch", name="torch")
+    app.state.vision.load = missing
+    response = c.post("/api/bench/ocr", json={})
+    assert response.status_code == 200
+    assert response.json() == {"ok": False, "detail": "OCR 실행 패키지가 설치되지 않았습니다: torch"}
+    assert not app.state.bench.native_busy
+
+
 def test_unconfirmed_off_remains_blocked(rig):
     c, app = rig
     setup(c)
