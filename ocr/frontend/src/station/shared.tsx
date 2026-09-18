@@ -1,6 +1,12 @@
 import type { ReactNode } from "react";
 
-export type Option = { key: string; label: string; values: string[] };
+export type Option = {
+  key: string;
+  label: string;
+  values: string[];
+  display?: "buttons" | "colors" | null;
+  colors?: Record<string, string>;
+};
 export type Region = {
   field: string;
   box: [number, number, number, number];

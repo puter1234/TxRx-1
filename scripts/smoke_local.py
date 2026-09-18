@@ -86,10 +86,23 @@ def run():
                 }
                 result = client.post("/api/brands", json={"brand": brand})
                 assert result.status_code == 200, result.text
+                saved = result.json()
+                color = next(
+                    option for option in saved["options"] if option["key"] == "color"
+                )
+                color.update(display="colors", colors={"N3": "#142B49"})
+                result = client.post(
+                    "/api/brands",
+                    json={"brand": saved, "expected_revision": saved["revision"]},
+                )
+                assert result.status_code == 200, result.text
+                saved = result.json()
+                assert client.post("/api/brands/validate", json=saved).json() == saved
+                checks.append("display_color_mapping_roundtrip")
                 assert client.post("/api/auth/logout", json={}).status_code == 200
                 recipe = {
                     "brand_id": "smoke",
-                    "brand_revision": 1,
+                    "brand_revision": saved["revision"],
                     "targets": {"style": "HUTS6C612", "color": "N3", "size": "095"},
                     "channels": ["rfid"],
                 }

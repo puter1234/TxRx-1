@@ -40,6 +40,40 @@ def login(client):
     assert r.status_code == 200, r.text
 
 
+def test_color_settings_roundtrip_and_job_snapshot_without_changing_judgment(
+    tmp_path, brand, recipe
+):
+    app = create_app(tmp_path)
+    with TestClient(app) as client:
+        login(client)
+        data = brand.model_dump()
+        data["id"] = "colored"
+        data["options"][1]["display"] = "colors"
+        data["options"][1]["colors"] = {"N3": "#142b49", "BK": "#000000"}
+        saved = client.post("/api/brands", json={"brand": data}).json()
+        assert saved["options"][1]["colors"]["N3"] == "#142B49"
+        loaded = next(
+            b for b in client.get("/api/brands").json() if b["id"] == "colored"
+        )
+        assert client.post("/api/brands/validate", json=loaded).json() == saved
+        recipe.brand_id = "colored"
+        created = client.post("/api/sessions", json=recipe.model_dump()).json()
+        assert created["session"]["recipe"]["targets"]["color"] == "N3"
+        assert created["session"]["brand"]["options"][1]["colors"]["N3"] == "#142B49"
+        saved["options"][1]["colors"]["N3"] = "#FF0000"
+        assert (
+            client.post(
+                "/api/brands", json={"brand": saved, "expected_revision": 1}
+            ).status_code
+            == 409
+        )
+        result = client.post(
+            "/api/replay", data={"product_id": "one", "epcs": EPC}
+        ).json()
+        assert result["status"] == "PASS"
+        assert result["observations"]["rfid"]["color"] == "N3"
+
+
 def test_auth_and_same_origin_boundary(tmp_path):
     with TestClient(create_app(tmp_path)) as client:
         assert client.get("/api/status").status_code == 401

@@ -9,6 +9,7 @@ import StatusBanner from "../components/StatusBanner";
 import ControlBar from "../components/ControlBar";
 import Modal from "../components/Modal";
 import Help from "../components/Help";
+import { optionColorStyle } from "../lib/optionColors";
 export default function ConditionRun() {
   const nav = useNavigate(),
     s = useApp((st) => st.snapshot?.session),
@@ -154,24 +155,42 @@ export default function ConditionRun() {
               </button>
             </div>
             {[
-              ["브랜드", s.brand.name],
-              ...s.brand.options.map((o) => [o.label, s.recipe.targets[o.key]]),
-              [
-                "인식 방식",
-                s.recipe.channels
+              {
+                key: "brand",
+                label: "브랜드",
+                value: s.brand.name,
+                style: undefined,
+              },
+              ...s.brand.options.map((o) => ({
+                key: "option_" + o.key,
+                label: o.label,
+                value: s.recipe.targets[o.key],
+                style: optionColorStyle(o, s.recipe.targets[o.key]),
+              })),
+              {
+                key: "channels",
+                label: "인식 방식",
+                value: s.recipe.channels
                   .map(
                     (c) =>
                       ({ ocr: "OCR", rfid: "RFID", barcode: "바코드" })[c] || c,
                   )
                   .join(", "),
-              ],
-            ].map(([label, value]) => (
+                style: undefined,
+              },
+            ].map(({ key, label, value, style }) => (
               <div
-                key={label}
+                key={key}
                 className="flex items-center justify-between border-b border-line py-3 last:border-0"
               >
                 <span className="text-lg font-bold">{label}</span>
-                <span className="text-xl font-extrabold">
+                <span
+                  style={style}
+                  className={
+                    "text-xl font-extrabold " +
+                    (style ? "rounded-lg border border-ink-700 px-4 py-2" : "")
+                  }
+                >
                   {value || "없음"}
                 </span>
               </div>

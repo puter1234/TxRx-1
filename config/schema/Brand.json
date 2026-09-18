@@ -50,6 +50,30 @@
           "minItems": 1,
           "title": "Values",
           "type": "array"
+        },
+        "display": {
+          "anyOf": [
+            {
+              "enum": [
+                "buttons",
+                "colors"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Display"
+        },
+        "colors": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "maxProperties": 1000,
+          "title": "Colors",
+          "type": "object"
         }
       },
       "required": [

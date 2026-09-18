@@ -131,14 +131,14 @@ describe("restored original screens", () => {
     await user.click(screen.getByRole("button", { name: "OCR 문자 인식" }));
     await user.click(screen.getByRole("button", { name: "다음: 수량 설정" }));
     await user.click(screen.getByRole("button", { name: "다음: 조건 설정" }));
-    await user.selectOptions(screen.getByLabelText("품번"), "HUTS6C612");
-    await user.selectOptions(screen.getByLabelText("색상"), "N3");
-    await user.selectOptions(screen.getByLabelText("사이즈"), "095");
+    await user.click(screen.getByRole("button", { name: "HUTS6C612" }));
+    await user.click(screen.getByRole("button", { name: "N3" }));
+    await user.click(screen.getByRole("button", { name: "095" }));
     const start = screen.getByRole("button", {
       name: "검사 화면 열기",
     }) as HTMLButtonElement;
     expect(start.disabled).toBe(true);
-    await user.selectOptions(screen.getByLabelText("시즌"), "SS");
+    await user.click(screen.getByRole("button", { name: "SS" }));
     await user.click(start);
     const creation = fetcher.mock.calls.find(
       ([path]) => path === "/api/sessions",
@@ -312,10 +312,11 @@ describe("restored original screens", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).toBeNull();
     await user.click(screen.getByRole("button", { name: "불러오기" }));
-    expect(await screen.findByLabelText("사이즈")).toHaveProperty(
-      "value",
-      "095",
-    );
+    expect(
+      (await screen.findByRole("button", { name: "095" })).getAttribute(
+        "aria-pressed",
+      ),
+    ).toBe("true");
     expect(
       (
         screen.getByRole("button", {

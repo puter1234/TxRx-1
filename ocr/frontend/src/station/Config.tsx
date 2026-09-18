@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Plus, Trash2, Save, Upload, Download } from "lucide-react";
 import Help from "../components/Help";
+import ColorAssignments from "../components/ColorAssignments";
+import { isColorOption } from "../lib/optionColors";
 import { api, Field, Badge, download, uuid } from "./shared";
 import type { Action, Brand, Fields, Option, Region } from "./shared";
 
@@ -35,9 +37,17 @@ export default function Config({
   const option = (index: number, patch: Partial<Option>) =>
     setDraft({
       ...draft,
-      options: draft.options.map((o, i) =>
-        i === index ? { ...o, ...patch } : o,
-      ),
+      options: draft.options.map((o, i) => {
+        if (i !== index) return o;
+        const next = { ...o, ...patch };
+        if (patch.values)
+          next.colors = Object.fromEntries(
+            Object.entries(next.colors || {}).filter(([code]) =>
+              patch.values!.includes(code),
+            ),
+          );
+        return next;
+      }),
     });
   const importFile = (
     file: File | undefined,
@@ -225,6 +235,25 @@ export default function Config({
                     })
                   }
                 />
+                <label className="mt-4 flex items-center gap-3 text-lg font-bold">
+                  <input
+                    type="checkbox"
+                    className="h-6 w-6 accent-brand-600"
+                    checked={isColorOption(o)}
+                    onChange={(e) =>
+                      option(i, {
+                        display: e.target.checked ? "colors" : "buttons",
+                      })
+                    }
+                  />
+                  색상 버튼 사용
+                </label>
+                {isColorOption(o) && (
+                  <ColorAssignments
+                    option={o}
+                    onChange={(colors) => option(i, { colors })}
+                  />
+                )}
               </div>
             ))}
             <div className="flex flex-wrap gap-3">

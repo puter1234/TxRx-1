@@ -101,3 +101,21 @@ def test_every_configured_option_must_have_a_target(brand, recipe):
     b["options"].append(b["options"][0])
     with pytest.raises(ValidationError):
         Brand.model_validate(b)
+
+
+@pytest.mark.parametrize(
+    "color", ["red", "#FFF", "#12345G", "url(https://example.com)", "#123456;"]
+)
+def test_display_colors_only_accept_six_digit_hex(color):
+    with pytest.raises(ValidationError):
+        Option(key="color", label="색상", values=["N3"], colors={"N3": color})
+
+
+def test_color_mapping_preserves_codes_and_rejects_deleted_values():
+    option = Option(
+        key="color", label="색상", values=["N3", "BK"], colors={"N3": "#aBcDef"}
+    )
+    assert option.colors == {"N3": "#ABCDEF"}
+    assert Option(key="size", label="사이즈", values=["095"]).colors == {}
+    with pytest.raises(ValidationError):
+        Option(key="color", label="색상", values=["N3"], colors={"BK": "#000000"})

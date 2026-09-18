@@ -14,6 +14,8 @@ class Option(Model):
     key: str = Field(pattern=r"^[a-z][a-z0-9_]{0,31}$")
     label: str = Field(min_length=1, max_length=40)
     values: list[str] = Field(min_length=1, max_length=1000)
+    display: Literal["buttons", "colors"] | None = None
+    colors: dict[str, str] = Field(default_factory=dict, max_length=1000)
 
     @model_validator(mode="after")
     def distinct(self):
@@ -22,6 +24,16 @@ class Option(Model):
         self.values = [v.strip() for v in self.values]
         if len(self.values) != len(set(self.values)):
             raise ValueError("옵션 값이 중복됩니다.")
+        import re
+
+        if any(code not in self.values for code in self.colors):
+            raise ValueError("색상은 등록된 선택값에만 지정할 수 있습니다.")
+        if any(
+            not re.fullmatch(r"#[0-9a-fA-F]{6}", value)
+            for value in self.colors.values()
+        ):
+            raise ValueError("버튼 색상은 #RRGGBB 형식이어야 합니다.")
+        self.colors = {code: value.upper() for code, value in self.colors.items()}
         return self
 
 

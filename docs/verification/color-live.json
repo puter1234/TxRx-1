@@ -1,0 +1,11 @@
+{
+  "server": "http://127.0.0.1:8000",
+  "color_schema_deployed": true,
+  "assets": [
+    "/assets/index-DxKKfxnU.js",
+    "/assets/index-B1OaURJG.css"
+  ],
+  "password_unchanged": true,
+  "no_catalog_test_data_written": true,
+  "browser_opened": false
+}

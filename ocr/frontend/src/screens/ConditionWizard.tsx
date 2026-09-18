@@ -14,6 +14,7 @@ import {
 import { useApp } from "../lib/store";
 import { api } from "../lib/api";
 import Help from "../components/Help";
+import OptionButtons from "../components/OptionButtons";
 import type { Brand, Checks } from "../lib/types";
 
 const STEPS = ["브랜드 및 검사 항목", "수량 설정", "조건 설정"];
@@ -454,27 +455,14 @@ export default function ConditionWizard() {
               </div>
               <div className="mt-5 space-y-4">
                 {brand?.source.options.map((o) => (
-                  <label key={o.key} className="block">
-                    <span className="mb-2 block text-lg font-bold">
-                      {o.label}
-                    </span>
-                    <select
-                      className="field"
-                      value={w.targets[o.key] || ""}
-                      onChange={(e) =>
-                        setW({
-                          targets: { ...w.targets, [o.key]: e.target.value },
-                        })
-                      }
-                    >
-                      <option value="">선택하세요</option>
-                      {o.values.map((v) => (
-                        <option key={v} value={v}>
-                          {v}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  <OptionButtons
+                    key={o.key}
+                    option={o}
+                    value={w.targets[o.key] || ""}
+                    onChange={(value) =>
+                      setW({ targets: { ...w.targets, [o.key]: value } })
+                    }
+                  />
                 ))}
               </div>
             </div>
