@@ -167,6 +167,7 @@ class Bench:
         self.last = {}
         self.error = None
         self.native_busy = False
+        self.rfid_busy = False
         self.cancel = threading.Event()
         self.generation = 0
         self.runs = {}
@@ -190,7 +191,7 @@ class Bench:
         return self.runs.get("motor") or self.runs.get("led")
 
     def busy(self):
-        return self.io is not None or self.native_busy or self.run is not None or bool(self.error)
+        return self.io is not None or self.native_busy or self.rfid_busy or self.run is not None or bool(self.error)
 
     def save_setup(self, setup, actor):
         pins = [*self.config.di_lines, *self.config.do_lines]
@@ -204,6 +205,16 @@ class Bench:
                 c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", ("bench_setup", json.dumps(setup.model_dump())))
                 self.store.event("BENCH_SETUP_SAVED", {"actor": actor, "setup": setup.model_dump()}, c)
             self.setup = setup
+            return self.status()
+
+    def save_rfid_setup(self, fields, actor):
+        with self.lock:
+            updated = BenchSetup.model_validate({**self.setup.model_dump(), **fields})
+            with self.store.transaction() as c:
+                import json
+                c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", ("bench_setup", json.dumps(updated.model_dump())))
+                self.store.event("BENCH_RFID_SETUP_SAVED", {"actor": actor, "setup": fields}, c)
+            self.setup = updated
             return self.status()
 
     def connect(self):
@@ -325,7 +336,10 @@ class Bench:
                 raise Conflict("운전 허가와 접촉기 정지 상태를 확인하세요.")
             if seconds is not None and not 10 <= seconds <= 60:
                 raise ValueError("켜짐 유지 시간은 10초부터 60초까지입니다.")
-            self.cancel.clear()
+            if self.rfid_busy and self.cancel.is_set():
+                raise Conflict("RFID 정지 처리가 끝난 후 다시 시도하세요.")
+            if not self.rfid_busy:
+                self.cancel.clear()
             now = time.monotonic()
             run = {"id": str(uuid.uuid4()), "target": target, "deadline": None if seconds is None else now + seconds,
                    "last_heartbeat": now, "started": now, "feedback_seen": False,
@@ -495,7 +509,7 @@ class Bench:
                                  "raw": raw[2] if raw else None,
                                  "active": self.last.get("km2_on") if raw else None,
                                  "changes": self.transitions[2], "changed_at": self.changed_at[2]},
-                    "native_busy": self.native_busy, "generation": self.generation,
+                    "native_busy": self.native_busy, "rfid_busy": self.rfid_busy, "generation": self.generation,
                     "run": run, "runs": runs, "error": self.error, "io": dict(self.last),
                     "sensors": [{"channel": i + 1, "line": self.config.di_lines[i],
                                  "raw": raw[i] if raw else None,
@@ -513,8 +527,6 @@ class Bench:
             raise Conflict("RFID 포트를 선택하세요.")
         if not s.rfid_protocol_confirmed:
             raise Conflict("리더의 명령 규격을 확인한 후 RFID 설정을 저장하세요.")
-        if self.run:
-            raise Conflict("출력 시험을 먼저 정지하세요.")
         reader = None
         try:
             if self.cancel.is_set():

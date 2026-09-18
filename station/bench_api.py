@@ -25,6 +25,12 @@ class Heartbeat(Model):
     run_id: str = Field(min_length=1, max_length=100)
 
 
+class RFIDSetup(Model):
+    rfid_port: str = Field(default="", max_length=200)
+    rfid_window_ms: int = Field(default=500, ge=100, le=10000)
+    rfid_protocol_confirmed: bool = False
+
+
 class Device(Model):
     device: str = Field(min_length=1, max_length=240)
 
@@ -45,17 +51,18 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
     batch = {"active": False, "completed": 0, "target": 0}
     batch_cancel = threading.Event()
 
-    def available(allow_led=False):
+    def available(allow_led=False, allow_outputs=False):
         editable()
-        if production_busy() or maintenance_active.is_set() or bench.native_busy:
+        if production_busy() or maintenance_active.is_set() or bench.native_busy or bench.rfid_busy:
             raise Conflict("진행 중인 점검이 끝난 후 다시 시도하세요.")
-        if bench.runs and not (allow_led and set(bench.runs) == {"led"}):
+        if bench.runs and not allow_outputs and not (allow_led and set(bench.runs) == {"led"}):
             raise Conflict("출력 시험을 먼저 정지하세요.")
 
-    async def native(function, *, allow_led=False):
+    async def native(function, *, allow_led=False, allow_outputs=False):
+        busy_field = "rfid_busy" if allow_outputs else "native_busy"
         with controller.lock, bench.lock:
-            available(allow_led)
-            bench.native_busy = True
+            available(allow_led, allow_outputs)
+            setattr(bench, busy_field, True)
             bench.cancel.clear()
 
         def run():
@@ -66,11 +73,11 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
             except Exception as exc:
                 raise ValueError(str(exc)) from exc
             finally:
-                bench.native_busy = False
+                setattr(bench, busy_field, False)
         try:
             future = asyncio.get_running_loop().run_in_executor(None, run)
         except BaseException:
-            bench.native_busy = False
+            setattr(bench, busy_field, False)
             raise
         workers.add(future)
 
@@ -141,6 +148,11 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
         permitted(request)
         return await native(bench.connect)
 
+    @app.put("/api/bench/rfid/setup")
+    async def rfid_setup(body: RFIDSetup, request: Request):
+        actor = permitted(request, ("admin",))
+        return await native(lambda: bench.save_rfid_setup(body.model_dump(), actor), allow_outputs=True)
+
     @app.post("/api/bench/io/disconnect")
     async def disconnect(request: Request):
         permitted(request)
@@ -200,7 +212,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
     @app.post("/api/bench/rfid")
     async def rfid(request: Request):
         permitted(request)
-        return await native(bench.rfid_test)
+        return await native(bench.rfid_test, allow_outputs=True)
 
     @app.post("/api/bench/ocr")
     async def ocr(request: Request):

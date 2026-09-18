@@ -57,15 +57,22 @@ export default function DeviceSettings() {
   const [modeIndex, setModeIndex] = useState(0), [values, setValues] = useState<Record<string, number>>({});
   const [setup, setSetup] = useState<any>(null), [ports, setPorts] = useState<{device: string; name: string}[]>([]);
   const [message, setMessage] = useState("");
+  const [portsBusy, setPortsBusy] = useState(false), [portsError, setPortsError] = useState("");
+  const findPorts = async () => {
+    setPortsBusy(true); setPortsError("");
+    try { const serial = await api("/bench/ports"); setPorts(serial.ports || []); }
+    catch (e) { setPortsError((e as Error).message); }
+    finally { setPortsBusy(false); }
+  };
   useEffect(() => { if (!setup && bench.state) setSetup(bench.state.setup); }, [bench.state, setup]);
   const find = async () => {
     const result = await api("/bench/camera/devices");
     setDevices(result.devices || []); setDiscovery(result.error || "");
     const prior = bench.state?.camera?.profile?.device || bench.state?.camera?.saved_profile?.device;
     setDevice(old => old || prior || result.devices?.[0]?.device || "");
-    const serial = await api("/bench/ports"); setPorts(serial.ports || []);
   };
   useEffect(() => { void find().catch(e => setDiscovery(e.message)); }, []);
+  useEffect(() => { void findPorts(); }, []);
   const inspect = async () => {
     const data = await api("/bench/camera/inspect", { device });
     setCaps(data);
@@ -156,8 +163,12 @@ export default function DeviceSettings() {
         <label className="flex items-center gap-3 text-lg font-bold"><input className="h-6 w-6" type="checkbox" checked={setup.output_wiring_confirmed} onChange={e => field("output_wiring_confirmed", e.target.checked)}/>출력 배선과 OFF 상태 확인</label>
         <label className="flex items-center gap-3 text-lg font-bold"><input className="h-6 w-6" type="checkbox" checked={setup.stop_circuit_confirmed} onChange={e => field("stop_circuit_confirmed", e.target.checked)}/>현장 정지 회로 확인</label>
       </fieldset>
+      <button className="btn btn-primary" disabled={disabled || !!bench.state?.connected || !!bench.state?.rfid_busy} onClick={() => bench.action(async () => { await api("/bench/setup", setup, "PUT"); setMessage("연결 설정을 저장했습니다"); })}>입출력 설정 저장</button>
       <h3 className="text-xl font-extrabold">RFID 연결</h3>
-      <fieldset disabled={disabled || !!bench.state?.connected} className="grid gap-5 md:grid-cols-2">
+      <button className="btn btn-outline" disabled={portsBusy} onClick={findPorts}>{portsBusy ? "포트 찾는 중" : "RFID 포트 찾기"}</button>
+      {portsError && <p role="alert" className="text-lg font-bold text-danger">{portsError}</p>}
+      {!portsBusy && !portsError && ports.length === 0 && <p role="status" className="text-lg font-bold">검색된 직렬 포트가 없습니다.</p>}
+      <fieldset disabled={disabled || !!bench.state?.rfid_busy} className="grid gap-5 md:grid-cols-2">
         <label className="text-lg font-bold">직렬 포트<select className="field mt-2" value={setup.rfid_port} onChange={e => field("rfid_port", e.target.value)}>
           <option value="">포트 선택</option>{setup.rfid_port && !ports.some(p => p.device === setup.rfid_port) && <option value={setup.rfid_port}>{setup.rfid_port}</option>}
           {ports.map(p => <option key={p.device} value={p.device}>{p.name} ({p.device})</option>)}
@@ -165,7 +176,10 @@ export default function DeviceSettings() {
         <label className="text-lg font-bold">읽기 시간 (ms)<input className="field mt-2" type="number" min="100" max="10000" value={setup.rfid_window_ms} onChange={e => field("rfid_window_ms", Number(e.target.value))}/></label>
         <label className="flex items-center gap-3 text-lg font-bold"><input className="h-6 w-6" type="checkbox" checked={setup.rfid_protocol_confirmed} onChange={e => field("rfid_protocol_confirmed", e.target.checked)}/>RFID 명령 규격 확인<Help text="YRM1006 리더의 제공 명령서와 현재 구현을 대조한 뒤 선택합니다. 읽기 시험은 지역과 출력 초기화 명령을 포함합니다."/></label>
       </fieldset>
-      <button className="btn btn-primary" disabled={disabled || !!bench.state?.connected} onClick={() => bench.action(async () => { await api("/bench/setup", setup, "PUT"); setMessage("연결 설정을 저장했습니다"); })}>연결 설정 저장</button>
+      <button className="btn btn-primary" disabled={disabled || !!bench.state?.rfid_busy} onClick={() => bench.action(async () => {
+        await api("/bench/rfid/setup", { rfid_port: setup.rfid_port, rfid_window_ms: setup.rfid_window_ms, rfid_protocol_confirmed: setup.rfid_protocol_confirmed }, "PUT");
+        setMessage("연결 설정을 저장했습니다");
+      })}>RFID 설정 저장</button>
       {message === "연결 설정을 저장했습니다" && <p role="status" className="text-lg font-bold">{message}</p>}
     </details>}
   </div>;

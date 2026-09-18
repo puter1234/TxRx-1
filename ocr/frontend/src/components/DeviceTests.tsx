@@ -12,7 +12,7 @@ export type BenchState = {
   cooldown_ms?: { motor: number; led: number };
   feedback?: { channel: number; line: number; raw: number | null; active: boolean | null; changes: number; changed_at: number | null };
   batch?: { active: boolean; completed: number; target: number };
-  connected: boolean; native_busy: boolean; generation: number; error: string | null;
+  connected: boolean; native_busy: boolean; rfid_busy?: boolean; generation: number; error: string | null;
   run: BenchRun | null;
   runs: Partial<Record<"motor" | "led", BenchRun>>;
   io: { km2_on?: boolean; physical_permit?: boolean; motor_requested?: boolean; led_requested?: boolean };
@@ -124,8 +124,9 @@ export function OutputTests({ bench, ledOnly = false }: { bench: BenchHook; ledO
   const nav = useNavigate();
   const state = bench.state, session = useApp(s => s.snapshot?.session);
   const locked = !ended(session) || bench.busy || !!state?.native_busy;
-  const canOutput = !!state && state.connected && !state.output_blockers.length && !state.runs.motor && !locked;
-  const canLed = !!state && state.connected && !(state.led_blockers ?? state.output_blockers).length && !state.runs.led && !locked;
+  const canOutput = !!state && !state.runs.motor && !bench.busy;
+  const canLed = !!state && !state.runs.led && !bench.busy;
+  const [requestedTarget, setRequestedTarget] = useState<"motor" | "led" | null>(null);
   const motorRun = state?.runs.motor;
   const motorOn = state?.io.motor_requested === true;
   const ledOn = state?.io.led_requested === true;
@@ -138,8 +139,9 @@ export function OutputTests({ bench, ledOnly = false }: { bench: BenchHook; ledO
       <p className="text-xl font-bold">{state?.io.km2_on === true ? "접촉기 켜짐" : state?.io.km2_on === false ? "접촉기 꺼짐" : "접촉기 미확인"}</p>
       <div role="group" aria-label="모터 스위치" className="grid grid-cols-2 gap-2">
         <button aria-pressed={!motorOn} className={`btn !min-h-[72px] text-2xl ${!motorOn ? "btn-primary" : "btn-outline"}`} disabled={motorWait > 0 || locked} onClick={() => bench.action(() => api("/bench/motor/off", {}))}>끄기</button>
-        <button aria-pressed={motorOn} className={`btn !min-h-[72px] text-2xl ${motorOn ? "btn-primary" : "btn-outline"}`} disabled={!canOutput || motorWait > 0} onClick={() => bench.pulse("motor")}>켜기</button>
+        <button aria-pressed={motorOn} className={`btn !min-h-[72px] text-2xl ${motorOn ? "btn-primary" : "btn-outline"}`} disabled={!canOutput || motorWait > 0} onClick={() => { setRequestedTarget("motor"); return bench.pulse("motor"); }}>켜기</button>
       </div>
+      {requestedTarget === "motor" && bench.error && <p role="alert" className="text-lg font-bold text-danger">{bench.error}</p>}
       {motorRun && <p role="status" className={`text-lg font-bold ${motorRun.feedback_error ? "text-danger" : ""}`}>{motorRun.feedback_error ? `${motorRun.feedback_error} (켜기 명령 유지)` : motorRun.feedback_checked ? "DI3 응답 확인" : "DI3 응답 대기 (3초)"}</p>}
       {!!state?.output_blockers.length && <div className="space-y-2"><p className="text-lg font-bold">가동할 수 없는 이유</p>{state.output_blockers.map(reason => <p className="text-lg" key={reason}>{reason}</p>)}
         <button className="btn btn-outline w-full" onClick={() => nav("/settings?tab=devices#io")}>모터 연결 설정</button></div>}
@@ -150,8 +152,9 @@ export function OutputTests({ bench, ledOnly = false }: { bench: BenchHook; ledO
       <p className="text-xl font-bold">{state?.io.led_requested ? "켜기 명령 중" : "점등 상태는 현장에서 확인"}</p>
       <div role="group" aria-label="LED 스위치" className="grid grid-cols-2 gap-2">
         <button aria-pressed={!ledOn} className={`btn !min-h-[72px] text-2xl ${!ledOn ? "btn-primary" : "btn-outline"}`} disabled={ledWait > 0 || locked} onClick={() => bench.action(() => api("/bench/led/off", {}))}>끄기</button>
-        <button aria-pressed={ledOn} className={`btn !min-h-[72px] text-2xl ${ledOn ? "btn-primary" : "btn-outline"}`} disabled={!canLed || ledWait > 0} onClick={() => bench.pulse("led")}>켜기</button>
+        <button aria-pressed={ledOn} className={`btn !min-h-[72px] text-2xl ${ledOn ? "btn-primary" : "btn-outline"}`} disabled={!canLed || ledWait > 0} onClick={() => { setRequestedTarget("led"); return bench.pulse("led"); }}>켜기</button>
       </div>
+      {requestedTarget === "led" && bench.error && <p role="alert" className="text-lg font-bold text-danger">{bench.error}</p>}
     </div>
   </>;
 }

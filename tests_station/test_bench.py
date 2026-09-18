@@ -515,6 +515,53 @@ def test_timed_output_completion_does_not_stop_other_output(rig):
     assert b.error is None
 
 
+def test_rfid_settings_can_be_saved_with_gpio_and_outputs_connected(rig):
+    c, app = rig
+    c.post("/api/bench/io/connect", json={})
+    b = app.state.bench
+    assert pulse(c, "led", None).status_code == 200
+    calls = b.io.calls[:]
+    response = c.put("/api/bench/rfid/setup", json={"rfid_port": "/dev/ttyUSB0", "rfid_protocol_confirmed": True})
+    assert response.status_code == 200, response.text
+    assert b.setup.rfid_port == "/dev/ttyUSB0" and b.io.led
+    assert b.io.calls == calls and b.setup.permit_line is None
+
+
+def test_rfid_inventory_runs_with_outputs_and_does_not_lock_switches(rig, monkeypatch):
+    c, app = rig
+    entered, release = threading.Event(), threading.Event()
+    class Reader:
+        def __init__(self, port): assert port == "/dev/ttyUSB0"
+        def initialize(self): pass
+        def inventory(self, window, cancel):
+            entered.set()
+            assert release.wait(3)
+            return [{"epc": "AABB", "count": 1}]
+        def close(self): pass
+    monkeypatch.setattr("station.rfid.Reader", Reader)
+    assert c.put("/api/bench/rfid/setup", json={"rfid_port": "/dev/ttyUSB0", "rfid_protocol_confirmed": True}).status_code == 200
+    c.post("/api/bench/io/connect", json={})
+    b = app.state.bench
+    assert pulse(c, "led", None).status_code == 200
+    with ThreadPoolExecutor() as pool:
+        reading = pool.submit(c.post, "/api/bench/rfid", json={})
+        try:
+            assert entered.wait(2)
+            assert b.rfid_busy and not b.native_busy
+            assert pulse(c, "motor", None).status_code == 200
+            b.next_output_at["led"] = time.monotonic() - 1
+            assert c.post("/api/bench/led/off", json={}).status_code == 200
+            assert b.io.motor and not b.io.led
+            assert c.post("/api/bench/rfid", json={}).status_code == 409
+            assert c.put("/api/bench/rfid/setup", json={"rfid_port": "other"}).status_code == 409
+        finally:
+            release.set()
+        result = reading.result()
+    assert result.status_code == 200, result.text
+    assert result.json()["tags"][0]["epc"] == "AABB"
+    assert not b.rfid_busy and b.io.motor
+
+
 def test_ocr_reports_missing_runtime_package(rig):
     c, app = rig
     def missing():

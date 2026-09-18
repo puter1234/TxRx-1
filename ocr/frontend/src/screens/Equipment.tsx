@@ -13,8 +13,17 @@ export default function Equipment() {
   const state = useApp(s => s.snapshot), online = useApp(s => s.connected);
   const [ocr, setOcr] = useState<{ok: boolean; detail: string} | null>(null);
   const [ocrBusy, setOcrBusy] = useState(false);
+  const [rfidBusy, setRfidBusy] = useState(false);
+  const [rfidError, setRfidError] = useState("");
+  const rfidLocked = !online || !ended(state?.session) || bench.busy || !!bench.state?.native_busy || !!bench.state?.rfid_busy || rfidBusy;
   const locked = !online || !ended(state?.session) || bench.busy || !!bench.state?.native_busy || !!bench.state?.run;
   const rfid = bench.state?.rfid;
+  const readRfid = async () => {
+    setRfidError(""); setRfidBusy(true);
+    try { await api("/bench/rfid", {}); }
+    catch (error) { setRfidError(error instanceof Error ? error.message : "RFID 읽기 실패"); }
+    finally { setRfidBusy(false); await bench.refresh().catch(() => {}); }
+  };
   const checkOcr = () => bench.action(async () => {
     setOcr(null);
     setOcrBusy(true);
@@ -41,14 +50,15 @@ export default function Equipment() {
         <section className="card space-y-4 p-5">
           <div className="flex items-center gap-3"><CreditCard size={26}/><h2 className="text-xl font-extrabold">RFID 확인</h2>
             <Help text="설정한 직렬 포트에서 실제 태그를 읽습니다. EPC와 읽은 횟수를 표시하며 생산 수량에는 반영하지 않습니다."/></div>
-          <button className="btn btn-primary w-full" disabled={locked} onClick={() => bench.action(() => api("/bench/rfid", {}))}>태그 읽기</button>
-          {rfid ? <div className="space-y-3"><p className="text-xl font-bold">{rfid.detail}</p>
+          <button className="btn btn-primary w-full" disabled={rfidLocked} onClick={readRfid}>{rfidBusy || bench.state?.rfid_busy ? "태그 읽는 중" : "태그 읽기"}</button>
+          {rfidError && <p role="alert" className="text-lg font-bold text-danger">{rfidError}</p>}
+          {!rfidBusy && !rfidError && (rfid ? <div className="space-y-3"><p className="text-xl font-bold">{rfid.detail}</p>
             {rfid.tags.map((tag: any) => <div key={tag.epc} className="space-y-2 rounded-xl bg-panel p-4">
               <p className="break-all font-mono text-xl font-bold">{tag.epc}</p>
               <p className="text-lg font-bold">읽은 횟수 {tag.count}회</p>
               <p className="text-lg">최대 RSSI {tag.max_rssi}, 중앙 RSSI {tag.median_rssi}</p>
             </div>)}
-          </div> : <p className="text-lg font-bold">읽은 태그 없음</p>}
+          </div> : <p className="text-lg font-bold">읽은 태그 없음</p>)}
         </section>
         <section className="card space-y-4 p-5">
           <div className="flex items-center gap-3"><ScanText size={26}/><h2 className="text-xl font-extrabold">OCR 인식 확인</h2>
