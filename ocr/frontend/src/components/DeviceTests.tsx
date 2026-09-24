@@ -12,6 +12,7 @@ export type BenchState = {
   cooldown_ms?: { motor: number; led: number };
   feedback?: { channel: number; line: number; raw: number | null; active: boolean | null; changes: number; changed_at: number | null };
   batch?: { active: boolean; completed: number; target: number };
+  sensor_ocr?: { active: boolean; busy: boolean };
   connected: boolean; native_busy: boolean; rfid_busy?: boolean; generation: number; error: string | null;
   run: BenchRun | null;
   runs: Partial<Record<"motor" | "led", BenchRun>>;
@@ -90,7 +91,14 @@ export function useBench() {
     try { await stopTests(); await refresh(); }
     catch { setError("정지 요청을 확인하지 못했습니다. 현장 정지 버튼을 누르세요."); }
   };
-  return { state, busy, error, action, pulse, stop, refresh };
+  const adoptRuns = async (next: BenchState) => {
+    if (!mounted.current || document.visibilityState === "hidden") {
+      await stopTests(); return;
+    }
+    for (const run of Object.values(next.runs)) if (run) ownedRuns.current.add(run.id);
+    setState(previous => previous ? { ...previous, ...next } : next);
+  };
+  return { state, busy, error, action, pulse, stop, refresh, adoptRuns };
 }
 export type BenchHook = ReturnType<typeof useBench>;
 

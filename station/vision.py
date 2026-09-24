@@ -213,7 +213,7 @@ class Vision:
         return pipeline.process_task(frame, self.recognizer, diagnostics=diagnostics,
                                      decode_values=decode_values)
 
-    def test_auto(self, frame):
+    def test_auto(self, frame, *, include_previews=True, crop_images=None):
         """Run the production OCR path on a fresh frame without writing a photo."""
         if not self.lock.acquire(blocking=False):
             raise RuntimeError("이전 영상 처리가 아직 끝나지 않았습니다.")
@@ -240,15 +240,16 @@ class Vision:
             for read in task.reads:
                 lines = []
                 for line, crop in zip(read.lines, read.line_crops):
-                    import cv2
-                    preview = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
-                    preview.thumbnail((800, 500))
-                    memory = io.BytesIO()
-                    preview.save(memory, format="JPEG", quality=80)
-                    lines.append({
-                        **line, "crop_width": crop.shape[1], "crop_height": crop.shape[0],
-                        "preview": "data:image/jpeg;base64," + base64.b64encode(memory.getvalue()).decode(),
-                    })
+                    item = {**line, "crop_width": crop.shape[1], "crop_height": crop.shape[0]}
+                    if include_previews:
+                        preview = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
+                        preview.thumbnail((800, 500))
+                        memory = io.BytesIO()
+                        preview.save(memory, format="JPEG", quality=80)
+                        item["preview"] = "data:image/jpeg;base64," + base64.b64encode(memory.getvalue()).decode()
+                    if crop_images is not None:
+                        crop_images.append(crop)
+                    lines.append(item)
                 reads.append({
                     "barcode": read.barcode, "barcode_format": read.barcode_format,
                     "verdict": read.verdict.status,

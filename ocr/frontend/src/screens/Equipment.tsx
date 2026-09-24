@@ -5,6 +5,7 @@ import { api } from "../station/shared";
 import { useApp } from "../lib/store";
 import { ended, reportError } from "../lib/station";
 import Help from "../components/Help";
+import SensorPipelineTest from "../components/SensorPipelineTest";
 import { Equipment as EquipmentDetails } from "../station/StationApp";
 import { BenchHeader, CameraTest, OutputTests, SensorTest, useBench } from "../components/DeviceTests";
 
@@ -136,8 +137,9 @@ export default function Equipment() {
   const [ocrBusy, setOcrBusy] = useState(false);
   const [rfidBusy, setRfidBusy] = useState(false);
   const [rfidError, setRfidError] = useState("");
-  const rfidLocked = !online || !ended(state?.session) || bench.busy || !!bench.state?.native_busy || !!bench.state?.rfid_busy || rfidBusy;
-  const locked = !online || !ended(state?.session) || bench.busy || !!bench.state?.native_busy || !!bench.state?.runs?.motor || bench.state?.run?.target === "motor";
+  const pipelineLocked = !online || !ended(state?.session) || bench.busy || !!bench.state?.native_busy || !!bench.state?.rfid_busy;
+  const rfidLocked = pipelineLocked || !!bench.state?.sensor_ocr?.busy || rfidBusy;
+  const locked = pipelineLocked || !!bench.state?.sensor_ocr?.busy || !!bench.state?.runs?.motor || bench.state?.run?.target === "motor";
   const rfid = bench.state?.rfid;
   const readRfid = async () => {
     setRfidError(""); setRfidBusy(true);
@@ -166,6 +168,7 @@ export default function Equipment() {
       <BenchHeader bench={bench}/>
       <div className="grid gap-5 md:grid-cols-2"><OutputTests bench={bench}/></div>
       <SensorTest bench={bench}/>
+      <SensorPipelineTest bench={bench} locked={pipelineLocked}/>
       <CameraTest bench={bench}/>
       <div className="grid gap-5 md:grid-cols-2">
         <section className="card space-y-4 p-5">

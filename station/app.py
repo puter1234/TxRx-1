@@ -190,6 +190,8 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
         maintenance = asyncio.create_task(maintain())
         yield
         bench.stop("서비스 종료")
+        if hasattr(app.state, "sensor_ocr"):
+            await asyncio.to_thread(app.state.sensor_ocr.close)
         controller.stop_outputs()
         if controller.session and controller.session["phase"] not in (
             "DONE",

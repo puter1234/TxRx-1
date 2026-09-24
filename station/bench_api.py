@@ -11,6 +11,7 @@ from .schema import Model
 from .controller import Conflict
 from .bench import BenchSetup, serial_ports
 from .usb_camera import CameraProfile
+from .sensor_ocr import SensorOcrTest, SensorOcrSettings
 
 
 class Pulse(Model):
@@ -52,9 +53,13 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
     batch_cancel = threading.Event()
     ocr_frame = {"id": None, "image": None}
     ocr_frame_lock = threading.Lock()
+    sensor_ocr = SensorOcrTest(bench, camera, app.state.vision)
+    app.state.sensor_ocr = sensor_ocr
 
     def available(allow_led=False, allow_outputs=False):
         editable()
+        if sensor_ocr.busy():
+            raise Conflict("파이프라인 시험을 먼저 정지하세요.")
         if production_busy() or maintenance_active.is_set() or bench.native_busy or bench.rfid_busy:
             raise Conflict("진행 중인 점검이 끝난 후 다시 시도하세요.")
         if bench.runs and not allow_outputs and not (allow_led and set(bench.runs) == {"led"}):
@@ -92,7 +97,43 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
 
     @app.get("/api/bench")
     def state():
-        return {**bench.status(), "camera": camera.status(), "batch": dict(batch)}
+        return {**bench.status(), "camera": camera.status(), "batch": dict(batch),
+                "sensor_ocr": sensor_ocr.status(details=False)}
+
+    @app.get("/api/bench/pipeline")
+    def pipeline_state():
+        return sensor_ocr.status()
+
+    @app.post("/api/bench/pipeline/start")
+    async def start_pipeline(body: SensorOcrSettings, request: Request):
+        permitted(request)
+        def execute():
+            app.state.vision.load()
+            sensor_ocr.start(body)
+            return {**bench.status(), "sensor_ocr": sensor_ocr.status(details=False)}
+        return await native(execute, allow_outputs=True)
+
+    @app.post("/api/bench/pipeline/stop")
+    def stop_pipeline(request: Request):
+        permitted(request)
+        bench.stop("파이프라인 시험 중지")
+        return sensor_ocr.status()
+
+    @app.get("/api/bench/pipeline/frames/{job_id}/{sequence}")
+    def pipeline_image(job_id: str, sequence: int, request: Request, crop: int | None = None):
+        permitted(request)
+        image = sensor_ocr.image(job_id, sequence, crop)
+        if image is None:
+            raise HTTPException(410, "이 프레임은 메모리에서 정리되었습니다.")
+        import cv2
+        height, width = image.shape[:2]
+        scale = min(1.0, 1280 / max(height, width))
+        if scale < 1:
+            image = cv2.resize(image, (max(1, round(width * scale)), max(1, round(height * scale))))
+        ok, encoded = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        if not ok:
+            raise HTTPException(500, "프레임을 표시하지 못했습니다.")
+        return Response(encoded.tobytes(), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
     @app.post("/api/bench/camera/batch/cancel")
     def cancel_batch(request: Request):
@@ -169,6 +210,8 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
         permitted(request)
         with controller.lock, bench.lock:
             editable()
+            if sensor_ocr.busy():
+                raise Conflict("파이프라인 시험 중입니다. 정지는 언제든 가능합니다.")
             if production_busy() or maintenance_active.is_set() or bench.native_busy:
                 raise Conflict("진행 중인 점검이 끝난 후 다시 시도하세요.")
             return bench.pulse(**body.model_dump())
@@ -192,6 +235,8 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
             editable()
             if production_busy() or maintenance_active.is_set():
                 raise Conflict("작업 종료 후 LED를 시험하세요.")
+            if sensor_ocr.busy():
+                return bench.stop("LED 끄기로 파이프라인 시험 중지")
             return bench.led_off()
 
     @app.post("/api/bench/motor/off")
@@ -201,6 +246,8 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
             editable()
             if production_busy() or maintenance_active.is_set():
                 raise Conflict("작업 종료 후 모터를 시험하세요.")
+            if sensor_ocr.busy():
+                return bench.stop("모터 끄기로 파이프라인 시험 중지")
             return bench.output_off("motor")
 
     @app.post("/api/bench/stop")
@@ -227,7 +274,11 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
                 app.state.vision.load()
             except ModuleNotFoundError as exc:
                 return {"ok": False, "detail": "OCR 실행 패키지가 설치되지 않았습니다: " + str(exc.name)}
-            return {"ok": app.state.vision.status()["loaded"], "detail": "OCR 모델 준비 완료"}
+            status = app.state.vision.status()
+            device = str(status.get("device") or "")
+            return {"ok": status["loaded"], "detail":
+                    "OCR GPU 사용: " + str(status.get("gpu_name") or device)
+                    if device.startswith("cuda") else "OCR CPU 사용 중"}
         return await native(execute, allow_led=True)
 
     @app.post("/api/bench/ocr/read")

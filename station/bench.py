@@ -180,6 +180,8 @@ class Bench:
         self.transitions = [0, 0, 0]
         self.changed_at = [None, None, None]
         self.events = deque(maxlen=50)
+        self.input_listeners = []
+        self.stop_listeners = []
         self.last_rfid = None
         self.closed = threading.Event()
         self.thread = threading.Thread(target=self._watch, daemon=True, name="device-test-watchdog")
@@ -397,6 +399,8 @@ class Bench:
         with self.stop_lock:
             self.stop_serial += 1
         with self.lock:
+            for listener in self.stop_listeners:
+                listener(reason)
             self.generation += 1
             self.cancel.set()
             old, self.runs = self.runs, {}
@@ -450,6 +454,8 @@ class Bench:
                     self.transitions[i] += 1
                     self.changed_at[i] = time.time()
                     self.events.append({"channel": i + 1, "raw": value, "time": self.changed_at[i]})
+                    for listener in self.input_listeners:
+                        listener(i + 1, value, time.monotonic_ns())
             self.last = snap
             if self.stop_wait_until:
                 if snap.get("km2_on") is False:
