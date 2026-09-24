@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from jetson_ocr_env import cusparselt_environment
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -26,8 +28,9 @@ def main():
     if pillow.returncode:
         raise SystemExit("Pillow is missing from .venv-bench. Run: python3 scripts/install_bench.py")
     print("Open http://127.0.0.1:8000/ on the J4012. Device tests control real hardware.", flush=True)
-    os.execv(str(python), [str(python), "-m", "uvicorn", "station.app:create_app",
-                         "--factory", "--host", "127.0.0.1", "--port", "8000", "--workers", "1"])
+    os.execve(str(python), [str(python), "-m", "uvicorn", "station.app:create_app",
+                           "--factory", "--host", "127.0.0.1", "--port", "8000", "--workers", "1"],
+              cusparselt_environment(python.parent))
 
 
 if __name__ == "__main__":

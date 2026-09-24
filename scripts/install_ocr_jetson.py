@@ -15,6 +15,8 @@ import sys
 import urllib.request
 from pathlib import Path
 
+from jetson_ocr_env import cusparselt_environment
+
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON = ROOT / ".venv-bench/bin/python"
@@ -78,29 +80,12 @@ def has_library(name: str) -> bool:
 
 
 def install_system_libraries() -> None:
-    if has_library("libopenblas.so.0") and has_library("libcusparseLt.so.0"):
+    if has_library("libopenblas.so.0"):
         return
     run("sudo", "apt-get", "update")
+    run("sudo", "apt-get", "install", "-y", "libopenblas-dev")
     if not has_library("libopenblas.so.0"):
-        run("sudo", "apt-get", "install", "-y", "libopenblas-dev")
-    if not has_library("libcusparseLt.so.0"):
-        package = "libcusparselt0-cuda-12"
-        available = subprocess.run(["apt-cache", "show", package], capture_output=True).returncode == 0
-        if not available:
-            # NVIDIA CUDA network repository for Ubuntu 22.04 ARM64.
-            keyring = WHEELS / "cuda-keyring_1.1-1_all.deb"
-            WHEELS.mkdir(parents=True, exist_ok=True)
-            url = ("https://developer.download.nvidia.com/compute/cuda/repos/"
-                   "ubuntu2204/arm64/cuda-keyring_1.1-1_all.deb")
-            print("Installing NVIDIA CUDA package source", flush=True)
-            with urllib.request.urlopen(url, timeout=60) as response, keyring.open("wb") as output:
-                for chunk in iter(lambda: response.read(1024 * 1024), b""):
-                    output.write(chunk)
-            run("sudo", "dpkg", "-i", str(keyring))
-            run("sudo", "apt-get", "update")
-        run("sudo", "apt-get", "install", "-y", package)
-    if not has_library("libopenblas.so.0") or not has_library("libcusparseLt.so.0"):
-        raise RuntimeError("Jetson system libraries are still missing after installation.")
+        raise RuntimeError("OpenBLAS is still missing after installation.")
 
 
 def main() -> None:
@@ -114,9 +99,11 @@ def main() -> None:
     if not release.is_file() or "R36" not in release.read_text(errors="replace"):
         raise SystemExit("This installer is for Jetson Linux R36 / JetPack 6.1 only.")
     if os.geteuid() == 0:
-        raise SystemExit("Run without sudo; only system libraries use sudo.")
+        raise SystemExit("Run without sudo; only OpenBLAS installation may use sudo.")
 
     install_system_libraries()
+    run(str(PYTHON), "-m", "pip", "install", "--no-cache-dir", "nvidia-cusparselt-cu12==0.8.1")
+    ocr_env = cusparselt_environment(PYTHON.parent, required=True)
 
     wheels = [fetch(*package) for package in PACKAGES]
     run(str(PYTHON), "-m", "pip", "install", "--no-cache-dir", str(wheels[0]))
@@ -127,12 +114,13 @@ def main() -> None:
     # Some NVIDIA-published wheel metadata differs from the pair validated on
     # JetPack 6.1; the actual imports, CUDA check and model load below decide.
     subprocess.run([str(PYTHON), "-m", "pip", "check"], check=False)
-    run(str(PYTHON), "-c",
+    subprocess.run([str(PYTHON), "-c",
         "import torch, torchvision, timm, pytorch_lightning, PIL, zxingcpp; "
         "assert torch.cuda.is_available(), 'Jetson CUDA is unavailable'; "
         "from station.vision import Vision; vision=Vision(); vision.load(); "
         "print('OCR READY:', torch.__version__, torchvision.__version__, "
-        "torch.cuda.get_device_name(0), vision.status()['model_hash'])")
+        "torch.cuda.get_device_name(0), vision.status()['model_hash'])"],
+        check=True, env=ocr_env)
     print("OCR dependencies and local model verified in .venv-bench.", flush=True)
 
 
