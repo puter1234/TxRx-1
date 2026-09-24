@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { useApp } from "../lib/store";
 import { OutputTests } from "../components/DeviceTests";
 import DeviceSettings from "../components/DeviceSettings";
-import Equipment from "../screens/Equipment";
+import Equipment, { OcrLiveTest } from "../screens/Equipment";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), bench: {} as any }));
 vi.mock("./shared", async importOriginal => ({ ...(await importOriginal<any>()), api: mocks.api }));
@@ -77,4 +77,36 @@ it("allows RFID reading with both outputs on and displays read errors beside the
   expect(read.disabled).toBe(false);
   fireEvent.click(read);
   expect(await screen.findByRole("alert")).toHaveProperty("textContent", "RFID response timeout: 08");
+});
+
+it("reads a live OCR crop with correction and displays the crop and value", async () => {
+  mocks.bench.state.camera = { connected: true };
+  mocks.api.mockImplementation(async (path: string) => {
+    if (path === "/bench/ocr/correction") return { gain: 1, offset: 0, gamma: 1, contrast: 1, clahe: false };
+    if (path === "/bench/ocr/read") return {
+      text: "ABC123", confidence: 0.94, min_char: 0.9, ms: 8,
+      crop_width: 320, crop_height: 100, preview: "data:image/jpeg;base64,dGVzdA==",
+      chars: [{ ch: "A", p: 0.95 }],
+    };
+    return {};
+  });
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+    ok: true, blob: async () => new Blob(["frame"], { type: "image/jpeg" }),
+  } as Response);
+  const create = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:frame");
+  const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  try {
+    render(<OcrLiveTest bench={mocks.bench} locked={false} checkOcr={() => {}} ocr={null} ocrBusy={false}/>);
+    const read = screen.getByRole("button", { name: "촬영하고 OCR 검사" }) as HTMLButtonElement;
+    await waitFor(() => expect(read.disabled).toBe(false));
+    fireEvent.click(read);
+    expect(await screen.findByText("ABC123")).toBeTruthy();
+    expect(screen.getByAltText("OCR에 사용한 보정 영역")).toHaveProperty("src", "data:image/jpeg;base64,dGVzdA==");
+    expect(mocks.api).toHaveBeenCalledWith("/bench/ocr/read", {
+      box: [0.1, 0.1, 0.8, 0.25], rotation: 0,
+      correction: { gain: 1, offset: 0, gamma: 1, contrast: 1, clahe: false },
+    });
+  } finally {
+    fetchMock.mockRestore(); create.mockRestore(); revoke.mockRestore();
+  }
 });

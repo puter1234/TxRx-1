@@ -712,7 +712,10 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
                     # Isolated to a worker thread; STOP/API remains responsive. A timeout
                     # latches fault, ignores late results, and Vision rejects overlapping work.
                     result = await asyncio.wait_for(
-                        asyncio.to_thread(vision.inspect, target, brand, recipe),
+                        asyncio.to_thread(
+                            vision.inspect, target, brand, recipe,
+                            controller.session.get("ocr_correction", {}),
+                        ),
                         timeout=120,
                     )
                     observations.update(result["observations"])

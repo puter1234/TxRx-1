@@ -35,6 +35,36 @@ def test_live_frame_matches_saved_png_without_model(tmp_path, monkeypatch):
     assert len(seen) == 2 and np.array_equal(seen[0], seen[1])
 
 
+def test_correction_matches_live_test_and_production_ocr():
+    import numpy as np
+
+    from station.schema import Brand, Recipe
+    from station.vision import Vision
+
+    frame = np.full((60, 120, 3), 40, dtype=np.uint8)
+    means = []
+
+    class Reader:
+        def read(self, crop):
+            value = int(np.asarray(crop).mean())
+            means.append(value)
+            return {"text": str(value), "confidence": 0.9, "min_char": 0.9,
+                    "chars": [], "ms": 1.0}
+
+    vision = Vision()
+    vision.recognizer = Reader()
+    vision.load = lambda: None
+    correction = {"gain": 2, "gamma": 1, "contrast": 1, "clahe": False}
+    brand = Brand(id="test", name="Test", options=[{"key": "text", "label": "Text", "values": ["80"]}],
+                  ocr_regions=[{"field": "text", "box": [0, 0, 1, 1]}])
+    recipe = Recipe(brand_id="test", brand_revision=1, targets={"text": "80"}, channels=["ocr"])
+    test_result = vision.test_region(frame, [0, 0, 1, 1], correction)
+    production = vision.inspect_frame(frame, brand, recipe, correction)
+    assert test_result["text"] == "80"
+    assert production["observations"]["ocr"]["text"] == "80"
+    assert means == [80, 80]
+
+
 @pytest.mark.slow
 def test_real_parseq_without_network(tmp_path, monkeypatch):
     import socket

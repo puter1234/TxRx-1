@@ -573,6 +573,48 @@ def test_ocr_reports_missing_runtime_package(rig):
     assert not app.state.bench.native_busy
 
 
+def test_live_ocr_reads_corrected_crop_without_saving_a_photo(rig):
+    c, app = rig
+    profile = app.state.camera.backend.profile.model_dump()
+    assert c.post("/api/bench/camera/apply", json={
+        "profile": profile, "save": False, "expected_revision": 0,
+    }).status_code == 200
+    frame = np.full((480, 640, 3), 40, dtype=np.uint8)
+    app.state.camera.after = lambda *args: (frame, {"seq": 101})
+
+    class Reader:
+        device = "cpu"
+        gpu_name = ""
+
+        def read(self, image):
+            value = int(np.asarray(image).mean())
+            return {"text": str(value), "confidence": 0.9, "min_char": 0.8,
+                    "chars": [{"ch": str(value), "p": 0.9}], "ms": 1.0}
+
+    app.state.vision.recognizer = Reader()
+    app.state.vision.load = lambda: None
+    body = {"box": [0.1, 0.1, 0.5, 0.3],
+            "correction": {"gain": 2, "gamma": 1, "contrast": 1, "clahe": False}}
+    response = c.post("/api/bench/ocr/read", json=body)
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["text"] == "80"
+    assert result["preview"].startswith("data:image/jpeg;base64,")
+    assert result["crop_width"] == 320 and result["crop_height"] == 144
+    assert not list((app.state.store.root / "device-tests").glob("*"))
+    assert c.get("/api/history").json()["inspections"] == []
+    saved = c.put("/api/bench/ocr/correction", json=body["correction"])
+    assert saved.status_code == 200, saved.text
+    assert c.get("/api/bench/ocr/correction").json()["gain"] == 2
+
+
+def test_live_ocr_rejects_invalid_region_and_correction(rig):
+    c, _ = rig
+    assert c.post("/api/bench/ocr/read", json={"box": [0.9, 0.9, 0.5, 0.5]}).status_code == 422
+    assert c.post("/api/bench/ocr/read", json={"box": [0, 0, 1, 1],
+        "correction": {"gain": 100}}).status_code == 422
+
+
 def test_unconfirmed_off_remains_blocked(rig):
     c, app = rig
     setup(c)

@@ -6,8 +6,10 @@ import uuid
 
 from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse
-from pydantic import Field
+from pydantic import Field, model_validator
 from .schema import Model
+from .ocr_correction import OCRCorrection
+from .storage import dump
 from .controller import Conflict
 from .bench import BenchSetup, serial_ports
 from .usb_camera import CameraProfile
@@ -43,6 +45,21 @@ class CameraApply(Model):
 
 class BatchCapture(Model):
     count: int = Field(ge=1, le=500)
+
+
+class OCRRead(Model):
+    box: tuple[float, float, float, float]
+    rotation: int = Field(default=0)
+    correction: OCRCorrection = Field(default_factory=OCRCorrection)
+
+    @model_validator(mode="after")
+    def valid_box(self):
+        x, y, w, h = self.box
+        if min(x, y) < 0 or min(w, h) <= 0 or x + w > 1 or y + h > 1:
+            raise ValueError("OCR 영역은 영상 안에 지정해야 합니다.")
+        if self.rotation not in (0, 90, 180, 270):
+            raise ValueError("OCR 회전값은 0, 90, 180, 270 중에서 선택하세요.")
+        return self
 
 
 def install(app, controller, bench, camera, permitted, editable, production_busy, maintenance_active, workers):
@@ -223,6 +240,49 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
             except ModuleNotFoundError as exc:
                 return {"ok": False, "detail": "OCR 실행 패키지가 설치되지 않았습니다: " + str(exc.name)}
             return {"ok": app.state.vision.status()["loaded"], "detail": "OCR 모델 준비 완료"}
+        return await native(execute, allow_led=True)
+
+    @app.get("/api/bench/ocr/correction")
+    def ocr_correction():
+        return OCRCorrection.model_validate(store.get("ocr_correction", {})).model_dump()
+
+    @app.put("/api/bench/ocr/correction")
+    def save_ocr_correction(body: OCRCorrection, request: Request):
+        actor = permitted(request, ("admin",))
+        with controller.lock, bench.lock:
+            available(allow_led=True)
+            with store.transaction() as transaction:
+                transaction.execute(
+                    "INSERT OR REPLACE INTO meta VALUES(?,?)",
+                    ("ocr_correction", dump(body.model_dump())),
+                )
+                store.event(
+                    "OCR_CORRECTION_SAVED",
+                    {"actor": actor, "correction": body.model_dump()},
+                    transaction,
+                )
+        return body.model_dump()
+
+    @app.post("/api/bench/ocr/read")
+    async def read_ocr(body: OCRRead, request: Request):
+        permitted(request)
+
+        def execute():
+            if not camera.status().get("connected"):
+                raise Conflict("카메라를 먼저 연결하세요.")
+            started = time.perf_counter()
+            frame, timing = camera.after(time.monotonic_ns(), 10)
+            capture_ms = (time.perf_counter() - started) * 1000
+            result = app.state.vision.test_region(
+                frame, body.box, body.correction.model_dump(), body.rotation
+            )
+            result["timing"] = timing
+            result["capture_ms"] = round(capture_ms, 1)
+            result["processing_ms"] = round(
+                (time.perf_counter() - started) * 1000 - capture_ms, 1
+            )
+            return result
+
         return await native(execute, allow_led=True)
 
     @app.get("/api/bench/camera/devices")

@@ -76,7 +76,7 @@ class TestVision:
     def status(self):
         return {"busy": False, "local_assets_present": True}
 
-    def inspect_frame(self, frame, brand, recipe):
+    def inspect_frame(self, frame, brand, recipe, correction=None):
         assert isinstance(frame, np.ndarray)
         return {"observations": {"ocr": dict(recipe.targets)}, "failures": []}
 
@@ -132,7 +132,7 @@ def test_stopped_single_product_cycle_and_departure(
     recipe.target_count = 1
     c.new_session(recipe)
     class FailVision(TestVision):
-        def inspect_frame(self, frame, brand, recipe):
+        def inspect_frame(self, frame, brand, recipe, correction=None):
             return {
                 "observations": {"ocr": {}},
                 "failures": [{"code": "OCR_MISSING"}],

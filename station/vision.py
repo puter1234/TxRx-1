@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import hashlib
+import base64
+import io
 import json
 import sys
 import threading
 from pathlib import Path
 
 from .schema import Brand, Recipe
+from .ocr_correction import OCRCorrection, correct
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -72,14 +75,14 @@ class Vision:
         recognizer._lock = threading.Lock()
         self.recognizer = recognizer
 
-    def inspect(self, image_path: Path, brand: Brand, recipe: Recipe):
-        return self._inspect(image_path, brand, recipe)
+    def inspect(self, image_path: Path, brand: Brand, recipe: Recipe, correction=None):
+        return self._inspect(image_path, brand, recipe, correction)
 
-    def inspect_frame(self, frame, brand: Brand, recipe: Recipe):
+    def inspect_frame(self, frame, brand: Brand, recipe: Recipe, correction=None):
         """Inspect an OpenCV BGR frame without encoding or reopening a photo."""
-        return self._inspect(frame, brand, recipe)
+        return self._inspect(frame, brand, recipe, correction)
 
-    def _inspect(self, source, brand: Brand, recipe: Recipe):
+    def _inspect(self, source, brand: Brand, recipe: Recipe, correction):
         if not self.lock.acquire(blocking=False):
             raise RuntimeError("이전 영상 처리가 아직 끝나지 않았습니다.")
         try:
@@ -89,14 +92,21 @@ class Vision:
             from PIL import Image
             from ocr.core import to_rgb
 
+            settings = OCRCorrection.model_validate(correction or {})
+
+            frame = None
             if isinstance(source, (str, Path)):
                 with Image.open(source) as original:
                     original.load()
                     image = to_rgb(original)
             else:
-                image = Image.fromarray(cv2.cvtColor(source, cv2.COLOR_BGR2RGB))
-            if image.width * image.height > 24_000_000:
-                raise ValueError("이미지는 2,400만 화소 이하만 지원합니다.")
+                frame = source
+                image = None
+            width, height = (
+                image.size if image is not None else (frame.shape[1], frame.shape[0])
+            )
+            if "barcode" in recipe.channels and width * height > 24_000_000:
+                raise ValueError("바코드 영상은 2,400만 화소 이하만 지원합니다.")
             observations, detail, failures = {}, {}, []
             if "ocr" in recipe.channels:
                 self.load()
@@ -105,16 +115,19 @@ class Vision:
                     if region.field not in recipe.targets:
                         continue
                     x, y, w, h = region.box
-                    crop = image.crop(
-                        (
-                            int(x * image.width),
-                            int(y * image.height),
-                            int((x + w) * image.width),
-                            int((y + h) * image.height),
+                    left, top = int(x * width), int(y * height)
+                    right, bottom = int((x + w) * width), int((y + h) * height)
+                    if (right - left) * (bottom - top) > 24_000_000:
+                        raise ValueError("OCR 영역은 2,400만 화소 이하여야 합니다.")
+                    if frame is None:
+                        crop = image.crop((left, top, right, bottom))
+                    else:
+                        crop = Image.fromarray(
+                            cv2.cvtColor(frame[top:bottom, left:right], cv2.COLOR_BGR2RGB)
                         )
-                    )
                     if region.rotation:
                         crop = crop.rotate(region.rotation, expand=True)
+                    crop = correct(crop, settings)
                     out = self.recognizer.read(crop)
                     detail[region.field] = {
                         **out,
@@ -155,7 +168,11 @@ class Vision:
             if "barcode" in recipe.channels:
                 import tagreader
 
-                bgr = cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
+                bgr = (
+                    frame
+                    if frame is not None
+                    else cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
+                )
                 codes = sorted({t.text for t in tagreader.read_tag(bgr) if t.text})
                 detail["barcodes"] = codes
                 if len(codes) != 1:
@@ -179,6 +196,55 @@ class Vision:
                 "details": detail,
                 "failures": failures,
                 "model_hash": self.model_hash,
+            }
+        except Exception as exc:
+            self.error = str(exc)
+            raise
+        finally:
+            self.lock.release()
+
+    def test_region(self, frame, box, correction=None, rotation=0):
+        """Read one live ROI and return only a bounded in-memory preview."""
+        if not self.lock.acquire(blocking=False):
+            raise RuntimeError("이전 영상 처리가 아직 끝나지 않았습니다.")
+        try:
+            import cv2
+            from PIL import Image
+
+            self.error = None
+            settings = OCRCorrection.model_validate(correction or {})
+            height, width = frame.shape[:2]
+            x, y, w, h = box
+            left, top = int(x * width), int(y * height)
+            right, bottom = int((x + w) * width), int((y + h) * height)
+            if right - left < 16 or bottom - top < 16:
+                raise ValueError("OCR 영역은 가로와 세로가 각각 16픽셀 이상이어야 합니다.")
+            if (right - left) * (bottom - top) > 24_000_000:
+                raise ValueError("OCR 영역은 2,400만 화소 이하여야 합니다.")
+            rgb = cv2.cvtColor(frame[top:bottom, left:right], cv2.COLOR_BGR2RGB)
+            crop = Image.fromarray(rgb)
+            if rotation:
+                crop = crop.rotate(rotation, expand=True)
+            crop = correct(crop, settings)
+            self.load()
+            result = self.recognizer.read(crop)
+            preview = crop.copy()
+            preview.thumbnail((800, 500))
+            memory = io.BytesIO()
+            preview.save(memory, format="JPEG", quality=80)
+            return {
+                "box": box,
+                "rotation": rotation,
+                "frame_width": width,
+                "frame_height": height,
+                "crop_width": crop.width,
+                "crop_height": crop.height,
+                "correction": settings.model_dump(),
+                "preview": (
+                    "data:image/jpeg;base64,"
+                    + base64.b64encode(memory.getvalue()).decode()
+                ),
+                **result,
             }
         except Exception as exc:
             self.error = str(exc)

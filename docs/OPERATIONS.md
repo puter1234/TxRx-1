@@ -21,7 +21,7 @@
 
 ## 데이터와 백업
 
-운영 데이터 기본 경로는 프로젝트의 `runtime/`; `TXRX_DATA`로 지정할 수 있다. 설정은 `TXRX_CONFIG`로 지정한다. 검사별 PNG와 업로드 원본, 입력/증거 SHA256, 기준표 snapshot/hash, 사용자·시간·시도·판독·실패 이유·계수·수동 보정을 남긴다. 사진 검증은 REPLAY, 실물은 HARDWARE로 구분된다.
+운영 데이터 기본 경로는 프로젝트의 `runtime/`; `TXRX_DATA`로 지정할 수 있다. 설정은 `TXRX_CONFIG`로 지정한다. 보존하는 검사 사진과 업로드 원본, 입력/증거 SHA256, 기준표 snapshot/hash, 사용자·시간·시도·판독·실패 이유·계수·수동 보정을 남긴다. 통과 사진 저장이 꺼진 실물 작업은 합격 사진 파일을 만들지 않는다. 사진 검증은 REPLAY, 실물은 HARDWARE로 구분된다.
 
 매일 정지/대기 중 SQLite online backup과 integrity_check를 수행한다. 환경 설정의 검사 기록 백업도 같은 방식이다. **이 버튼과 자동 백업은 DB만 포함**한다. 전체 증거 복구에는 아래 archive를 사용하고 config와 릴리스 ZIP을 함께 보관한다.
 

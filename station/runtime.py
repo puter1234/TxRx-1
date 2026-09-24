@@ -212,7 +212,12 @@ class HardwareCycle:
                 )
                 names.append("rfid")
             if any(x in recipe.channels for x in ("ocr", "barcode")):
-                jobs.append(self.offload(self.vision.inspect_frame, frame, brand, recipe))
+                jobs.append(
+                    self.offload(
+                        self.vision.inspect_frame, frame, brand, recipe,
+                        self.c.session.get("ocr_correction", {}),
+                    )
+                )
                 names.append("vision")
             tasks = {asyncio.create_task(job): name for name, job in zip(names, jobs)}
             pending = set(tasks)
