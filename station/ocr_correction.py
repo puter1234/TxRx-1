@@ -2,7 +2,6 @@
 
 import cv2
 import numpy as np
-from PIL import Image
 from pydantic import Field
 
 from .schema import Model
@@ -16,9 +15,10 @@ class OCRCorrection(Model):
     clahe: bool = False
 
 
-def correct(image: Image.Image, settings: OCRCorrection) -> Image.Image:
+def correct(image, settings: OCRCorrection):
     if settings == OCRCorrection():
         return image
+    from PIL import Image
     rgb = np.asarray(image.convert("RGB"), dtype=np.uint8)
     if settings.gain != 1 or settings.offset != 0 or settings.contrast != 1:
         values = rgb.astype(np.float32) * settings.gain + settings.offset

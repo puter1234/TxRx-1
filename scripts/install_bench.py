@@ -32,12 +32,13 @@ def main():
     python = str(env / "bin/python")
     subprocess.run(
         [python, "-m", "pip", "install", "--no-index", "--require-hashes",
-         "--find-links", str(ROOT / "wheelhouse"), "-r",
+         "--find-links", str(ROOT / "wheelhouse"),
+         "--find-links", str(ROOT / "deploy/wheels"), "-r",
          str(ROOT / "deploy/requirements-bench-arm64.lock")], check=True,
     )
     subprocess.run([python, "-m", "pip", "check"], check=True)
     subprocess.run(
-        [python, "-c", "import fastapi, uvicorn, cv2, numpy, serial, gpiod; "
+        [python, "-c", "import fastapi, uvicorn, cv2, numpy, serial, gpiod, PIL; "
          "assert hasattr(gpiod, 'request_lines'), 'gpiod 2.x API missing'; "
          "assert cv2.videoio_registry.hasBackend(cv2.CAP_V4L2), 'V4L2 backend missing'; "
          "print('Component dependencies ready. Hardware has not been opened.')"],
