@@ -16,7 +16,7 @@ from .ocr_correction import OCRCorrection, correct
 
 ROOT = Path(__file__).resolve().parents[1]
 
-OCR_MODULES = ("PIL", "torch", "torchvision", "timm", "pytorch_lightning", "zxingcpp")
+OCR_MODULES = ("PIL", "torch", "torchvision", "timm", "pytorch_lightning", "yaml", "lmdb", "nltk", "zxingcpp")
 
 
 def missing_ocr_modules():
