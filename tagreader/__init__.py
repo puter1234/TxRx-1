@@ -17,8 +17,7 @@ import cv2
 import numpy as np
 
 from .crop import RotationCache, crop_around, draw_debug
-from .decode import decode_quad, scan
-from .detect import candidate_tiers
+from .decode import scan
 from .geometry import deskew_angle, transform_points
 
 __all__ = ["TagResult", "read_tag", "read_barcode_values"]
@@ -50,7 +49,7 @@ class TagResult:
     """회전 보정된 이미지 전체. 택을 통짜로 OCR에 넣고 싶을 때 쓴다."""
 
     stage: str = ""
-    """값을 찾아낸 감지 단계 ('small' | 'full' | 'tiled' | 'whole-image')."""
+    """바코드를 읽은 원본 영상."""
 
     _rotated_quad: np.ndarray | None = field(default=None, repr=False)
     """rotated 좌표계로 옮긴 quad. debug_view()에서만 쓴다."""
@@ -73,44 +72,26 @@ def read_tag(
     x_pad_ratio: float = 0.15,
     max_barcodes: int = 4,
 ) -> list[TagResult]:
-    """사진에서 바코드를 찾아 값을 읽고, OCR용 위/아래 크롭을 만든다.
-
-    감지는 싼 단계부터 시도해 값이 읽히면 멈춘다. 값을 하나도 못 읽으면 마지막으로
-    이미지 전체를 스캔한다 (이 경로는 크롭을 만들 수 없어 text만 채워진다).
-
-    want_crops=False로 두면 크롭 생성을 건너뛰어 더 빠르다 (값만 필요할 때).
-    """
+    """원본 프레임을 한 번 스캔하고 바코드 주변 OCR 위치를 만든다."""
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+    found = scan(gray)
+    if not found:
+        return []
 
     hits: list[tuple[str, str, np.ndarray]] = []
-    stage = ""
-    for stage, quads in candidate_tiers(gray):
-        for quad in quads[:max_barcodes]:
-            text, fmt = decode_quad(gray, quad)
-            if text:
-                hits.append((text, fmt, quad))
-        if hits:
-            break
-
+    for barcode in found[:max_barcodes]:
+        position = barcode.position
+        quad = np.array([
+            [getattr(position, name).x, getattr(position, name).y]
+            for name in ("top_left", "top_right", "bottom_right", "bottom_left")
+        ], dtype=np.float64)
+        height = (np.linalg.norm(quad[3] - quad[0]) +
+                  np.linalg.norm(quad[2] - quad[1])) / 2
+        if height >= 4:
+            hits.append((barcode.text, str(barcode.format), quad))
     if not hits:
-        found = scan(gray)
-        if not found:
-            return []
-        # ZXing returns barcode corners even when OpenCV's detector misses it.
-        # Keep those corners so OCR can deskew and search beside the barcode.
-        for barcode in found[:max_barcodes]:
-            position = barcode.position
-            quad = np.array([
-                [getattr(position, name).x, getattr(position, name).y]
-                for name in ("top_left", "top_right", "bottom_right", "bottom_left")
-            ], dtype=np.float64)
-            height = (np.linalg.norm(quad[3] - quad[0]) +
-                      np.linalg.norm(quad[2] - quad[1])) / 2
-            if height >= 4:
-                hits.append((barcode.text, str(barcode.format), quad))
-        if not hits:
-            return [TagResult(text=found[0].text, format=str(found[0].format), stage="whole-image")]
-        stage = "whole-image"
+        return []
+    stage = "original"
 
     if not (want_crops or want_rotated):
         return [

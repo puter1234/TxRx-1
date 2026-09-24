@@ -30,11 +30,10 @@ def test_whole_image_barcode_keeps_corners_for_ocr(monkeypatch):
         bottom_right=point(160, 55), bottom_left=point(30, 55),
     )
     barcode = SimpleNamespace(text="ABC123", format="Code 39", position=position)
-    monkeypatch.setattr(tagreader, "candidate_tiers", lambda gray: iter(()))
     monkeypatch.setattr(tagreader, "scan", lambda gray: [barcode])
     result = tagreader.read_tag(np.zeros((100, 200, 3), dtype=np.uint8),
                                 want_crops=False, want_rotated=True)
-    assert result[0].stage == "whole-image"
+    assert result[0].stage == "original"
     assert result[0].text == "ABC123"
     assert result[0].rotated is not None
     assert result[0]._rotated_quad is not None
