@@ -121,7 +121,7 @@ def test_ocr_only_uses_detected_position_and_keeps_selected_target_validation(mo
     from station.rules import judge
 
     quad = np.array([[100, 200], [300, 200], [300, 250], [100, 250]], dtype=float)
-    monkeypatch.setattr(tagreader, "candidate_tiers", lambda image: iter([("full", [quad])]))
+    monkeypatch.setattr(tagreader, "candidate_tiers", lambda image, **kwargs: iter([("full", [quad])]))
 
     def forbidden(*args, **kwargs):
         pytest.fail("OCR-only production must not decode barcode values")

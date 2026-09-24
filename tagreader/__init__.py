@@ -92,8 +92,10 @@ def read_tag(
 
     hits: list[tuple[str | None, str | None, np.ndarray]] = []
     stage = ""
-    tiers = (candidate_tiers(gray, diagnostics=diagnostics["stages"])
-             if diagnostics is not None else candidate_tiers(gray))
+    detector_options = {"first_only": True} if not decode_values else {}
+    if diagnostics is not None:
+        detector_options["diagnostics"] = diagnostics["stages"]
+    tiers = candidate_tiers(gray, **detector_options)
     for stage, quads in tiers:
         started = time.perf_counter()
         decoded = 0

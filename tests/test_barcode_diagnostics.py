@@ -40,7 +40,8 @@ def test_diagnostics_distinguish_no_location_from_unreadable_value(monkeypatch, 
 def test_location_only_keeps_ocr_geometry_without_decoding_or_retrying(monkeypatch):
     quad = np.array([[50, 50], [180, 50], [180, 75], [50, 75]], dtype=float)
 
-    def candidates(image, diagnostics=None):
+    def candidates(image, diagnostics=None, first_only=False):
+        assert first_only
         if diagnostics is not None:
             diagnostics.append(dict(stage="full", candidates=1, detect_ms=0,
                                     decode_ms=0, attempted=0, decoded=0))
