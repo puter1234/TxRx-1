@@ -103,7 +103,7 @@ def main() -> None:
 
     install_system_libraries()
     run(str(PYTHON), "-m", "pip", "install", "--no-cache-dir", "nvidia-cusparselt-cu12==0.8.1")
-    ocr_env = cusparselt_environment(PYTHON.parent, required=True)
+    ocr_env = cusparselt_environment(PYTHON.parent.parent, required=True)
 
     wheels = [fetch(*package) for package in PACKAGES]
     run(str(PYTHON), "-m", "pip", "install", "--no-cache-dir", str(wheels[0]))
