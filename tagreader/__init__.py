@@ -12,6 +12,7 @@
 두 번 하면 그것만으로 예산을 갉아먹는다. 한 프로세스에서 한 번 디코드해 공유한다.
 """
 from dataclasses import dataclass, field
+import time
 
 import cv2
 import numpy as np
@@ -72,6 +73,7 @@ def read_tag(
     full_width: bool = True,
     x_pad_ratio: float = 0.15,
     max_barcodes: int = 4,
+    diagnostics: dict | None = None,
 ) -> list[TagResult]:
     """사진에서 바코드를 찾아 값을 읽고, OCR용 위/아래 크롭을 만든다.
 
@@ -80,22 +82,45 @@ def read_tag(
 
     want_crops=False로 두면 크롭 생성을 건너뛰어 더 빠르다 (값만 필요할 때).
     """
+    prepared = time.perf_counter()
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+    if diagnostics is not None:
+        diagnostics.update(stages=[], status="not_detected", decoded=0,
+                           prepare_ms=(time.perf_counter() - prepared) * 1000, align_ms=0.0)
 
     hits: list[tuple[str, str, np.ndarray]] = []
     stage = ""
-    for stage, quads in candidate_tiers(gray):
+    tiers = (candidate_tiers(gray, diagnostics=diagnostics["stages"])
+             if diagnostics is not None else candidate_tiers(gray))
+    for stage, quads in tiers:
+        started = time.perf_counter()
+        decoded = 0
         for quad in quads[:max_barcodes]:
             text, fmt = decode_quad(gray, quad)
             if text:
                 hits.append((text, fmt, quad))
+                decoded += 1
+        if diagnostics is not None:
+            diagnostics["stages"][-1].update(
+                decode_ms=(time.perf_counter() - started) * 1000,
+                attempted=min(len(quads), max_barcodes), decoded=decoded)
         if hits:
             break
 
     if not hits:
+        started = time.perf_counter()
         found = scan(gray)
+        if diagnostics is not None:
+            diagnostics["status"] = ("decode_failed" if any(
+                row["candidates"] for row in diagnostics["stages"]) else "not_detected")
+            diagnostics["stages"].append({
+                "stage": "whole-image", "candidates": 0, "attempted": 1,
+                "detect_ms": 0.0, "decode_ms": (time.perf_counter() - started) * 1000,
+                "decoded": len(found)})
         if not found:
             return []
+        if diagnostics is not None:
+            diagnostics.update(status="decoded", decoded=len(found))
         # ZXing returns barcode corners even when OpenCV's detector misses it.
         # Keep those corners so OCR can deskew and search beside the barcode.
         for barcode in found[:max_barcodes]:
@@ -112,12 +137,16 @@ def read_tag(
             return [TagResult(text=found[0].text, format=str(found[0].format), stage="whole-image")]
         stage = "whole-image"
 
+    if diagnostics is not None:
+        diagnostics.update(status="decoded", decoded=len(hits))
+
     if not (want_crops or want_rotated):
         return [
             TagResult(text=t, format=f, angle=deskew_angle(q), quad=q, stage=stage)
             for t, f, q in hits
         ]
 
+    aligned = time.perf_counter()
     cache = RotationCache(img)
     results = []
     for text, fmt, quad in hits:
@@ -135,6 +164,8 @@ def read_tag(
             rotated=rotated if want_rotated else None,
             stage=stage, _rotated_quad=rquad,
         ))
+    if diagnostics is not None:
+        diagnostics["align_ms"] = (time.perf_counter() - aligned) * 1000
     return results
 
 

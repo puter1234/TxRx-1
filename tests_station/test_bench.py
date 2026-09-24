@@ -610,6 +610,18 @@ def test_live_ocr_reads_auto_detected_line_without_saving_a_photo(rig, monkeypat
     assert result["reads"][0]["lines"][0]["text"] == "40"
     assert result["reads"][0]["lines"][0]["preview"].startswith("data:image/jpeg;base64,")
     assert result["reads"][0]["lines"][0]["crop_width"] > 0
+    # The downloaded image is the exact processed frame, even after live video changes.
+    import cv2
+    app.state.camera.read_latest = lambda: (np.full_like(frame, 200), {"seq": 102})
+    original = c.get(result["original_url"])
+    assert original.status_code == 200
+    assert original.headers["content-type"] == "image/png"
+    restored = cv2.imdecode(np.frombuffer(original.content, np.uint8), cv2.IMREAD_COLOR)
+    assert np.array_equal(restored, frame)
+    assert c.get(result["preview_url"]).headers["content-type"] == "image/jpeg"
+    next_result = c.post("/api/bench/ocr/read", json={})
+    assert next_result.status_code == 200, next_result.text
+    assert c.get(result["original_url"]).status_code == 410
     assert not list((app.state.store.root / "device-tests").glob("*"))
     assert c.get("/api/history").json()["inspections"] == []
 

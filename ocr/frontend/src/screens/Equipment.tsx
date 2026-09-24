@@ -16,7 +16,14 @@ type OcrLine = {
 type OcrResult = { ok: boolean; reads: { barcode: string | null; barcode_format: string | null;
   verdict: string; verdict_label: string; verdict_detail: string; stage: string; lines: OcrLine[] }[];
   error: string | null; capture_ms: number; processing_ms: number;
-  ms_model_load: number; ms_barcode: number; ms_ocr: number };
+  ms_model_load: number; ms_barcode: number; ms_ocr: number;
+  frame_width?: number; frame_height?: number; preview_url?: string; original_url?: string;
+  barcode_diagnostics?: { status: string; decoded: number; prepare_ms: number; align_ms: number;
+    stages: { stage: string; candidates: number; attempted: number; decoded: number; detect_ms: number; decode_ms: number }[];
+    runtime: { opencv: string; zxing: string; python: string; source: string; report_version: number } } };
+const barcodeStages: Record<string, string> = {
+  small: "축소본 위치 검출", full: "원본 위치 검출", tiled: "분할 위치 검출", "whole-image": "원본 전체 판독",
+};
 export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy }: {
   bench: ReturnType<typeof useBench>; locked: boolean;
   checkOcr: () => void; ocr: { ok: boolean; detail: string } | null; ocrBusy: boolean;
@@ -73,6 +80,13 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy }: {
             {result.ok ? "검사 통과" : "검사 실패"}
           </p>
           {result.error && <p role="status" className="text-xl font-bold text-danger">{result.error}</p>}
+          {result.preview_url && <div className="space-y-3">
+            <div className="flex items-center gap-2"><h3 className="text-xl font-bold">검사한 사진</h3>
+              <Help text="이번 판독에 실제로 사용한 프레임입니다. 화면에서는 작게 표시하며 원본 사진 저장은 같은 프레임의 전체 해상도 PNG를 받습니다. 다음 검사 시 이전 사진은 교체됩니다."/></div>
+            <img src={result.preview_url} alt="이번 검사에 사용한 사진" className="max-h-[520px] w-full rounded-lg bg-ink-900 object-contain"/>
+            <p className="text-lg font-bold">{result.frame_width} × {result.frame_height}</p>
+            <a className="btn btn-outline" href={result.original_url} download>검사 원본 사진 저장</a>
+          </div>}
           {result.reads.map((read, i) => <div key={i} className="space-y-3">
             <p className={"text-lg font-bold " + (read.verdict === "match" || read.verdict === "match_loose" ? "text-ok" : "text-danger")}>
               {read.verdict_label}{read.barcode ? `  바코드 ${read.barcode}` : ""}
@@ -86,7 +100,25 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy }: {
           </div>)}
           {!result.error && result.reads.every(read => !read.lines.length) && <p className="text-xl font-bold">글자를 찾지 못했습니다</p>}
           <p className="text-lg font-bold">프레임 복사 {result.capture_ms.toFixed(1)} ms</p>
-          <p className="text-lg font-bold">모델 준비 {result.ms_model_load.toFixed(1)} ms, 바코드 검출 {result.ms_barcode.toFixed(1)} ms, OCR {result.ms_ocr.toFixed(1)} ms</p>
+          <p className="text-lg font-bold">모델 준비 {result.ms_model_load.toFixed(1)} ms, 바코드 처리 {result.ms_barcode.toFixed(1)} ms, OCR {result.ms_ocr.toFixed(1)} ms</p>
+          {result.barcode_diagnostics && <details className="space-y-3">
+            <summary className="cursor-pointer text-lg font-bold">판독 상세</summary>
+            <div className="overflow-x-auto"><table className="w-full text-left text-lg">
+              <thead><tr><th>단계</th><th>위치 후보</th><th>읽은 값</th><th>위치 검출</th><th>값 판독</th></tr></thead>
+              <tbody>{result.barcode_diagnostics.stages.map((row, i) => <tr key={i}>
+                <td className="py-2">{barcodeStages[row.stage] || row.stage}</td><td>{row.candidates}</td><td>{row.decoded}</td>
+                <td>{row.detect_ms.toFixed(1)} ms</td><td>{row.decode_ms.toFixed(1)} ms</td>
+              </tr>)}</tbody>
+            </table></div>
+            <p className="text-lg font-bold">흑백 변환 {result.barcode_diagnostics.prepare_ms.toFixed(1)} ms, OCR 영역 정렬 {result.barcode_diagnostics.align_ms.toFixed(1)} ms</p>
+            <p className="text-lg">OpenCV {result.barcode_diagnostics.runtime.opencv}, ZXing {result.barcode_diagnostics.runtime.zxing}</p>
+            <button className="btn btn-outline" onClick={() => {
+              const blob = new Blob([JSON.stringify(result, null, 2)], { type: "application/json" });
+              const href = URL.createObjectURL(blob), link = document.createElement("a");
+              link.href = href; link.download = "barcode-report.json"; link.click();
+              setTimeout(() => URL.revokeObjectURL(href), 1000);
+            }}>판독 정보 저장</button>
+          </details>}
         </div>}
       </div>
     </div>

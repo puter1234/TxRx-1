@@ -204,10 +204,10 @@ class Vision:
         finally:
             self.lock.release()
 
-    def _auto_read(self, frame):
+    def _auto_read(self, frame, *, diagnostics=None):
         self.load()
         import pipeline
-        return pipeline.process_task(frame, self.recognizer)
+        return pipeline.process_task(frame, self.recognizer, diagnostics=diagnostics)
 
     def test_auto(self, frame):
         """Run the production OCR path on a fresh frame without writing a photo."""
@@ -220,7 +220,18 @@ class Vision:
             model_started = time.perf_counter()
             self.load()
             ms_model_load = (time.perf_counter() - model_started) * 1000
-            task = self._auto_read(frame)
+            diagnostics = {}
+            task = self._auto_read(frame, diagnostics=diagnostics)
+            import cv2
+            import importlib.metadata
+            import tagreader
+            diagnostics["runtime"] = {
+                "opencv": cv2.__version__,
+                "zxing": importlib.metadata.version("zxing-cpp"),
+                "python": sys.version.split()[0],
+                "source": str(Path(tagreader.__file__).resolve()),
+                "report_version": 1,
+            }
             reads = []
             for read in task.reads:
                 lines = []
@@ -249,6 +260,7 @@ class Vision:
                 "ms_barcode": task.ms_barcode, "ms_ocr": task.ms_ocr,
                 "ms_model_load": ms_model_load,
                 "ms_total": task.ms_total,
+                "barcode_diagnostics": diagnostics,
             }
         except Exception as exc:
             self.error = str(exc)

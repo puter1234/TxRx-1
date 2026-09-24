@@ -5,7 +5,7 @@ import time
 import uuid
 
 from fastapi import HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import Field
 from .schema import Model
 from .controller import Conflict
@@ -50,6 +50,8 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
     captures = store.root / "device-tests"
     batch = {"active": False, "completed": 0, "target": 0}
     batch_cancel = threading.Event()
+    ocr_frame = {"id": None, "image": None}
+    ocr_frame_lock = threading.Lock()
 
     def available(allow_led=False, allow_outputs=False):
         editable()
@@ -235,6 +237,8 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
         def execute():
             if not camera.status().get("connected"):
                 raise Conflict("카메라를 먼저 연결하세요.")
+            with ocr_frame_lock:
+                ocr_frame.update(id=None, image=None)
             started = time.perf_counter()
             # The live test uses the frame already arriving from the camera.
             # Waiting for two more frames adds hundreds of milliseconds at low FPS.
@@ -246,9 +250,39 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
             result["processing_ms"] = round(
                 (time.perf_counter() - started) * 1000 - capture_ms, 1
             )
+            ident = str(uuid.uuid4())
+            with ocr_frame_lock:
+                ocr_frame.update(id=ident, image=frame)
+            result["preview_url"] = "/api/bench/ocr/frames/" + ident
+            result["original_url"] = result["preview_url"] + "?original=true"
             return result
 
         return await native(execute, allow_led=True)
+
+    @app.get("/api/bench/ocr/frames/{ident}")
+    def ocr_image(ident: str, request: Request, original: bool = False):
+        permitted(request)
+        import cv2
+
+        with ocr_frame_lock:
+            if ident != ocr_frame["id"] or ocr_frame["image"] is None:
+                raise HTTPException(410, "이전 검사 사진은 다음 검사에서 교체됩니다.")
+            image = ocr_frame["image"]
+        headers = {"Cache-Control": "no-store"}
+        if original:
+            ok, encoded = cv2.imencode(".png", image, [cv2.IMWRITE_PNG_COMPRESSION, 1])
+            headers["Content-Disposition"] = f'attachment; filename="ocr-frame-{ident}.png"'
+            media_type = "image/png"
+        else:
+            height, width = image.shape[:2]
+            scale = min(1.0, 1280 / max(width, height))
+            if scale < 1:
+                image = cv2.resize(image, (max(1, round(width * scale)), max(1, round(height * scale))))
+            ok, encoded = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 90])
+            media_type = "image/jpeg"
+        if not ok:
+            raise HTTPException(500, "검사 사진을 표시하지 못했습니다.")
+        return Response(encoded.tobytes(), media_type=media_type, headers=headers)
 
     @app.get("/api/bench/camera/devices")
     async def cameras():

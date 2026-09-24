@@ -89,19 +89,23 @@ def process_task(
     recognizer: Recognizer | None,
     *,
     max_lines: int = 6,
+    diagnostics: dict | None = None,
 ) -> TaskResult:
     """사진 한 장을 Task로 처리한다. recognizer가 None이면 바코드만 읽는다."""
     t_start = time.perf_counter()
 
     t0 = time.perf_counter()
-    tags = tagreader.read_tag(img, want_crops=False, want_rotated=True)
+    kwargs = {"diagnostics": diagnostics} if diagnostics is not None else {}
+    tags = tagreader.read_tag(img, want_crops=False, want_rotated=True, **kwargs)
     ms_barcode = (time.perf_counter() - t0) * 1000
 
     if not tags:
         return TaskResult(
             reads=[], ms_barcode=ms_barcode,
             ms_total=(time.perf_counter() - t_start) * 1000,
-            error="바코드를 감지하지 못했습니다",
+            error=("바코드 후보 위치는 찾았지만 값을 읽지 못했습니다"
+                   if diagnostics and diagnostics.get("status") == "decode_failed"
+                   else "바코드 위치와 값을 찾지 못했습니다"),
         )
 
     reads, ms_ocr = [], 0.0

@@ -79,7 +79,7 @@ it("allows RFID reading with both outputs on and displays read errors beside the
   expect(await screen.findByRole("alert")).toHaveProperty("textContent", "RFID response timeout: 08");
 });
 
-it("reads automatically detected OCR lines with correction", async () => {
+it("shows the exact OCR test frame and offers its original download", async () => {
   mocks.bench.state.camera = { connected: true };
   mocks.api.mockImplementation(async (path: string) => {
     if (path === "/bench/ocr/read") return {
@@ -89,6 +89,9 @@ it("reads automatically detected OCR lines with correction", async () => {
         chars: [{ ch: "A", p: 0.95 }],
       }] }], error: null, capture_ms: 1, processing_ms: 8,
       ms_model_load: 0, ms_barcode: 2, ms_ocr: 6,
+      preview_url: "/api/bench/ocr/frames/test-frame",
+      original_url: "/api/bench/ocr/frames/test-frame?original=true",
+      frame_width: 640, frame_height: 480,
     };
     return {};
   });
@@ -104,9 +107,9 @@ it("reads automatically detected OCR lines with correction", async () => {
     fireEvent.click(read);
     expect(await screen.findByText("ABC123")).toBeTruthy();
     expect(screen.getByAltText("자동 검출한 글자 줄")).toHaveProperty("src", "data:image/jpeg;base64,dGVzdA==");
-    expect(mocks.api).toHaveBeenCalledWith("/bench/ocr/read", {
-      correction: { gain: 1, offset: 0, gamma: 1, contrast: 1, clahe: false },
-    });
+    expect(mocks.api).toHaveBeenCalledWith("/bench/ocr/read", {});
+    expect(screen.getByAltText("이번 검사에 사용한 사진").getAttribute("src")).toBe("/api/bench/ocr/frames/test-frame");
+    expect(screen.getByRole("link", { name: "검사 원본 사진 저장" }).getAttribute("href")).toBe("/api/bench/ocr/frames/test-frame?original=true");
   } finally {
     fetchMock.mockRestore(); create.mockRestore(); revoke.mockRestore();
   }

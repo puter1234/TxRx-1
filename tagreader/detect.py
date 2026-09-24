@@ -6,6 +6,7 @@
 """
 import cv2
 import numpy as np
+import time
 
 from .geometry import dedupe_quads
 
@@ -45,7 +46,7 @@ def _detect_tiled(detector, gray: np.ndarray) -> list[np.ndarray]:
     return quads
 
 
-def candidate_tiers(gray: np.ndarray):
+def candidate_tiers(gray: np.ndarray, *, diagnostics: list | None = None):
     """(단계 이름, quad 리스트)를 비용이 싼 순서대로 내놓는 제너레이터.
 
     호출부가 각 단계의 quad로 디코딩을 시도하다가 성공하면 순회를 멈추므로,
@@ -54,15 +55,30 @@ def candidate_tiers(gray: np.ndarray):
     detector = cv2.barcode.BarcodeDetector()
     h, w = gray.shape[:2]
 
+    def record(stage, quads, started):
+        if diagnostics is not None:
+            diagnostics.append({"stage": stage, "candidates": len(quads),
+                                "detect_ms": (time.perf_counter() - started) * 1000,
+                                "decode_ms": 0.0, "attempted": 0, "decoded": 0})
+
     scale = WORK_WIDTH / w if w > WORK_WIDTH else 1.0
     if scale < 1.0:
+        started = time.perf_counter()
         small = cv2.resize(gray, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
         ok, points = detector.detect(small)
+        quads = dedupe_quads([q / scale for q in _as_quads(points)]) if ok else []
+        record("small", quads, started)
         if ok:
-            yield "small", dedupe_quads([q / scale for q in _as_quads(points)])
+            yield "small", quads
 
+    started = time.perf_counter()
     ok, points = detector.detect(gray)
+    quads = dedupe_quads(_as_quads(points)) if ok else []
+    record("full", quads, started)
     if ok:
-        yield "full", dedupe_quads(_as_quads(points))
+        yield "full", quads
 
-    yield "tiled", dedupe_quads(_detect_tiled(detector, gray))
+    started = time.perf_counter()
+    quads = dedupe_quads(_detect_tiled(detector, gray))
+    record("tiled", quads, started)
+    yield "tiled", quads
