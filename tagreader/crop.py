@@ -1,7 +1,37 @@
 """회전 보정된 택에서 바코드 위/아래 텍스트 영역을 잘라낸다 (OCR 입력용)."""
 import numpy as np
+import cv2
 
 from .geometry import rotate_bound, transform_points
+
+
+def rotate_text_region(img: np.ndarray, quad: np.ndarray, angle: float,
+                       margin: float, x_pad_ratio: float):
+    """Sample only the barcode and adjacent text from the original pixels.
+
+    The output transform keeps scale 1.0. Its size depends on the detected
+    label, so a small label does not require rotating a whole camera frame.
+    """
+    matrix = cv2.getRotationMatrix2D((0, 0), angle, 1.0)
+    aligned = transform_points(quad, matrix)
+    left, top = aligned.min(axis=0)
+    right, bottom = aligned.max(axis=0)
+    width, height = right - left, bottom - top
+    # Preserve both text bands and a two-pixel interpolation border.
+    left = np.floor(left - width * x_pad_ratio) - 2
+    top = np.floor(top - height * margin) - 2
+    right = np.ceil(right + width * x_pad_ratio) + 2
+    bottom = np.ceil(bottom + height * margin) + 2
+    frame_h, frame_w = img.shape[:2]
+    source = transform_points(np.array([[0, 0], [frame_w, 0], [frame_w, frame_h],
+                                        [0, frame_h]], dtype=float), matrix)
+    source_min, source_max = np.floor(source.min(axis=0)), np.ceil(source.max(axis=0))
+    left, top = max(left, source_min[0]), max(top, source_min[1])
+    right, bottom = min(right, source_max[0]), min(bottom, source_max[1])
+    matrix[:, 2] = (-left, -top)
+    region = cv2.warpAffine(img, matrix, (max(1, int(right - left)), max(1, int(bottom - top))),
+                            flags=cv2.INTER_LINEAR, borderValue=(255, 255, 255))
+    return region, transform_points(quad, matrix)
 
 
 class RotationCache:

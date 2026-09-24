@@ -18,6 +18,7 @@ import numpy as np
 from PIL import Image
 
 import tagreader
+from tagreader.crop import rotate_text_region
 from ocr import Recognizer, Verdict, compare, find_text_lines
 from ocr.normalize import normalize_loose, normalize_strict
 
@@ -90,20 +91,31 @@ def process_task(
     *,
     max_lines: int = 6,
     diagnostics: dict | None = None,
+    decode_values: bool = True,
 ) -> TaskResult:
     """사진 한 장을 Task로 처리한다. recognizer가 None이면 바코드만 읽는다."""
     t_start = time.perf_counter()
 
     t0 = time.perf_counter()
     kwargs = {"diagnostics": diagnostics} if diagnostics is not None else {}
-    tags = tagreader.read_tag(img, want_crops=False, want_rotated=True, **kwargs)
+    if not decode_values:
+        kwargs["decode_values"] = False
+    tags = tagreader.read_tag(img, want_crops=False, want_rotated=decode_values, **kwargs)
+    if not decode_values:
+        aligned = time.perf_counter()
+        for tag in tags:
+            tag.rotated, tag._rotated_quad = rotate_text_region(
+                img, tag.quad, tag.angle, SEARCH_MARGIN, X_PAD_RATIO)
+        if diagnostics is not None:
+            diagnostics["align_ms"] = (time.perf_counter() - aligned) * 1000
     ms_barcode = (time.perf_counter() - t0) * 1000
 
     if not tags:
         return TaskResult(
             reads=[], ms_barcode=ms_barcode,
             ms_total=(time.perf_counter() - t_start) * 1000,
-            error=("바코드 후보 위치는 찾았지만 값을 읽지 못했습니다"
+            error=("바코드 위치를 찾지 못했습니다" if not decode_values else
+                   "바코드 후보 위치는 찾았지만 값을 읽지 못했습니다"
                    if diagnostics and diagnostics.get("status") == "decode_failed"
                    else "바코드 위치와 값을 찾지 못했습니다"),
         )
@@ -135,13 +147,23 @@ def process_task(
                     best_crop = crop
                     break
 
-            verdict = compare(tag.text, [(l["text"], l["confidence"]) for l in lines])
+            if decode_values:
+                verdict = compare(tag.text, [(l["text"], l["confidence"]) for l in lines])
+            else:
+                usable = [line for line in lines if normalize_strict(line["text"])]
+                if usable:
+                    strongest = max(usable, key=lambda line: line["confidence"])
+                    verdict = Verdict("ocr_read", None, strongest["text"],
+                                      strongest["confidence"], "문자 읽음")
+                else:
+                    verdict = Verdict("no_text", None, None, label="문자 미검출")
             for line, crop in zip(lines, crops):
                 if verdict.text is not None and line["text"] == verdict.text:
                     best_crop = crop
                     break
         else:
-            verdict = compare(tag.text, [])
+            verdict = (compare(tag.text, []) if decode_values else
+                       Verdict("no_text", None, None, label="문자 미검출"))
 
         reads.append(TagRead(
             barcode=tag.text, barcode_format=tag.format, angle=tag.angle, stage=tag.stage,

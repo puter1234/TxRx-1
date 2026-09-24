@@ -83,7 +83,8 @@ it("shows the exact OCR test frame and offers its original download", async () =
   mocks.bench.state.camera = { connected: true };
   mocks.api.mockImplementation(async (path: string) => {
     if (path === "/bench/ocr/read") return {
-      reads: [{ barcode: "ABC123", verdict: "match", lines: [{
+      mode: "ocr_only", ok: true,
+      reads: [{ barcode: null, verdict: "ocr_read", lines: [{
         text: "ABC123", confidence: 0.94, min_char: 0.9, ms: 8,
         crop_width: 320, crop_height: 100, preview: "data:image/jpeg;base64,dGVzdA==",
         chars: [{ ch: "A", p: 0.95 }],
@@ -106,6 +107,9 @@ it("shows the exact OCR test frame and offers its original download", async () =
     await waitFor(() => expect(read.disabled).toBe(false));
     fireEvent.click(read);
     expect(await screen.findByText("ABC123")).toBeTruthy();
+    expect(screen.getByText("문자 읽음")).toBeTruthy();
+    expect(screen.queryByText("검사 통과")).toBeNull();
+    expect(screen.queryByText("검사 실패")).toBeNull();
     expect(screen.getByAltText("자동 검출한 글자 줄")).toHaveProperty("src", "data:image/jpeg;base64,dGVzdA==");
     expect(mocks.api).toHaveBeenCalledWith("/bench/ocr/read", {});
     expect(screen.getByAltText("이번 검사에 사용한 사진").getAttribute("src")).toBe("/api/bench/ocr/frames/test-frame");

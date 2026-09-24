@@ -143,7 +143,7 @@ class Vision:
             task = None
             if "ocr" in recipe.channels:
                 bgr = frame if frame is not None else cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
-                task = self._auto_read(bgr)
+                task = self._auto_read(bgr, decode_values="barcode" in recipe.channels)
                 candidates = []
                 for read in task.reads:
                     for line in read.lines:
@@ -204,10 +204,11 @@ class Vision:
         finally:
             self.lock.release()
 
-    def _auto_read(self, frame, *, diagnostics=None):
+    def _auto_read(self, frame, *, diagnostics=None, decode_values=True):
         self.load()
         import pipeline
-        return pipeline.process_task(frame, self.recognizer, diagnostics=diagnostics)
+        return pipeline.process_task(frame, self.recognizer, diagnostics=diagnostics,
+                                     decode_values=decode_values)
 
     def test_auto(self, frame):
         """Run the production OCR path on a fresh frame without writing a photo."""
@@ -221,7 +222,7 @@ class Vision:
             self.load()
             ms_model_load = (time.perf_counter() - model_started) * 1000
             diagnostics = {}
-            task = self._auto_read(frame, diagnostics=diagnostics)
+            task = self._auto_read(frame, diagnostics=diagnostics, decode_values=False)
             import cv2
             import importlib.metadata
             import tagreader
@@ -230,7 +231,7 @@ class Vision:
                 "zxing": importlib.metadata.version("zxing-cpp"),
                 "python": sys.version.split()[0],
                 "source": str(Path(tagreader.__file__).resolve()),
-                "report_version": 1,
+                "report_version": 2,
             }
             reads = []
             for read in task.reads:
@@ -255,7 +256,8 @@ class Vision:
                 })
             return {
                 "frame_width": frame.shape[1], "frame_height": frame.shape[0],
-                "ok": len(task.reads) == 1 and task.reads[0].verdict.ok,
+                "mode": "ocr_only",
+                "ok": any(read.verdict.status == "ocr_read" for read in task.reads),
                 "reads": reads, "error": task.error,
                 "ms_barcode": task.ms_barcode, "ms_ocr": task.ms_ocr,
                 "ms_model_load": ms_model_load,

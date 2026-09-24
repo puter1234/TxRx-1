@@ -13,7 +13,7 @@ type OcrLine = {
   crop_width: number; crop_height: number; preview: string;
   chars: { ch: string; p: number }[];
 };
-type OcrResult = { ok: boolean; reads: { barcode: string | null; barcode_format: string | null;
+type OcrResult = { ok: boolean; mode?: "ocr_only"; reads: { barcode: string | null; barcode_format: string | null;
   verdict: string; verdict_label: string; verdict_detail: string; stage: string; lines: OcrLine[] }[];
   error: string | null; capture_ms: number; processing_ms: number;
   ms_model_load: number; ms_barcode: number; ms_ocr: number;
@@ -60,7 +60,7 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy }: {
   const canRead = connected && !!url && !locked && !busy;
   return <section className="card space-y-5 p-5">
     <div className="flex items-center gap-3"><ScanText size={26}/><h2 className="text-xl font-extrabold">OCR 촬영 시험</h2>
-      <Help text="현재 카메라 영상에서 바코드와 인쇄 문자를 확인합니다. 사진은 저장하지 않습니다."/></div>
+      <Help text="바코드 위치를 기준으로 택을 정렬하고 주변 인쇄 문자를 읽습니다. 바코드 값은 판독하지 않습니다. 읽은 문자와 사진을 확인하는 시험이며 목표값 합격 판정은 작업 검사에서 진행합니다."/></div>
     <div className="grid gap-5 xl:grid-cols-2">
       <div className="space-y-3">
         <div className="rounded-xl bg-ink-900 p-2">
@@ -77,7 +77,7 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy }: {
         {error && <p role="alert" className="text-lg font-bold text-danger">{error}</p>}
         {result && <div className="space-y-3 rounded-xl border border-line p-4">
           <p role="status" className={"text-2xl font-extrabold " + (result.ok ? "text-ok" : "text-danger")}>
-            {result.ok ? "검사 통과" : "검사 실패"}
+            {result.mode === "ocr_only" ? (result.ok ? "문자 읽음" : "문자 미검출") : (result.ok ? "검사 통과" : "검사 실패")}
           </p>
           {result.error && <p role="status" className="text-xl font-bold text-danger">{result.error}</p>}
           {result.preview_url && <div className="space-y-3">
@@ -88,9 +88,9 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy }: {
             <a className="btn btn-outline" href={result.original_url} download>검사 원본 사진 저장</a>
           </div>}
           {result.reads.map((read, i) => <div key={i} className="space-y-3">
-            <p className={"text-lg font-bold " + (read.verdict === "match" || read.verdict === "match_loose" ? "text-ok" : "text-danger")}>
+            {result.mode !== "ocr_only" && <p className={"text-lg font-bold " + (read.verdict === "match" || read.verdict === "match_loose" ? "text-ok" : "text-danger")}>
               {read.verdict_label}{read.barcode ? `  바코드 ${read.barcode}` : ""}
-            </p>
+            </p>}
             {read.verdict_detail && <p className="text-base font-bold">{read.verdict_detail}</p>}
             {read.lines.map((line, j) => <div key={j} className="rounded-xl border border-line p-3">
               <img src={line.preview} alt="자동 검출한 글자 줄" className="max-h-72 w-full rounded-lg bg-white object-contain"/>
@@ -100,14 +100,14 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy }: {
           </div>)}
           {!result.error && result.reads.every(read => !read.lines.length) && <p className="text-xl font-bold">글자를 찾지 못했습니다</p>}
           <p className="text-lg font-bold">프레임 복사 {result.capture_ms.toFixed(1)} ms</p>
-          <p className="text-lg font-bold">모델 준비 {result.ms_model_load.toFixed(1)} ms, 바코드 처리 {result.ms_barcode.toFixed(1)} ms, OCR {result.ms_ocr.toFixed(1)} ms</p>
+          <p className="text-lg font-bold">모델 준비 {result.ms_model_load.toFixed(1)} ms, {result.mode === "ocr_only" ? "위치 검출과 정렬" : "바코드 처리"} {result.ms_barcode.toFixed(1)} ms, OCR {result.ms_ocr.toFixed(1)} ms</p>
           {result.barcode_diagnostics && <details className="space-y-3">
             <summary className="cursor-pointer text-lg font-bold">판독 상세</summary>
             <div className="overflow-x-auto"><table className="w-full text-left text-lg">
-              <thead><tr><th>단계</th><th>위치 후보</th><th>읽은 값</th><th>위치 검출</th><th>값 판독</th></tr></thead>
+              <thead><tr><th>단계</th><th>위치 후보</th>{result.mode !== "ocr_only" && <th>읽은 값</th>}<th>위치 검출</th>{result.mode !== "ocr_only" && <th>값 판독</th>}</tr></thead>
               <tbody>{result.barcode_diagnostics.stages.map((row, i) => <tr key={i}>
-                <td className="py-2">{barcodeStages[row.stage] || row.stage}</td><td>{row.candidates}</td><td>{row.decoded}</td>
-                <td>{row.detect_ms.toFixed(1)} ms</td><td>{row.decode_ms.toFixed(1)} ms</td>
+                <td className="py-2">{barcodeStages[row.stage] || row.stage}</td><td>{row.candidates}</td>{result.mode !== "ocr_only" && <td>{row.decoded}</td>}
+                <td>{row.detect_ms.toFixed(1)} ms</td>{result.mode !== "ocr_only" && <td>{row.decode_ms.toFixed(1)} ms</td>}
               </tr>)}</tbody>
             </table></div>
             <p className="text-lg font-bold">흑백 변환 {result.barcode_diagnostics.prepare_ms.toFixed(1)} ms, OCR 영역 정렬 {result.barcode_diagnostics.align_ms.toFixed(1)} ms</p>

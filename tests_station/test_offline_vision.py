@@ -56,8 +56,9 @@ def test_live_test_and_production_ocr_use_the_camera_crop(monkeypatch):
     vision.load = lambda: None
     import pipeline
     from types import SimpleNamespace
-    tag = SimpleNamespace(text="80", format="CODE39", angle=0, stage="test",
-                          rotated=frame, _rotated_quad=np.array([[20, 20], [100, 20], [100, 40], [20, 40]]))
+    tag = SimpleNamespace(text=None, format=None, angle=0, stage="test",
+                          rotated=None, _rotated_quad=None,
+                          quad=np.array([[20, 20], [100, 20], [100, 40], [20, 40]]))
     def read_tag(image, **kwargs):
         tag.rotated = image
         return [tag]
@@ -69,11 +70,13 @@ def test_live_test_and_production_ocr_use_the_camera_crop(monkeypatch):
     test_result = vision.test_auto(frame)
     production = vision.inspect_frame(frame, brand, recipe)
     assert test_result["reads"][0]["lines"][0]["text"] == "40"
-    assert production["observations"]["ocr"]["text"] == "80"
+    # Reading "40" must never become the configured target "80".
+    assert production["observations"]["ocr"] == {}
+    assert production["failures"] == [{"code": "OCR_TEXT_MISSING"}]
     assert means == [40, 40]
 
 
-def test_ocr_without_barcode_stops_before_model_inference(monkeypatch):
+def test_ocr_without_barcode_location_stops_before_model_inference(monkeypatch):
     import numpy as np
     import pipeline
     from station.schema import Brand, Recipe
@@ -107,6 +110,46 @@ def test_ocr_without_barcode_stops_before_model_inference(monkeypatch):
     assert result["observations"]["ocr"] == {}
     assert result["failures"] == [{"code": "OCR_TEXT_MISSING"}]
     assert vision.recognizer.calls == 0
+
+
+def test_ocr_only_uses_detected_position_and_keeps_selected_target_validation(monkeypatch):
+    import numpy as np
+    import pipeline
+    import tagreader
+    from station.schema import Brand, Recipe
+    from station.vision import Vision
+    from station.rules import judge
+
+    quad = np.array([[100, 200], [300, 200], [300, 250], [100, 250]], dtype=float)
+    monkeypatch.setattr(tagreader, "candidate_tiers", lambda image: iter([("full", [quad])]))
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("OCR-only production must not decode barcode values")
+
+    monkeypatch.setattr(tagreader, "decode_quad", forbidden)
+    monkeypatch.setattr(tagreader, "scan", forbidden)
+    monkeypatch.setattr(pipeline, "_ordered_crops", lambda above, *args: [above])
+
+    class Reader:
+        def read(self, image):
+            return {"text": "HUTS6A211BK095", "confidence": 0.9, "ms": 1.0}
+
+    vision = Vision()
+    vision.recognizer = Reader()
+    vision.load = lambda: None
+    brand = Brand(id="test", name="Test", options=[
+        {"key": "style", "label": "Style", "values": ["HUTS6A211"]},
+        {"key": "color", "label": "Color", "values": ["BK", "WH"]},
+        {"key": "size", "label": "Size", "values": ["095"]},
+    ])
+    recipe = Recipe(brand_id="test", brand_revision=1, channels=["ocr"],
+                    targets={"style": "HUTS6A211", "color": "WH", "size": "095"})
+    result = vision.inspect_frame(np.full((480, 640, 3), 40, dtype=np.uint8), brand, recipe)
+    assert result["observations"]["ocr"]["color"] == "BK"
+    assert result["failures"] == []
+    failures = judge(recipe, result["observations"])
+    assert failures == [{"code": "TARGET_MISMATCH", "channel": "ocr", "field": "color",
+                         "expected": "WH", "actual": "BK"}]
 
 
 @pytest.mark.slow

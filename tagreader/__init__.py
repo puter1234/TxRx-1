@@ -74,11 +74,13 @@ def read_tag(
     x_pad_ratio: float = 0.15,
     max_barcodes: int = 4,
     diagnostics: dict | None = None,
+    decode_values: bool = True,
 ) -> list[TagResult]:
     """사진에서 바코드를 찾아 값을 읽고, OCR용 위/아래 크롭을 만든다.
 
-    감지는 싼 단계부터 시도해 값이 읽히면 멈춘다. 값을 하나도 못 읽으면 마지막으로
-    이미지 전체를 스캔한다 (이 경로는 크롭을 만들 수 없어 text만 채워진다).
+    decode_values=False면 위치를 찾는 즉시 원본 영역을 OCR용으로 정렬한다.
+    이때 바코드 값 판독과 판독 실패에 따른 재검색은 실행하지 않는다.
+    decode_values=True면 기존 값 판독 경로를 사용한다.
 
     want_crops=False로 두면 크롭 생성을 건너뛰어 더 빠르다 (값만 필요할 때).
     """
@@ -88,7 +90,7 @@ def read_tag(
         diagnostics.update(stages=[], status="not_detected", decoded=0,
                            prepare_ms=(time.perf_counter() - prepared) * 1000, align_ms=0.0)
 
-    hits: list[tuple[str, str, np.ndarray]] = []
+    hits: list[tuple[str | None, str | None, np.ndarray]] = []
     stage = ""
     tiers = (candidate_tiers(gray, diagnostics=diagnostics["stages"])
              if diagnostics is not None else candidate_tiers(gray))
@@ -96,18 +98,23 @@ def read_tag(
         started = time.perf_counter()
         decoded = 0
         for quad in quads[:max_barcodes]:
+            if not decode_values:
+                hits.append((None, None, quad))
+                continue
             text, fmt = decode_quad(gray, quad)
             if text:
                 hits.append((text, fmt, quad))
                 decoded += 1
         if diagnostics is not None:
             diagnostics["stages"][-1].update(
-                decode_ms=(time.perf_counter() - started) * 1000,
-                attempted=min(len(quads), max_barcodes), decoded=decoded)
+                decode_ms=(time.perf_counter() - started) * 1000 if decode_values else 0.0,
+                attempted=min(len(quads), max_barcodes) if decode_values else 0, decoded=decoded)
         if hits:
             break
 
     if not hits:
+        if not decode_values:
+            return []
         started = time.perf_counter()
         found = scan(gray)
         if diagnostics is not None:
@@ -138,7 +145,8 @@ def read_tag(
         stage = "whole-image"
 
     if diagnostics is not None:
-        diagnostics.update(status="decoded", decoded=len(hits))
+        diagnostics.update(status="decoded" if decode_values else "located",
+                           decoded=sum(bool(text) for text, _, _ in hits))
 
     if not (want_crops or want_rotated):
         return [

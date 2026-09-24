@@ -595,8 +595,9 @@ def test_live_ocr_reads_auto_detected_line_without_saving_a_photo(rig, monkeypat
     app.state.vision.load = lambda: None
     import pipeline
     from types import SimpleNamespace
-    tag = SimpleNamespace(text="80", format="CODE39", angle=0, stage="test",
-                          rotated=frame, _rotated_quad=np.array([[100, 200], [300, 200], [300, 250], [100, 250]]))
+    tag = SimpleNamespace(text=None, format=None, angle=0, stage="test",
+                          rotated=None, _rotated_quad=None,
+                          quad=np.array([[100, 200], [300, 200], [300, 250], [100, 250]]))
     def read_tag(image, **kwargs):
         tag.rotated = image
         return [tag]
@@ -607,6 +608,10 @@ def test_live_ocr_reads_auto_detected_line_without_saving_a_photo(rig, monkeypat
     assert response.status_code == 200, response.text
     result = response.json()
     assert found
+    assert result["mode"] == "ocr_only"
+    assert result["ok"] is True
+    assert result["reads"][0]["barcode"] is None
+    assert result["reads"][0]["verdict"] == "ocr_read"
     assert result["reads"][0]["lines"][0]["text"] == "40"
     assert result["reads"][0]["lines"][0]["preview"].startswith("data:image/jpeg;base64,")
     assert result["reads"][0]["lines"][0]["crop_width"] > 0

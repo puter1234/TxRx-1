@@ -33,7 +33,7 @@ def normalize_loose(text: str) -> str:
 
 @dataclass
 class Verdict:
-    status: str            # 'match' | 'match_loose' | 'mismatch' | 'no_text' | 'no_barcode'
+    status: str            # 'match' | 'match_loose' | 'mismatch' | 'no_text' | 'no_barcode' | 'ocr_read'
     barcode: str | None
     text: str | None       # 바코드와 가장 잘 맞은 OCR 줄
     confidence: float = 0.0
@@ -42,6 +42,7 @@ class Verdict:
 
     @property
     def ok(self) -> bool:
+        # Reading text without a comparison is not an inspection match.
         return self.status in ("match", "match_loose")
 
 
