@@ -84,7 +84,7 @@ def install_system_libraries() -> None:
     if not has_library("libopenblas.so.0"):
         run("sudo", "apt-get", "install", "-y", "libopenblas-dev")
     if not has_library("libcusparseLt.so.0"):
-        package = "libcusparselt0"
+        package = "libcusparselt0-cuda-12"
         available = subprocess.run(["apt-cache", "show", package], capture_output=True).returncode == 0
         if not available:
             # NVIDIA CUDA network repository for Ubuntu 22.04 ARM64.
