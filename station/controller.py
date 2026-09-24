@@ -185,7 +185,9 @@ class Controller:
                 "adjustments": 0,
                 "active_product": None,
                 "fault": None,
-                "save_pass_photos": self.store.get("save_pass_photos", True),
+                "save_pass_photos": self.store.get(
+                    "save_pass_photos", self.config.mode != "HARDWARE"
+                ),
             }
             self.session["software_version"] = "0.3.0"
             self.session["created_by"] = actor
@@ -477,7 +479,10 @@ class Controller:
             self.session["phase"] = "INSPECTING"
             self.changed("CAPTURE_READY")
 
-    def complete(self, inspection, epoch, observations, failures=None, evidence=None):
+    def complete(
+        self, inspection, epoch, observations, failures=None, evidence=None,
+        evidence_writer=None,
+    ):
         self.stop_outputs()
         with self.lock:
             s = self.session
@@ -492,6 +497,19 @@ class Controller:
             failures = list({dump(item): item for item in failures}.values())
             status = "ABORTED" if cancelled else ("FAIL" if failures else "PASS")
             before = copy.deepcopy(s)
+            if self.stop_fault:
+                failures.append({"code": "IO_STOP_UNCONFIRMED"})
+                status = "FAIL"
+            if evidence_writer is not None:
+                if status == "PASS" and not s.get("save_pass_photos", True):
+                    evidence = {**evidence, "retained": False}
+                else:
+                    try:
+                        _, evidence = evidence_writer()
+                    except Exception as exc:
+                        failures.append({"code": "EVIDENCE_ERROR", "detail": str(exc)})
+                        if status == "PASS":
+                            status = "FAIL"
             inspection.update(
                 status=status,
                 finished_at=utc(),
@@ -503,10 +521,6 @@ class Controller:
             inspection["elapsed_ms"] = (
                 inspection["finished_mono_ns"] - inspection["created_mono_ns"]
             ) / 1e6
-            if self.stop_fault:
-                inspection.update(status="FAIL")
-                failures.append({"code": "IO_STOP_UNCONFIRMED"})
-                status = "FAIL"
             try:
                 with self.store.transaction() as c:
                     c.execute(
@@ -547,6 +561,7 @@ class Controller:
                 and s
                 and not s.get("save_pass_photos", True)
                 and evidence
+                and evidence.get("retained") is not False
             ):
                 self._apply_photo_policy(inspection)
             return copy.deepcopy(inspection)

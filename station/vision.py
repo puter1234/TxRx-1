@@ -73,6 +73,13 @@ class Vision:
         self.recognizer = recognizer
 
     def inspect(self, image_path: Path, brand: Brand, recipe: Recipe):
+        return self._inspect(image_path, brand, recipe)
+
+    def inspect_frame(self, frame, brand: Brand, recipe: Recipe):
+        """Inspect an OpenCV BGR frame without encoding or reopening a photo."""
+        return self._inspect(frame, brand, recipe)
+
+    def _inspect(self, source, brand: Brand, recipe: Recipe):
         if not self.lock.acquire(blocking=False):
             raise RuntimeError("이전 영상 처리가 아직 끝나지 않았습니다.")
         try:
@@ -82,9 +89,12 @@ class Vision:
             from PIL import Image
             from ocr.core import to_rgb
 
-            with Image.open(image_path) as original:
-                original.load()
-                image = to_rgb(original)
+            if isinstance(source, (str, Path)):
+                with Image.open(source) as original:
+                    original.load()
+                    image = to_rgb(original)
+            else:
+                image = Image.fromarray(cv2.cvtColor(source, cv2.COLOR_BGR2RGB))
             if image.width * image.height > 24_000_000:
                 raise ValueError("이미지는 2,400만 화소 이하만 지원합니다.")
             observations, detail, failures = {}, {}, []

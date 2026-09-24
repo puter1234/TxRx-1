@@ -30,7 +30,7 @@ def save_frame(root, ident, frame, timing, product):
 
     target = root / "evidence" / f"{ident}.png"
     target.parent.mkdir(exist_ok=True)
-    ok, encoded = cv2.imencode(".png", frame)
+    ok, encoded = cv2.imencode(".png", frame, [cv2.IMWRITE_PNG_COMPRESSION, 1])
     if not ok:
         raise IOError("EVIDENCE_WRITE_FAILED")
     data = encoded.tobytes()

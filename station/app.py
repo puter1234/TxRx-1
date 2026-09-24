@@ -445,7 +445,9 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
     @app.get("/api/settings")
     def operator_settings():
         return {
-            "save_photos": store.get("save_pass_photos", True),
+            "save_photos": store.get(
+                "save_pass_photos", config.mode != "HARDWARE"
+            ),
             "data_dir": str(store.root),
             "count_method": "stopped_product",
         }

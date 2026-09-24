@@ -173,7 +173,7 @@ function GeneralTab() {
         </div>
         <div className="flex items-center gap-3">
           <span className="text-lg font-bold">통과 사진 저장</span>
-          <Help text="끄면 이후 작업의 합격 사진은 검사 후 남기지 않습니다. 불합격 사진과 판독 결과는 저장합니다. 진행 중인 작업을 종료한 뒤 변경할 수 있습니다." />
+          <Help text="끄면 실물 검사의 합격 사진은 저장하지 않습니다. 불합격 사진과 판독 결과는 저장합니다. 새 작업부터 적용됩니다." />
           <button
             type="button"
             role="switch"

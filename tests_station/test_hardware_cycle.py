@@ -1,6 +1,7 @@
 import asyncio
 import time
 import numpy as np
+import pytest
 from station.schema import Commissioning, StationConfig
 from station.runtime import HardwareCycle
 from station.controller import Controller
@@ -75,11 +76,16 @@ class TestVision:
     def status(self):
         return {"busy": False, "local_assets_present": True}
 
-    def inspect(self, path, brand, recipe):
+    def inspect_frame(self, frame, brand, recipe):
+        assert isinstance(frame, np.ndarray)
         return {"observations": {"ocr": dict(recipe.targets)}, "failures": []}
 
 
-def test_stopped_single_product_cycle_and_departure(controller, recipe):
+@pytest.mark.parametrize("save_pass_photos", [False, True])
+@pytest.mark.parametrize("fail_vision", [False, True])
+def test_stopped_single_product_cycle_and_departure(
+    controller, recipe, monkeypatch, save_pass_photos, fail_vision
+):
     # Synthetic field values are test fixtures only, never exported as commissioning.
     cm = Commissioning(
         settle_ms=10,
@@ -115,11 +121,26 @@ def test_stopped_single_product_cycle_and_departure(controller, recipe):
         for key in recipe.targets
     ]
     saved = c.store.save_brand(brand, brand["revision"], "TEST ONLY")
+    c.store.put("save_pass_photos", save_pass_photos)
+    if not save_pass_photos and not fail_vision:
+        def unexpected_save(*args):
+            raise AssertionError("A passing product must not encode or save a photo")
+
+        monkeypatch.setattr("station.evidence.save_frame", unexpected_save)
     recipe.brand_revision = saved["revision"]
     recipe.channels = ["ocr", "rfid"]
     recipe.target_count = 1
     c.new_session(recipe)
-    cycle = HardwareCycle(c, TestCamera(io), TestDetector(), TestVision())
+    class FailVision(TestVision):
+        def inspect_frame(self, frame, brand, recipe):
+            return {
+                "observations": {"ocr": {}},
+                "failures": [{"code": "OCR_MISSING"}],
+            }
+
+    cycle = HardwareCycle(
+        c, TestCamera(io), TestDetector(), FailVision() if fail_vision else TestVision()
+    )
     c.runtime_blockers = cycle.blockers
 
     async def run():
@@ -129,7 +150,17 @@ def test_stopped_single_product_cycle_and_departure(controller, recipe):
         await cycle.tick()
         await cycle.task
         await cycle.tick()
+        photo = c.store.root / "evidence" / f'{c.last_result["id"]}.png'
+        if fail_vision:
+            assert c.session["count"] == 0 and c.session["phase"] == "HOLD"
+            assert c.last_result["evidence"]["sha256"] and photo.is_file()
+            return
         assert c.session["count"] == 1 and c.session["phase"] == "EJECTING"
+        if save_pass_photos:
+            assert c.last_result["evidence"]["sha256"] and photo.is_file()
+        else:
+            assert c.last_result["evidence"]["retained"] is False
+            assert not photo.exists()
         io.raw[:2] = [1, 0]
         await cycle.tick()
         io.raw[:2] = [1, 1]

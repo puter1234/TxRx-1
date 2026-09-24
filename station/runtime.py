@@ -178,10 +178,10 @@ class HardwareCycle:
         recipe = Recipe.model_validate(inspection["recipe"])
         observations = {}
         failures = []
-        evidence = None
+        frame = timing = product = None
 
         async def inspect():
-            nonlocal evidence
+            nonlocal frame, timing, product
             off_deadline = time.monotonic() + cfg.feedback_timeout_ms / 1000
             while True:
                 self.still_valid(epoch)
@@ -202,11 +202,6 @@ class HardwareCycle:
             )
             product = await self.offload(self.detector.one, frame)
             self.still_valid(epoch)
-            from .evidence import save_frame
-
-            path, evidence = await self.offload(
-                save_frame, self.c.store.root, inspection["id"], frame, timing, product
-            )
             jobs = []
             names = []
             if "rfid" in recipe.channels:
@@ -217,7 +212,7 @@ class HardwareCycle:
                 )
                 names.append("rfid")
             if any(x in recipe.channels for x in ("ocr", "barcode")):
-                jobs.append(self.offload(self.vision.inspect, path, brand, recipe))
+                jobs.append(self.offload(self.vision.inspect_frame, frame, brand, recipe))
                 names.append("vision")
             tasks = {asyncio.create_task(job): name for name, job in zip(names, jobs)}
             pending = set(tasks)
@@ -287,7 +282,25 @@ class HardwareCycle:
         except BaseException as exc:
             self.cancel.set()
             failures.append({"code": "INSPECTION_ERROR", "detail": str(exc)})
-        self.c.complete(inspection, epoch, observations, failures, evidence)
+        evidence = None
+        writer = None
+        if frame is not None:
+            from .evidence import save_frame
+
+            evidence = {
+                "source": "CSI_CAMERA",
+                "timing": timing,
+                "product_detection": product,
+            }
+
+            def writer():
+                return save_frame(
+                    self.c.store.root, inspection["id"], frame, timing, product
+                )
+
+        await self.offload(
+            self.c.complete, inspection, epoch, observations, failures, evidence, writer
+        )
 
     async def close(self):
         self.cancel.set()
