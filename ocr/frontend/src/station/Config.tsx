@@ -4,7 +4,7 @@ import Help from "../components/Help";
 import ColorAssignments from "../components/ColorAssignments";
 import { isColorOption } from "../lib/optionColors";
 import { api, Field, Badge, download, uuid } from "./shared";
-import type { Action, Brand, Fields, Option, Region } from "./shared";
+import type { Action, Brand, Fields, Option } from "./shared";
 
 const empty = (): Brand => ({
   id: uuid(),
@@ -111,23 +111,6 @@ export default function Config({
           : { barcode_records: records }),
       });
     }, "파일을 불러왔습니다. 내용을 확인한 후 저장하세요.");
-  };
-  const region = (field: string) =>
-    draft.ocr_regions.find((r) => r.field === field);
-  const setRegion = (field: string, patch: Partial<Region>) => {
-    const prior = region(field) || {
-      field,
-      box: [0, 0, 1, 1] as Region["box"],
-      rotation: 0 as const,
-      min_char_confidence: null,
-    };
-    setDraft({
-      ...draft,
-      ocr_regions: [
-        ...draft.ocr_regions.filter((r) => r.field !== field),
-        { ...prior, ...patch },
-      ],
-    });
   };
   return (
     <div className="grid gap-5 xl:grid-cols-[250px_1fr]">
@@ -360,97 +343,6 @@ export default function Config({
             </Field>
           </div>
         </fieldset>
-        <details className="card space-y-4 p-6">
-          <summary className="cursor-pointer text-xl font-extrabold">
-            문자 인식 세부 설정
-          </summary>
-          <div className="flex justify-end">
-            <Help text="사진에서 각 글자를 읽을 위치를 지정하는 기존 연결 설정입니다. 이 방식은 현장 촬영 시험과 사용자 검토 전까지 확정된 검사 방식이 아닙니다." />
-          </div>
-          {draft.options.map((o) => {
-            const r = region(o.key);
-            return (
-              <div key={o.key} className="rounded-xl border border-line p-4">
-                <label className="flex items-center gap-3 font-bold">
-                  <input
-                    type="checkbox"
-                    checked={!!r}
-                    onChange={(e) =>
-                      e.target.checked
-                        ? setRegion(o.key, {})
-                        : setDraft({
-                            ...draft,
-                            ocr_regions: draft.ocr_regions.filter(
-                              (v) => v.field !== o.key,
-                            ),
-                          })
-                    }
-                  />
-                  {o.label} OCR 영역
-                </label>
-                {r && (
-                  <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
-                    {["왼쪽", "위쪽", "너비", "높이"].map((name, i) => (
-                      <Field label={name} key={i}>
-                        <input
-                          className="field"
-                          type="number"
-                          min="0"
-                          max="1"
-                          step="0.001"
-                          value={r.box[i]}
-                          onChange={(e) => {
-                            const box = [...r.box] as Region["box"];
-                            box[i] = Number(e.target.value);
-                            setRegion(o.key, { box });
-                          }}
-                        />
-                      </Field>
-                    ))}
-                    <Field label="회전">
-                      <select
-                        className="field"
-                        value={r.rotation}
-                        onChange={(e) =>
-                          setRegion(o.key, {
-                            rotation: Number(
-                              e.target.value,
-                            ) as Region["rotation"],
-                          })
-                        }
-                      >
-                        {[0, 90, 180, 270].map((n) => (
-                          <option key={n} value={n}>
-                            {n}°
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
-                    <Field label="최소 문자 신뢰도">
-                      <input
-                        className="field"
-                        type="number"
-                        min="0"
-                        max="1"
-                        step="0.01"
-                        placeholder="실측 후 지정"
-                        value={r.min_char_confidence ?? ""}
-                        onChange={(e) =>
-                          setRegion(o.key, {
-                            min_char_confidence:
-                              e.target.value === ""
-                                ? null
-                                : Number(e.target.value),
-                          })
-                        }
-                      />
-                    </Field>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </details>
         <Field label="설정 변경 사유">
           <input
             className="field"

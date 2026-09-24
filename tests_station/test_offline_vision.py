@@ -35,7 +35,7 @@ def test_live_frame_matches_saved_png_without_model(tmp_path, monkeypatch):
     assert len(seen) == 2 and np.array_equal(seen[0], seen[1])
 
 
-def test_correction_matches_live_test_and_production_ocr():
+def test_correction_matches_live_test_and_production_ocr(monkeypatch):
     import numpy as np
 
     from station.schema import Brand, Recipe
@@ -54,15 +54,64 @@ def test_correction_matches_live_test_and_production_ocr():
     vision = Vision()
     vision.recognizer = Reader()
     vision.load = lambda: None
+    import pipeline
+    from types import SimpleNamespace
+    tag = SimpleNamespace(text="80", format="CODE39", angle=0, stage="test",
+                          rotated=frame, _rotated_quad=np.array([[20, 20], [100, 20], [100, 40], [20, 40]]))
+    def read_tag(image, **kwargs):
+        tag.rotated = image
+        return [tag]
+    monkeypatch.setattr(pipeline.tagreader, "read_tag", read_tag)
+    monkeypatch.setattr(pipeline, "_ordered_crops", lambda above, *args: [above])
     correction = {"gain": 2, "gamma": 1, "contrast": 1, "clahe": False}
     brand = Brand(id="test", name="Test", options=[{"key": "text", "label": "Text", "values": ["80"]}],
                   ocr_regions=[{"field": "text", "box": [0, 0, 1, 1]}])
     recipe = Recipe(brand_id="test", brand_revision=1, targets={"text": "80"}, channels=["ocr"])
-    test_result = vision.test_region(frame, [0, 0, 1, 1], correction)
+    test_result = vision.test_auto(frame, correction)
     production = vision.inspect_frame(frame, brand, recipe, correction)
-    assert test_result["text"] == "80"
+    assert test_result["reads"][0]["lines"][0]["text"] == "80"
     assert production["observations"]["ocr"]["text"] == "80"
     assert means == [80, 80]
+
+
+def test_ocr_without_barcode_uses_existing_line_detector(monkeypatch):
+    import numpy as np
+    import pipeline
+    from station.schema import Brand, Recipe
+    from station.vision import Vision
+
+    frame = np.full((80, 160, 3), 40, dtype=np.uint8)
+    monkeypatch.setattr(pipeline.tagreader, "read_tag", lambda *args, **kwargs: [])
+    calls = []
+
+    def lines(image, char_h, max_lines):
+        calls.append(char_h)
+        return [image[10:50, 10:150]] if char_h == 20 else []
+
+    monkeypatch.setattr(pipeline, "find_text_lines", lines)
+
+    class Reader:
+        device = "cpu"
+        gpu_name = ""
+
+        def read(self, image):
+            return {"text": "HUTS6A211BK095", "confidence": 0.9,
+                    "min_char": 0.9, "chars": [], "ms": 1.0}
+
+    vision = Vision()
+    vision.recognizer = Reader()
+    vision.load = lambda: None
+    brand = Brand(id="hazzys", name="Hazzys", options=[
+        {"key": "style", "label": "Style", "values": ["HUTS6A211"]},
+        {"key": "color", "label": "Color", "values": ["BK"]},
+        {"key": "size", "label": "Size", "values": ["095"]},
+    ])
+    recipe = Recipe(brand_id="hazzys", brand_revision=1, channels=["ocr"],
+                    targets={"style": "HUTS6A211", "color": "BK", "size": "095"})
+    result = vision.inspect_frame(frame, brand, recipe)
+    assert calls == [20, 40, 80]
+    assert result["observations"]["ocr"] == recipe.targets
+    assert not result["failures"]
 
 
 @pytest.mark.slow
@@ -97,19 +146,16 @@ def test_real_parseq_without_network(tmp_path, monkeypatch):
     assert legacy.reads and legacy.reads[0].verdict.ok
     original = legacy.reads[0]
     assert original.crop is not None and original.verdict.text
-    roi = tmp_path / "single-line.png"
-    assert cv2.imwrite(str(roi), original.crop)
     target = original.verdict.text.strip()
     brand = Brand(
         id="regression",
         name="기존 인식 회귀",
         options=[{"key": "text", "label": "문자", "values": [target]}],
-        ocr_regions=[{"field": "text", "box": [0, 0, 1, 1]}],
     )
     recipe = Recipe(
         brand_id=brand.id, brand_revision=1, targets={"text": target}, channels=["ocr"]
     )
-    result = v.inspect(roi, brand, recipe)
+    result = v.inspect_frame(imread(source), brand, recipe)
     assert result["observations"]["ocr"]["text"] == target
     assert not result["failures"]
     assert "barcode" not in result["observations"]

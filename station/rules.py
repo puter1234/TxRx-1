@@ -71,10 +71,8 @@ def validate_recipe(recipe: Recipe, brand: Brand, require_regions: bool = True):
             "size",
         }:
             raise RuleError("헤지스 규칙에서 확인된 필드는 품번·색상·사이즈입니다.")
-    if "ocr" in recipe.channels and require_regions:
-        regions = {r.field for r in brand.ocr_regions}
-        if not set(recipe.targets) <= regions:
-            raise RuleError("목표 옵션별 OCR 촬영 영역을 먼저 지정하세요.")
+    # OCR finds printed lines automatically. Legacy region coordinates are not
+    # a prerequisite and must not silently replace the established pipeline.
     if "barcode" in recipe.channels and not brand.barcode_records:
         raise RuleError("바코드 기준표를 먼저 등록하세요.")
 

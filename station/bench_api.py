@@ -6,7 +6,7 @@ import uuid
 
 from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse
-from pydantic import Field, model_validator
+from pydantic import Field
 from .schema import Model
 from .ocr_correction import OCRCorrection
 from .storage import dump
@@ -48,18 +48,7 @@ class BatchCapture(Model):
 
 
 class OCRRead(Model):
-    box: tuple[float, float, float, float]
-    rotation: int = Field(default=0)
     correction: OCRCorrection = Field(default_factory=OCRCorrection)
-
-    @model_validator(mode="after")
-    def valid_box(self):
-        x, y, w, h = self.box
-        if min(x, y) < 0 or min(w, h) <= 0 or x + w > 1 or y + h > 1:
-            raise ValueError("OCR 영역은 영상 안에 지정해야 합니다.")
-        if self.rotation not in (0, 90, 180, 270):
-            raise ValueError("OCR 회전값은 0, 90, 180, 270 중에서 선택하세요.")
-        return self
 
 
 def install(app, controller, bench, camera, permitted, editable, production_busy, maintenance_active, workers):
@@ -235,6 +224,9 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
     async def ocr(request: Request):
         permitted(request)
         def execute():
+            missing = app.state.vision.status()["missing_modules"]
+            if missing:
+                return {"ok": False, "detail": "OCR 실행 패키지 없음: " + ", ".join(missing)}
             try:
                 app.state.vision.load()
             except ModuleNotFoundError as exc:
@@ -273,9 +265,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
             started = time.perf_counter()
             frame, timing = camera.after(time.monotonic_ns(), 10)
             capture_ms = (time.perf_counter() - started) * 1000
-            result = app.state.vision.test_region(
-                frame, body.box, body.correction.model_dump(), body.rotation
-            )
+            result = app.state.vision.test_auto(frame, body.correction.model_dump())
             result["timing"] = timing
             result["capture_ms"] = round(capture_ms, 1)
             result["processing_ms"] = round(

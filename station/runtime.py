@@ -67,10 +67,6 @@ class HardwareCycle:
         if s and "ocr" in s["recipe"]["channels"]:
             if not self.vision.status()["local_assets_present"]:
                 reasons.append("로컬 OCR 모델 필요")
-            if any(
-                r.get("min_char_confidence") is None for r in s["brand"]["ocr_regions"]
-            ):
-                reasons.append("OCR 품질 임계값 실측 필요")
         return reasons
 
     async def tick(self):

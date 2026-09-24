@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, CreditCard, ScanText, Settings } from "lucide-react";
 import { api } from "../station/shared";
@@ -9,12 +9,13 @@ import { Equipment as EquipmentDetails } from "../station/StationApp";
 import { BenchHeader, CameraTest, OutputTests, SensorTest, useBench } from "../components/DeviceTests";
 
 type Correction = { gain: number; offset: number; gamma: number; contrast: number; clahe: boolean };
-type OcrResult = {
+type OcrLine = {
   text: string; confidence: number; min_char: number; ms: number;
-  capture_ms?: number; processing_ms?: number;
   crop_width: number; crop_height: number; preview: string;
   chars: { ch: string; p: number }[];
 };
+type OcrResult = { reads: { barcode: string | null; verdict: string; lines: OcrLine[] }[];
+  error: string | null; capture_ms: number; processing_ms: number; ms_ocr: number };
 const initialCorrection: Correction = { gain: 1, offset: 0, gamma: 1, contrast: 1, clahe: false };
 
 export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy }: {
@@ -23,12 +24,9 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy }: {
 }) {
   const connected = bench.state?.camera?.connected === true;
   const [url, setUrl] = useState("");
-  const [box, setBox] = useState<[number, number, number, number]>([0.1, 0.1, 0.8, 0.25]);
-  const [rotation, setRotation] = useState(0);
   const [correction, setCorrection] = useState<Correction>(initialCorrection);
   const [result, setResult] = useState<OcrResult | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [saved, setSaved] = useState("");
-  const start = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     api<Partial<Correction>>("/bench/ocr/correction")
@@ -53,21 +51,9 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy }: {
     return () => { alive = false; abort.abort(); clearTimeout(timer); if (current) URL.revokeObjectURL(current); };
   }, [connected]);
 
-  const point = (event: PointerEvent<HTMLDivElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    return {
-      x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
-      y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
-    };
-  };
-  const move = (event: PointerEvent<HTMLDivElement>) => {
-    if (!start.current) return;
-    const end = point(event), begin = start.current;
-    setBox([Math.min(begin.x, end.x), Math.min(begin.y, end.y), Math.abs(begin.x - end.x), Math.abs(begin.y - end.y)]);
-  };
   const read = async () => {
     setBusy(true); setError(""); setResult(null);
-    try { setResult(await api<OcrResult>("/bench/ocr/read", { box, rotation, correction })); }
+    try { setResult(await api<OcrResult>("/bench/ocr/read", { correction })); }
     catch (e) { setError(e instanceof Error ? e.message : "OCR 검사 실패"); }
     finally { setBusy(false); await bench.refresh().catch(() => {}); }
   };
@@ -82,35 +68,21 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy }: {
       <input className="mt-2 w-full" type="range" min={min} max={max} step={step} value={correction[key]}
         onChange={e => { setCorrection(v => ({ ...v, [key]: Number(e.target.value) })); setSaved(""); }} />
     </label>;
-  const canRead = connected && !!url && box[2] >= 0.02 && box[3] >= 0.02 && !locked && !busy;
+  const canRead = connected && !!url && !locked && !busy;
   return <section className="card space-y-5 p-5">
     <div className="flex items-center gap-3"><ScanText size={26}/><h2 className="text-xl font-extrabold">OCR 촬영 시험</h2>
-      <Help text="영상에서 글자 영역을 드래그하고 보정값을 조절한 뒤 검사하세요. 촬영 사진은 저장하지 않습니다. 보정값을 저장하면 다음 작업의 OCR에도 적용됩니다."/></div>
+      <Help text="카메라에서 새 영상을 받아 글자 줄을 자동으로 찾습니다. 촬영 사진은 저장하지 않습니다. 보정값을 저장하면 다음 작업에도 적용됩니다."/></div>
     <div className="grid gap-5 xl:grid-cols-2">
       <div className="space-y-3">
         <div className="rounded-xl bg-ink-900 p-2">
-          {connected && url ? <div className="relative mx-auto w-fit max-w-full">
-            <img src={url} alt="OCR 영역 선택용 카메라 영상" className="block max-h-[520px] max-w-full select-none" draggable={false}/>
-            <div className="absolute inset-0 cursor-crosshair touch-none" aria-label="OCR 영역 선택"
-              onPointerDown={event => { start.current = point(event); event.currentTarget.setPointerCapture(event.pointerId); move(event); }}
-              onPointerMove={move} onPointerUp={event => { move(event); start.current = null; }}
-              onPointerCancel={() => { start.current = null; }}>
-              <div className="pointer-events-none absolute border-4 border-yellow-300 bg-yellow-300/15"
-                style={{ left: `${box[0] * 100}%`, top: `${box[1] * 100}%`, width: `${box[2] * 100}%`, height: `${box[3] * 100}%` }}/>
-            </div>
-          </div> : <p className="p-8 text-center text-2xl font-bold text-white">{connected ? "영상 수신 중" : "카메라 미연결"}</p>}
+          {connected && url ? <img src={url} alt="카메라 영상" className="mx-auto block max-h-[520px] max-w-full"/>
+            : <p className="p-8 text-center text-2xl font-bold text-white">{connected ? "영상 수신 중" : "카메라 미연결"}</p>}
         </div>
-        <p className="text-lg font-bold">글자 영역을 영상 위에서 드래그하세요.</p>
         <button className="btn btn-outline" disabled={locked || ocrBusy || busy} onClick={checkOcr}>{ocrBusy ? "모델 확인 중" : "OCR 모델 확인"}</button>
         {ocr && <p role="status" className={"text-lg font-bold " + (ocr.ok ? "text-ok" : "text-danger")}>{ocr.detail}</p>}
       </div>
       <div className="space-y-4">
         <h3 className="text-xl font-bold">영상 보정</h3>
-        <label className="block text-lg font-bold">글자 방향
-          <select className="field mt-2" value={rotation} onChange={e => setRotation(Number(e.target.value))}>
-            <option value={0}>그대로</option><option value={90}>90도</option><option value={180}>180도</option><option value={270}>270도</option>
-          </select>
-        </label>
         {slider("gain", "밝기 증폭", 0.5, 8, 0.1)}
         {slider("offset", "밝기 이동", -64, 128, 1)}
         {slider("gamma", "감마", 0.25, 2, 0.05)}
@@ -124,15 +96,17 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy }: {
         {error && <p role="alert" className="text-lg font-bold text-danger">{error}</p>}
         {saved && <p role="status" className="text-lg font-bold text-ok">{saved}</p>}
         {result && <div className="space-y-3 rounded-xl border border-line p-4">
-          <h3 className="text-xl font-bold">인식한 영역 {result.crop_width} × {result.crop_height}</h3>
-          <img src={result.preview} alt="OCR에 사용한 보정 영역" className="max-h-72 w-full rounded-lg bg-white object-contain"/>
-          <p className="break-all text-3xl font-extrabold">{result.text || "문자 미검출"}</p>
-          <p className="text-lg font-bold">인식 신뢰도 {(result.confidence * 100).toFixed(1)}%</p>
-          <p className="text-lg font-bold">최저 문자 신뢰도 {(result.min_char * 100).toFixed(1)}%</p>
-          {result.processing_ms !== undefined && <p className="text-lg font-bold">촬영 대기 {result.capture_ms?.toFixed(1)} ms, OCR 처리 {result.processing_ms.toFixed(1)} ms</p>}
-          <details><summary className="cursor-pointer text-lg font-bold">문자별 결과</summary>
-            <div className="mt-3 flex flex-wrap gap-2">{result.chars.map((item, i) => <span key={i} className="rounded-lg border border-line px-3 py-2 text-lg font-bold">{item.ch} {(item.p * 100).toFixed(0)}%</span>)}</div>
-          </details>
+          {result.error && <p role="status" className="text-xl font-bold text-danger">{result.error}</p>}
+          {result.reads.map((read, i) => <div key={i} className="space-y-3">
+            {read.barcode && <p className="text-lg font-bold">바코드 {read.barcode}</p>}
+            {read.lines.map((line, j) => <div key={j} className="rounded-xl border border-line p-3">
+              <img src={line.preview} alt="자동 검출한 글자 줄" className="max-h-72 w-full rounded-lg bg-white object-contain"/>
+              <p className="break-all text-3xl font-extrabold">{line.text || "문자 미검출"}</p>
+              <p className="text-lg font-bold">인식 신뢰도 {(line.confidence * 100).toFixed(1)}%</p>
+            </div>)}
+          </div>)}
+          {!result.error && result.reads.every(read => !read.lines.length) && <p className="text-xl font-bold">글자를 찾지 못했습니다</p>}
+          <p className="text-lg font-bold">촬영 대기 {result.capture_ms.toFixed(1)} ms, OCR 처리 {result.processing_ms.toFixed(1)} ms</p>
         </div>}
       </div>
     </div>

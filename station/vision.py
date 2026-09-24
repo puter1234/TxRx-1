@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import base64
+import importlib.util
 import io
 import json
 import sys
@@ -14,6 +15,40 @@ from .schema import Brand, Recipe
 from .ocr_correction import OCRCorrection, correct
 
 ROOT = Path(__file__).resolve().parents[1]
+
+OCR_MODULES = ("PIL", "torch", "torchvision", "timm", "pytorch_lightning", "zxingcpp")
+
+
+def missing_ocr_modules():
+    return [name for name in OCR_MODULES if importlib.util.find_spec(name) is None]
+
+
+def _serial_fields(text: str, brand: Brand):
+    """Decode a complete printed product code from registered option values only."""
+    from ocr.normalize import normalize_strict
+
+    serial = normalize_strict(text)
+    if not serial or not brand.options:
+        return None
+    matches = []
+
+    def walk(index, offset, fields):
+        if len(matches) > 1:
+            return
+        if index == len(brand.options):
+            if offset == len(serial):
+                matches.append(dict(fields))
+            return
+        option = brand.options[index]
+        for value in option.values:
+            part = normalize_strict(value)
+            if part and serial.startswith(part, offset):
+                fields[option.key] = value
+                walk(index + 1, offset + len(part), fields)
+        fields.pop(option.key, None)
+
+    walk(0, 0, {})
+    return matches[0] if len(matches) == 1 else None
 
 
 def verify_model(directory: Path):
@@ -89,16 +124,15 @@ class Vision:
             self.error = None
             import cv2
             import numpy as np
-            from PIL import Image
-            from ocr.core import to_rgb
 
             settings = OCRCorrection.model_validate(correction or {})
 
             frame = None
             if isinstance(source, (str, Path)):
+                from PIL import Image
                 with Image.open(source) as original:
                     original.load()
-                    image = to_rgb(original)
+                    image = original.convert("RGB")
             else:
                 frame = source
                 image = None
@@ -108,63 +142,31 @@ class Vision:
             if "barcode" in recipe.channels and width * height > 24_000_000:
                 raise ValueError("바코드 영상은 2,400만 화소 이하만 지원합니다.")
             observations, detail, failures = {}, {}, []
+            task = None
             if "ocr" in recipe.channels:
-                self.load()
-                observations["ocr"] = {}
-                for region in brand.ocr_regions:
-                    if region.field not in recipe.targets:
-                        continue
-                    x, y, w, h = region.box
-                    left, top = int(x * width), int(y * height)
-                    right, bottom = int((x + w) * width), int((y + h) * height)
-                    if (right - left) * (bottom - top) > 24_000_000:
-                        raise ValueError("OCR 영역은 2,400만 화소 이하여야 합니다.")
-                    if frame is None:
-                        crop = image.crop((left, top, right, bottom))
-                    else:
-                        crop = Image.fromarray(
-                            cv2.cvtColor(frame[top:bottom, left:right], cv2.COLOR_BGR2RGB)
-                        )
-                    if region.rotation:
-                        crop = crop.rotate(region.rotation, expand=True)
-                    crop = correct(crop, settings)
-                    out = self.recognizer.read(crop)
-                    detail[region.field] = {
-                        **out,
-                        "box": region.box,
-                        "rotation": region.rotation,
-                    }
-                    # Only trim outer whitespace. Never fill a missing field from the target.
-                    observations["ocr"][region.field] = out["text"].strip()
-                    if (
-                        region.min_char_confidence is not None
-                        and out["min_char"] < region.min_char_confidence
+                bgr = frame if frame is not None else cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
+                task = self._auto_read(bgr, settings)
+                candidates = []
+                for read in task.reads:
+                    for line in read.lines:
+                        fields = _serial_fields(line["text"], brand)
+                        if fields is not None:
+                            candidates.append((fields, line, read.barcode))
+                detail["ocr_lines"] = [line for read in task.reads for line in read.lines]
+                detail["ocr_ms"] = task.ms_ocr
+                distinct = {tuple(sorted(fields.items())) for fields, _, _ in candidates}
+                if len(distinct) == 1:
+                    fields, line, linked_barcode = candidates[0]
+                    observations["ocr"] = fields
+                    detail["ocr_serial"] = line["text"]
+                    from ocr.normalize import normalize_strict
+                    if "barcode" in recipe.channels and linked_barcode and (
+                        normalize_strict(linked_barcode) != normalize_strict(line["text"])
                     ):
-                        failures.append(
-                            {
-                                "code": "OCR_LOW_CONFIDENCE",
-                                "field": region.field,
-                                "actual": out["min_char"],
-                                "minimum": region.min_char_confidence,
-                            }
-                        )
-                        break
-                    actual = observations["ocr"][region.field]
-                    if actual != recipe.targets[region.field]:
-                        failures.append(
-                            {
-                                "code": (
-                                    "TARGET_MISMATCH"
-                                    if actual
-                                    else "REQUIRED_FIELD_MISSING"
-                                ),
-                                "channel": "ocr",
-                                "field": region.field,
-                                "expected": recipe.targets[region.field],
-                                "actual": actual,
-                            }
-                        )
-                        break
+                        failures.append({"code": "BARCODE_OCR_MISMATCH"})
+                else:
+                    observations["ocr"] = {}
+                    failures.append({"code": "MULTIPLE_OCR_VALUES" if distinct else "OCR_TEXT_MISSING"})
             if "barcode" in recipe.channels:
                 import tagreader
 
@@ -173,7 +175,7 @@ class Vision:
                     if frame is not None
                     else cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
                 )
-                codes = sorted({t.text for t in tagreader.read_tag(bgr) if t.text})
+                codes = sorted({t.text for t in tagreader.read_tag(bgr) if t.text}) if task is None else sorted({r.barcode for r in task.reads if r.barcode})
                 detail["barcodes"] = codes
                 if len(codes) != 1:
                     failures.append(
@@ -203,48 +205,52 @@ class Vision:
         finally:
             self.lock.release()
 
-    def test_region(self, frame, box, correction=None, rotation=0):
-        """Read one live ROI and return only a bounded in-memory preview."""
+    def _auto_read(self, frame, settings):
+        self.load()
+        import cv2
+        import numpy as np
+        from PIL import Image
+        import pipeline
+
+        if settings != OCRCorrection():
+            rgb = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            adjusted = correct(rgb, settings)
+            frame = cv2.cvtColor(np.asarray(adjusted), cv2.COLOR_RGB2BGR)
+        return pipeline.process_task(frame, self.recognizer, allow_unanchored=True)
+
+    def test_auto(self, frame, correction=None):
+        """Run the production OCR path on a fresh frame without writing a photo."""
         if not self.lock.acquire(blocking=False):
             raise RuntimeError("이전 영상 처리가 아직 끝나지 않았습니다.")
         try:
-            import cv2
             from PIL import Image
 
             self.error = None
             settings = OCRCorrection.model_validate(correction or {})
-            height, width = frame.shape[:2]
-            x, y, w, h = box
-            left, top = int(x * width), int(y * height)
-            right, bottom = int((x + w) * width), int((y + h) * height)
-            if right - left < 16 or bottom - top < 16:
-                raise ValueError("OCR 영역은 가로와 세로가 각각 16픽셀 이상이어야 합니다.")
-            if (right - left) * (bottom - top) > 24_000_000:
-                raise ValueError("OCR 영역은 2,400만 화소 이하여야 합니다.")
-            rgb = cv2.cvtColor(frame[top:bottom, left:right], cv2.COLOR_BGR2RGB)
-            crop = Image.fromarray(rgb)
-            if rotation:
-                crop = crop.rotate(rotation, expand=True)
-            crop = correct(crop, settings)
-            self.load()
-            result = self.recognizer.read(crop)
-            preview = crop.copy()
-            preview.thumbnail((800, 500))
-            memory = io.BytesIO()
-            preview.save(memory, format="JPEG", quality=80)
+            task = self._auto_read(frame, settings)
+            reads = []
+            for read in task.reads:
+                lines = []
+                for line, crop in zip(read.lines, read.line_crops):
+                    import cv2
+                    preview = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
+                    preview.thumbnail((800, 500))
+                    memory = io.BytesIO()
+                    preview.save(memory, format="JPEG", quality=80)
+                    lines.append({
+                        **line, "crop_width": crop.shape[1], "crop_height": crop.shape[0],
+                        "preview": "data:image/jpeg;base64," + base64.b64encode(memory.getvalue()).decode(),
+                    })
+                reads.append({
+                    "barcode": read.barcode, "verdict": read.verdict.status,
+                    "lines": lines,
+                })
             return {
-                "box": box,
-                "rotation": rotation,
-                "frame_width": width,
-                "frame_height": height,
-                "crop_width": crop.width,
-                "crop_height": crop.height,
+                "frame_width": frame.shape[1], "frame_height": frame.shape[0],
                 "correction": settings.model_dump(),
-                "preview": (
-                    "data:image/jpeg;base64,"
-                    + base64.b64encode(memory.getvalue()).decode()
-                ),
-                **result,
+                "reads": reads, "error": task.error,
+                "ms_barcode": task.ms_barcode, "ms_ocr": task.ms_ocr,
+                "ms_total": task.ms_total,
             }
         except Exception as exc:
             self.error = str(exc)
@@ -262,4 +268,5 @@ class Vision:
             "busy": self.lock.locked(),
             "device": str(self.recognizer.device) if self.recognizer else None,
             "gpu_name": self.recognizer.gpu_name if self.recognizer else None,
+            "missing_modules": missing_ocr_modules(),
         }

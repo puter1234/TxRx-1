@@ -573,7 +573,7 @@ def test_ocr_reports_missing_runtime_package(rig):
     assert not app.state.bench.native_busy
 
 
-def test_live_ocr_reads_corrected_crop_without_saving_a_photo(rig):
+def test_live_ocr_reads_auto_detected_line_without_saving_a_photo(rig, monkeypatch):
     c, app = rig
     profile = app.state.camera.backend.profile.model_dump()
     assert c.post("/api/bench/camera/apply", json={
@@ -593,14 +593,24 @@ def test_live_ocr_reads_corrected_crop_without_saving_a_photo(rig):
 
     app.state.vision.recognizer = Reader()
     app.state.vision.load = lambda: None
-    body = {"box": [0.1, 0.1, 0.5, 0.3],
-            "correction": {"gain": 2, "gamma": 1, "contrast": 1, "clahe": False}}
+    import pipeline
+    from types import SimpleNamespace
+    tag = SimpleNamespace(text="80", format="CODE39", angle=0, stage="test",
+                          rotated=frame, _rotated_quad=np.array([[100, 200], [300, 200], [300, 250], [100, 250]]))
+    def read_tag(image, **kwargs):
+        tag.rotated = image
+        return [tag]
+    monkeypatch.setattr(pipeline.tagreader, "read_tag", read_tag)
+    found = []
+    monkeypatch.setattr(pipeline, "_ordered_crops", lambda above, *args: (found.append(True) or [above]))
+    body = {"correction": {"gain": 2, "gamma": 1, "contrast": 1, "clahe": False}}
     response = c.post("/api/bench/ocr/read", json=body)
     assert response.status_code == 200, response.text
     result = response.json()
-    assert result["text"] == "80"
-    assert result["preview"].startswith("data:image/jpeg;base64,")
-    assert result["crop_width"] == 320 and result["crop_height"] == 144
+    assert found
+    assert result["reads"][0]["lines"][0]["text"] == "80"
+    assert result["reads"][0]["lines"][0]["preview"].startswith("data:image/jpeg;base64,")
+    assert result["reads"][0]["lines"][0]["crop_width"] > 0
     assert not list((app.state.store.root / "device-tests").glob("*"))
     assert c.get("/api/history").json()["inspections"] == []
     saved = c.put("/api/bench/ocr/correction", json=body["correction"])
@@ -608,11 +618,10 @@ def test_live_ocr_reads_corrected_crop_without_saving_a_photo(rig):
     assert c.get("/api/bench/ocr/correction").json()["gain"] == 2
 
 
-def test_live_ocr_rejects_invalid_region_and_correction(rig):
+def test_live_ocr_rejects_manual_region_and_invalid_correction(rig):
     c, _ = rig
     assert c.post("/api/bench/ocr/read", json={"box": [0.9, 0.9, 0.5, 0.5]}).status_code == 422
-    assert c.post("/api/bench/ocr/read", json={"box": [0, 0, 1, 1],
-        "correction": {"gain": 100}}).status_code == 422
+    assert c.post("/api/bench/ocr/read", json={"correction": {"gain": 100}}).status_code == 422
 
 
 def test_unconfirmed_off_remains_blocked(rig):

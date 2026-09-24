@@ -79,14 +79,16 @@ it("allows RFID reading with both outputs on and displays read errors beside the
   expect(await screen.findByRole("alert")).toHaveProperty("textContent", "RFID response timeout: 08");
 });
 
-it("reads a live OCR crop with correction and displays the crop and value", async () => {
+it("reads automatically detected OCR lines with correction", async () => {
   mocks.bench.state.camera = { connected: true };
   mocks.api.mockImplementation(async (path: string) => {
     if (path === "/bench/ocr/correction") return { gain: 1, offset: 0, gamma: 1, contrast: 1, clahe: false };
     if (path === "/bench/ocr/read") return {
-      text: "ABC123", confidence: 0.94, min_char: 0.9, ms: 8,
-      crop_width: 320, crop_height: 100, preview: "data:image/jpeg;base64,dGVzdA==",
-      chars: [{ ch: "A", p: 0.95 }],
+      reads: [{ barcode: "ABC123", verdict: "match", lines: [{
+        text: "ABC123", confidence: 0.94, min_char: 0.9, ms: 8,
+        crop_width: 320, crop_height: 100, preview: "data:image/jpeg;base64,dGVzdA==",
+        chars: [{ ch: "A", p: 0.95 }],
+      }] }], error: null, capture_ms: 1, processing_ms: 8, ms_ocr: 8,
     };
     return {};
   });
@@ -101,9 +103,8 @@ it("reads a live OCR crop with correction and displays the crop and value", asyn
     await waitFor(() => expect(read.disabled).toBe(false));
     fireEvent.click(read);
     expect(await screen.findByText("ABC123")).toBeTruthy();
-    expect(screen.getByAltText("OCR에 사용한 보정 영역")).toHaveProperty("src", "data:image/jpeg;base64,dGVzdA==");
+    expect(screen.getByAltText("자동 검출한 글자 줄")).toHaveProperty("src", "data:image/jpeg;base64,dGVzdA==");
     expect(mocks.api).toHaveBeenCalledWith("/bench/ocr/read", {
-      box: [0.1, 0.1, 0.8, 0.25], rotation: 0,
       correction: { gain: 1, offset: 0, gamma: 1, contrast: 1, clahe: false },
     });
   } finally {

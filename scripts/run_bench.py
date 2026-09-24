@@ -2,6 +2,7 @@
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -20,6 +21,10 @@ def main():
     python = ROOT / ".venv-bench/bin/python"
     if not python.is_file():
         raise SystemExit("Run python3 scripts/install_bench.py first.")
+    pillow = subprocess.run([str(python), "-c", "from PIL import Image"],
+                            capture_output=True, text=True)
+    if pillow.returncode:
+        raise SystemExit("Pillow is missing from .venv-bench. Run: python3 scripts/install_bench.py")
     print("Open http://127.0.0.1:8000/ on the J4012. Device tests control real hardware.", flush=True)
     os.execv(str(python), [str(python), "-m", "uvicorn", "station.app:create_app",
                          "--factory", "--host", "127.0.0.1", "--port", "8000", "--workers", "1"])

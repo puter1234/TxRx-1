@@ -39,6 +39,7 @@ class TagRead:
     stage: str
     verdict: Verdict
     lines: list[dict] = field(default_factory=list)   # OCR한 줄들 [{text, confidence, ms}]
+    line_crops: list[np.ndarray] = field(default_factory=list)
     crop: np.ndarray | None = None                    # 판정 근거가 된 줄 크롭 (BGR)
     band: np.ndarray | None = None                    # 바코드 주변 밴드 (디버깅/표시용)
 
@@ -88,6 +89,7 @@ def process_task(
     recognizer: Recognizer | None,
     *,
     max_lines: int = 6,
+    allow_unanchored: bool = False,
 ) -> TaskResult:
     """사진 한 장을 Task로 처리한다. recognizer가 None이면 바코드만 읽는다."""
     t_start = time.perf_counter()
@@ -97,6 +99,30 @@ def process_task(
     ms_barcode = (time.perf_counter() - t0) * 1000
 
     if not tags:
+        if allow_unanchored and recognizer is not None:
+            # Barcode is optional in the station. Use the same text-line detector
+            # on a bounded copy of the full frame when no barcode can anchor it.
+            h, w = img.shape[:2]
+            scale = min(1.0, 1920 / w, 1080 / h)
+            scan = cv2.resize(img, None, fx=scale, fy=scale) if scale < 1 else img
+            crops = []
+            for char_h in (20, 40, 80):
+                crops.extend(find_text_lines(scan, char_h, max_lines=max_lines))
+            lines, used, ms_ocr = [], [], 0.0
+            for crop in crops[:max_lines * 3]:
+                t0 = time.perf_counter()
+                out = recognizer.read(Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)))
+                ms_ocr += (time.perf_counter() - t0) * 1000
+                lines.append({"text": out["text"], "confidence": out["confidence"],
+                              "min_char": out.get("min_char"), "chars": out.get("chars", []), "ms": out["ms"]})
+                used.append(crop)
+            return TaskResult(
+                reads=[TagRead(None, None, 0, "unanchored", compare(None, []),
+                               lines=lines, line_crops=used, crop=used[0] if used else None)],
+                ms_barcode=ms_barcode, ms_ocr=ms_ocr,
+                ms_total=(time.perf_counter() - t_start) * 1000,
+                error=None if lines else "글자 줄을 찾지 못했습니다",
+            )
         return TaskResult(
             reads=[], ms_barcode=ms_barcode,
             ms_total=(time.perf_counter() - t_start) * 1000,
@@ -105,7 +131,7 @@ def process_task(
 
     reads, ms_ocr = [], 0.0
     for tag in tags:
-        lines, best_crop = [], None
+        lines, best_crop, crops = [], None, []
 
         if recognizer is not None and tag.rotated is not None and tag._rotated_quad is not None:
             above, below, bar_h = _band_of(tag.rotated, tag._rotated_quad)
@@ -118,7 +144,8 @@ def process_task(
                 t0 = time.perf_counter()
                 out = recognizer.read(Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)))
                 ms_ocr += (time.perf_counter() - t0) * 1000
-                lines.append({"text": out["text"], "confidence": out["confidence"], "ms": out["ms"]})
+                lines.append({"text": out["text"], "confidence": out["confidence"],
+                              "min_char": out.get("min_char"), "chars": out.get("chars", []), "ms": out["ms"]})
                 if best_crop is None:
                     best_crop = crop
                 # 바코드 값과 구분자만 다른 줄을 찾았으면 나머지는 읽을 이유가 없다.
@@ -137,7 +164,7 @@ def process_task(
 
         reads.append(TagRead(
             barcode=tag.text, barcode_format=tag.format, angle=tag.angle, stage=tag.stage,
-            verdict=verdict, lines=lines, crop=best_crop,
+            verdict=verdict, lines=lines, line_crops=crops[:len(lines)] if recognizer is not None else [], crop=best_crop,
             band=_band_of(tag.rotated, tag._rotated_quad)[0] if tag.rotated is not None else None,
         ))
 
