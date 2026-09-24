@@ -603,25 +603,21 @@ def test_live_ocr_reads_auto_detected_line_without_saving_a_photo(rig, monkeypat
     monkeypatch.setattr(pipeline.tagreader, "read_tag", read_tag)
     found = []
     monkeypatch.setattr(pipeline, "_ordered_crops", lambda above, *args: (found.append(True) or [above]))
-    body = {"correction": {"gain": 2, "gamma": 1, "contrast": 1, "clahe": False}}
-    response = c.post("/api/bench/ocr/read", json=body)
+    response = c.post("/api/bench/ocr/read", json={})
     assert response.status_code == 200, response.text
     result = response.json()
     assert found
-    assert result["reads"][0]["lines"][0]["text"] == "80"
+    assert result["reads"][0]["lines"][0]["text"] == "40"
     assert result["reads"][0]["lines"][0]["preview"].startswith("data:image/jpeg;base64,")
     assert result["reads"][0]["lines"][0]["crop_width"] > 0
     assert not list((app.state.store.root / "device-tests").glob("*"))
     assert c.get("/api/history").json()["inspections"] == []
-    saved = c.put("/api/bench/ocr/correction", json=body["correction"])
-    assert saved.status_code == 200, saved.text
-    assert c.get("/api/bench/ocr/correction").json()["gain"] == 2
 
 
-def test_live_ocr_rejects_manual_region_and_invalid_correction(rig):
+def test_live_ocr_has_no_image_correction_endpoints(rig):
     c, _ = rig
-    assert c.post("/api/bench/ocr/read", json={"box": [0.9, 0.9, 0.5, 0.5]}).status_code == 422
-    assert c.post("/api/bench/ocr/read", json={"correction": {"gain": 100}}).status_code == 422
+    assert c.get("/api/bench/ocr/correction").status_code == 404
+    assert c.put("/api/bench/ocr/correction", json={}).status_code == 404
 
 
 def test_unconfirmed_off_remains_blocked(rig):

@@ -8,7 +8,6 @@ import Help from "../components/Help";
 import { Equipment as EquipmentDetails } from "../station/StationApp";
 import { BenchHeader, CameraTest, OutputTests, SensorTest, useBench } from "../components/DeviceTests";
 
-type Correction = { gain: number; offset: number; gamma: number; contrast: number; clahe: boolean };
 type OcrLine = {
   text: string; confidence: number; min_char: number; ms: number;
   crop_width: number; crop_height: number; preview: string;
@@ -18,22 +17,14 @@ type OcrResult = { ok: boolean; reads: { barcode: string | null; barcode_format:
   verdict: string; verdict_label: string; verdict_detail: string; stage: string; lines: OcrLine[] }[];
   error: string | null; capture_ms: number; processing_ms: number;
   ms_model_load: number; ms_barcode: number; ms_ocr: number };
-const initialCorrection: Correction = { gain: 1, offset: 0, gamma: 1, contrast: 1, clahe: false };
-
 export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy }: {
   bench: ReturnType<typeof useBench>; locked: boolean;
   checkOcr: () => void; ocr: { ok: boolean; detail: string } | null; ocrBusy: boolean;
 }) {
   const connected = bench.state?.camera?.connected === true;
   const [url, setUrl] = useState("");
-  const [correction, setCorrection] = useState<Correction>(initialCorrection);
   const [result, setResult] = useState<OcrResult | null>(null);
-  const [busy, setBusy] = useState(false), [error, setError] = useState(""), [saved, setSaved] = useState("");
-
-  useEffect(() => {
-    api<Partial<Correction>>("/bench/ocr/correction")
-      .then(value => setCorrection({ ...initialCorrection, ...value })).catch(() => {});
-  }, []);
+  const [busy, setBusy] = useState(false), [error, setError] = useState("");
   useEffect(() => {
     if (!connected) { setUrl(""); return; }
     let alive = true, current = "", timer: ReturnType<typeof setTimeout>;
@@ -55,25 +46,14 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy }: {
 
   const read = async () => {
     setBusy(true); setError(""); setResult(null);
-    try { setResult(await api<OcrResult>("/bench/ocr/read", { correction })); }
+    try { setResult(await api<OcrResult>("/bench/ocr/read", {})); }
     catch (e) { setError(e instanceof Error ? e.message : "OCR 검사 실패"); }
     finally { setBusy(false); await bench.refresh().catch(() => {}); }
   };
-  const save = async () => {
-    setBusy(true); setError(""); setSaved("");
-    try { await api("/bench/ocr/correction", correction, "PUT"); setSaved("보정값 저장 완료. 다음 작업부터 적용됩니다."); }
-    catch (e) { setError(e instanceof Error ? e.message : "보정값 저장 실패"); }
-    finally { setBusy(false); await bench.refresh().catch(() => {}); }
-  };
-  const slider = (key: "gain" | "offset" | "gamma" | "contrast", label: string, min: number, max: number, step: number) =>
-    <label className="block text-lg font-bold" key={key}>{label} {correction[key].toFixed(2)}
-      <input className="mt-2 w-full" type="range" min={min} max={max} step={step} value={correction[key]}
-        onChange={e => { setCorrection(v => ({ ...v, [key]: Number(e.target.value) })); setSaved(""); }} />
-    </label>;
   const canRead = connected && !!url && !locked && !busy;
   return <section className="card space-y-5 p-5">
     <div className="flex items-center gap-3"><ScanText size={26}/><h2 className="text-xl font-extrabold">OCR 촬영 시험</h2>
-      <Help text="카메라에서 새 영상을 받아 글자 줄을 자동으로 찾습니다. 촬영 사진은 저장하지 않습니다. 보정값을 저장하면 다음 작업에도 적용됩니다."/></div>
+      <Help text="현재 카메라 영상에서 바코드와 인쇄 문자를 확인합니다. 사진은 저장하지 않습니다."/></div>
     <div className="grid gap-5 xl:grid-cols-2">
       <div className="space-y-3">
         <div className="rounded-xl bg-ink-900 p-2">
@@ -84,19 +64,10 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy }: {
         {ocr && <p role="status" className={"text-lg font-bold " + (ocr.ok ? "text-ok" : "text-danger")}>{ocr.detail}</p>}
       </div>
       <div className="space-y-4">
-        <h3 className="text-xl font-bold">영상 보정</h3>
-        {slider("gain", "밝기 증폭", 0.5, 8, 0.1)}
-        {slider("offset", "밝기 이동", -64, 128, 1)}
-        {slider("gamma", "감마", 0.25, 2, 0.05)}
-        {slider("contrast", "대비", 0.5, 3, 0.1)}
-        <label className="flex items-center gap-3 text-lg font-bold"><input type="checkbox" className="h-6 w-6" checked={correction.clahe}
-          onChange={e => { setCorrection(v => ({ ...v, clahe: e.target.checked })); setSaved(""); }}/>국소 대비 보정</label>
         <div className="flex flex-wrap gap-3">
           <button className="btn btn-primary flex-1" disabled={!canRead} onClick={read}>{busy ? "검사 중" : "현재 영상 OCR 검사"}</button>
-          <button className="btn btn-outline flex-1" disabled={locked || busy} onClick={save}>보정값 저장</button>
         </div>
         {error && <p role="alert" className="text-lg font-bold text-danger">{error}</p>}
-        {saved && <p role="status" className="text-lg font-bold text-ok">{saved}</p>}
         {result && <div className="space-y-3 rounded-xl border border-line p-4">
           <p role="status" className={"text-2xl font-extrabold " + (result.ok ? "text-ok" : "text-danger")}>
             {result.ok ? "검사 통과" : "검사 실패"}

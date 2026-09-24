@@ -714,7 +714,6 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
                     result = await asyncio.wait_for(
                         asyncio.to_thread(
                             vision.inspect, target, brand, recipe,
-                            controller.session.get("ocr_correction", {}),
                         ),
                         timeout=120,
                     )

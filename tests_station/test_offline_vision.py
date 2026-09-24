@@ -35,7 +35,7 @@ def test_live_frame_matches_saved_png_without_model(tmp_path, monkeypatch):
     assert len(seen) == 2 and np.array_equal(seen[0], seen[1])
 
 
-def test_correction_matches_live_test_and_production_ocr(monkeypatch):
+def test_live_test_and_production_ocr_use_the_camera_crop(monkeypatch):
     import numpy as np
 
     from station.schema import Brand, Recipe
@@ -63,15 +63,14 @@ def test_correction_matches_live_test_and_production_ocr(monkeypatch):
         return [tag]
     monkeypatch.setattr(pipeline.tagreader, "read_tag", read_tag)
     monkeypatch.setattr(pipeline, "_ordered_crops", lambda above, *args: [above])
-    correction = {"gain": 2, "gamma": 1, "contrast": 1, "clahe": False}
     brand = Brand(id="test", name="Test", options=[{"key": "text", "label": "Text", "values": ["80"]}],
                   ocr_regions=[{"field": "text", "box": [0, 0, 1, 1]}])
     recipe = Recipe(brand_id="test", brand_revision=1, targets={"text": "80"}, channels=["ocr"])
-    test_result = vision.test_auto(frame, correction)
-    production = vision.inspect_frame(frame, brand, recipe, correction)
-    assert test_result["reads"][0]["lines"][0]["text"] == "80"
+    test_result = vision.test_auto(frame)
+    production = vision.inspect_frame(frame, brand, recipe)
+    assert test_result["reads"][0]["lines"][0]["text"] == "40"
     assert production["observations"]["ocr"]["text"] == "80"
-    assert means == [80, 80]
+    assert means == [40, 40]
 
 
 def test_ocr_without_barcode_stops_before_model_inference(monkeypatch):

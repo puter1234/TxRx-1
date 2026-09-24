@@ -20,7 +20,6 @@ from PIL import Image
 import tagreader
 from ocr import Recognizer, Verdict, compare, find_text_lines
 from ocr.normalize import normalize_loose, normalize_strict
-from station.ocr_correction import OCRCorrection, correct
 
 # 바코드 위/아래로 텍스트를 찾을 범위 (바코드 높이 대비 배수).
 SEARCH_MARGIN = 1.6
@@ -90,7 +89,6 @@ def process_task(
     recognizer: Recognizer | None,
     *,
     max_lines: int = 6,
-    correction: OCRCorrection | None = None,
 ) -> TaskResult:
     """사진 한 장을 Task로 처리한다. recognizer가 None이면 바코드만 읽는다."""
     t_start = time.perf_counter()
@@ -107,7 +105,6 @@ def process_task(
         )
 
     reads, ms_ocr = [], 0.0
-    correction = correction or OCRCorrection()
     for tag in tags:
         lines, best_crop, crops = [], None, []
 
@@ -121,8 +118,6 @@ def process_task(
             for crop in crops:
                 t0 = time.perf_counter()
                 image = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
-                if correction != OCRCorrection():
-                    image = correct(image, correction)
                 out = recognizer.read(image)
                 ms_ocr += (time.perf_counter() - t0) * 1000
                 lines.append({"text": out["text"], "confidence": out["confidence"],

@@ -211,7 +211,6 @@ class HardwareCycle:
                 jobs.append(
                     self.offload(
                         self.vision.inspect_frame, frame, brand, recipe,
-                        self.c.session.get("ocr_correction", {}),
                     )
                 )
                 names.append("vision")

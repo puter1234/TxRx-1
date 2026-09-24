@@ -8,8 +8,6 @@ from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import Field
 from .schema import Model
-from .ocr_correction import OCRCorrection
-from .storage import dump
 from .controller import Conflict
 from .bench import BenchSetup, serial_ports
 from .usb_camera import CameraProfile
@@ -45,10 +43,6 @@ class CameraApply(Model):
 
 class BatchCapture(Model):
     count: int = Field(ge=1, le=500)
-
-
-class OCRRead(Model):
-    correction: OCRCorrection = Field(default_factory=OCRCorrection)
 
 
 def install(app, controller, bench, camera, permitted, editable, production_busy, maintenance_active, workers):
@@ -234,29 +228,8 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
             return {"ok": app.state.vision.status()["loaded"], "detail": "OCR 모델 준비 완료"}
         return await native(execute, allow_led=True)
 
-    @app.get("/api/bench/ocr/correction")
-    def ocr_correction():
-        return OCRCorrection.model_validate(store.get("ocr_correction", {})).model_dump()
-
-    @app.put("/api/bench/ocr/correction")
-    def save_ocr_correction(body: OCRCorrection, request: Request):
-        actor = permitted(request, ("admin",))
-        with controller.lock, bench.lock:
-            available(allow_led=True)
-            with store.transaction() as transaction:
-                transaction.execute(
-                    "INSERT OR REPLACE INTO meta VALUES(?,?)",
-                    ("ocr_correction", dump(body.model_dump())),
-                )
-                store.event(
-                    "OCR_CORRECTION_SAVED",
-                    {"actor": actor, "correction": body.model_dump()},
-                    transaction,
-                )
-        return body.model_dump()
-
     @app.post("/api/bench/ocr/read")
-    async def read_ocr(body: OCRRead, request: Request):
+    async def read_ocr(request: Request):
         permitted(request)
 
         def execute():
@@ -267,7 +240,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
             # Waiting for two more frames adds hundreds of milliseconds at low FPS.
             frame, timing = camera.read_latest()
             capture_ms = (time.perf_counter() - started) * 1000
-            result = app.state.vision.test_auto(frame, body.correction.model_dump())
+            result = app.state.vision.test_auto(frame)
             result["timing"] = timing
             result["capture_ms"] = round(capture_ms, 1)
             result["processing_ms"] = round(

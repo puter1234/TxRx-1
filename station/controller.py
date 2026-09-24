@@ -188,7 +188,6 @@ class Controller:
                 "save_pass_photos": self.store.get(
                     "save_pass_photos", self.config.mode != "HARDWARE"
                 ),
-                "ocr_correction": self.store.get("ocr_correction", {}),
             }
             self.session["software_version"] = "0.3.0"
             self.session["created_by"] = actor

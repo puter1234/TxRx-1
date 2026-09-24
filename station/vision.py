@@ -13,7 +13,6 @@ import time
 from pathlib import Path
 
 from .schema import Brand, Recipe
-from .ocr_correction import OCRCorrection
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -111,22 +110,20 @@ class Vision:
         recognizer._lock = threading.Lock()
         self.recognizer = recognizer
 
-    def inspect(self, image_path: Path, brand: Brand, recipe: Recipe, correction=None):
-        return self._inspect(image_path, brand, recipe, correction)
+    def inspect(self, image_path: Path, brand: Brand, recipe: Recipe):
+        return self._inspect(image_path, brand, recipe)
 
-    def inspect_frame(self, frame, brand: Brand, recipe: Recipe, correction=None):
+    def inspect_frame(self, frame, brand: Brand, recipe: Recipe):
         """Inspect an OpenCV BGR frame without encoding or reopening a photo."""
-        return self._inspect(frame, brand, recipe, correction)
+        return self._inspect(frame, brand, recipe)
 
-    def _inspect(self, source, brand: Brand, recipe: Recipe, correction):
+    def _inspect(self, source, brand: Brand, recipe: Recipe):
         if not self.lock.acquire(blocking=False):
             raise RuntimeError("이전 영상 처리가 아직 끝나지 않았습니다.")
         try:
             self.error = None
             import cv2
             import numpy as np
-
-            settings = OCRCorrection.model_validate(correction or {})
 
             frame = None
             if isinstance(source, (str, Path)):
@@ -146,7 +143,7 @@ class Vision:
             task = None
             if "ocr" in recipe.channels:
                 bgr = frame if frame is not None else cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
-                task = self._auto_read(bgr, settings)
+                task = self._auto_read(bgr)
                 candidates = []
                 for read in task.reads:
                     for line in read.lines:
@@ -207,15 +204,12 @@ class Vision:
         finally:
             self.lock.release()
 
-    def _auto_read(self, frame, settings):
+    def _auto_read(self, frame):
         self.load()
         import pipeline
-        return pipeline.process_task(
-            frame, self.recognizer,
-            correction=OCRCorrection.model_validate(settings or {}),
-        )
+        return pipeline.process_task(frame, self.recognizer)
 
-    def test_auto(self, frame, correction=None):
+    def test_auto(self, frame):
         """Run the production OCR path on a fresh frame without writing a photo."""
         if not self.lock.acquire(blocking=False):
             raise RuntimeError("이전 영상 처리가 아직 끝나지 않았습니다.")
@@ -223,11 +217,10 @@ class Vision:
             from PIL import Image
 
             self.error = None
-            settings = OCRCorrection.model_validate(correction or {})
             model_started = time.perf_counter()
             self.load()
             ms_model_load = (time.perf_counter() - model_started) * 1000
-            task = self._auto_read(frame, settings)
+            task = self._auto_read(frame)
             reads = []
             for read in task.reads:
                 lines = []
@@ -251,7 +244,6 @@ class Vision:
                 })
             return {
                 "frame_width": frame.shape[1], "frame_height": frame.shape[0],
-                "correction": settings.model_dump(),
                 "ok": len(task.reads) == 1 and task.reads[0].verdict.ok,
                 "reads": reads, "error": task.error,
                 "ms_barcode": task.ms_barcode, "ms_ocr": task.ms_ocr,

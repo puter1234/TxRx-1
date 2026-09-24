@@ -82,7 +82,6 @@ it("allows RFID reading with both outputs on and displays read errors beside the
 it("reads automatically detected OCR lines with correction", async () => {
   mocks.bench.state.camera = { connected: true };
   mocks.api.mockImplementation(async (path: string) => {
-    if (path === "/bench/ocr/correction") return { gain: 1, offset: 0, gamma: 1, contrast: 1, clahe: false };
     if (path === "/bench/ocr/read") return {
       reads: [{ barcode: "ABC123", verdict: "match", lines: [{
         text: "ABC123", confidence: 0.94, min_char: 0.9, ms: 8,
