@@ -74,7 +74,7 @@ def test_correction_matches_live_test_and_production_ocr(monkeypatch):
     assert means == [80, 80]
 
 
-def test_ocr_without_barcode_uses_existing_line_detector(monkeypatch):
+def test_ocr_without_barcode_stops_before_model_inference(monkeypatch):
     import numpy as np
     import pipeline
     from station.schema import Brand, Recipe
@@ -82,19 +82,15 @@ def test_ocr_without_barcode_uses_existing_line_detector(monkeypatch):
 
     frame = np.full((80, 160, 3), 40, dtype=np.uint8)
     monkeypatch.setattr(pipeline.tagreader, "read_tag", lambda *args, **kwargs: [])
-    calls = []
-
-    def lines(image, char_h, max_lines):
-        calls.append(char_h)
-        return [image[10:50, 10:150]] if char_h == 20 else []
-
-    monkeypatch.setattr(pipeline, "find_text_lines", lines)
-
     class Reader:
         device = "cpu"
         gpu_name = ""
 
+        def __init__(self):
+            self.calls = 0
+
         def read(self, image):
+            self.calls += 1
             return {"text": "HUTS6A211BK095", "confidence": 0.9,
                     "min_char": 0.9, "chars": [], "ms": 1.0}
 
@@ -109,9 +105,9 @@ def test_ocr_without_barcode_uses_existing_line_detector(monkeypatch):
     recipe = Recipe(brand_id="hazzys", brand_revision=1, channels=["ocr"],
                     targets={"style": "HUTS6A211", "color": "BK", "size": "095"})
     result = vision.inspect_frame(frame, brand, recipe)
-    assert calls == [20, 40, 80]
-    assert result["observations"]["ocr"] == recipe.targets
-    assert not result["failures"]
+    assert result["observations"]["ocr"] == {}
+    assert result["failures"] == [{"code": "OCR_TEXT_MISSING"}]
+    assert vision.recognizer.calls == 0
 
 
 @pytest.mark.slow

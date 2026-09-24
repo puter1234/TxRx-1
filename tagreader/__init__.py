@@ -96,7 +96,21 @@ def read_tag(
         found = scan(gray)
         if not found:
             return []
-        return [TagResult(text=found[0].text, format=str(found[0].format), stage="whole-image")]
+        # ZXing returns barcode corners even when OpenCV's detector misses it.
+        # Keep those corners so OCR can deskew and search beside the barcode.
+        for barcode in found[:max_barcodes]:
+            position = barcode.position
+            quad = np.array([
+                [getattr(position, name).x, getattr(position, name).y]
+                for name in ("top_left", "top_right", "bottom_right", "bottom_left")
+            ], dtype=np.float64)
+            height = (np.linalg.norm(quad[3] - quad[0]) +
+                      np.linalg.norm(quad[2] - quad[1])) / 2
+            if height >= 4:
+                hits.append((barcode.text, str(barcode.format), quad))
+        if not hits:
+            return [TagResult(text=found[0].text, format=str(found[0].format), stage="whole-image")]
+        stage = "whole-image"
 
     if not (want_crops or want_rotated):
         return [

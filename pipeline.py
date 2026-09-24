@@ -19,7 +19,7 @@ from PIL import Image
 
 import tagreader
 from ocr import Recognizer, Verdict, compare, find_text_lines
-from ocr.normalize import normalize_strict
+from ocr.normalize import normalize_loose, normalize_strict
 
 # 바코드 위/아래로 텍스트를 찾을 범위 (바코드 높이 대비 배수).
 SEARCH_MARGIN = 1.6
@@ -89,40 +89,15 @@ def process_task(
     recognizer: Recognizer | None,
     *,
     max_lines: int = 6,
-    allow_unanchored: bool = False,
 ) -> TaskResult:
     """사진 한 장을 Task로 처리한다. recognizer가 None이면 바코드만 읽는다."""
     t_start = time.perf_counter()
 
     t0 = time.perf_counter()
-    tags = tagreader.read_tag(img, want_rotated=True)
+    tags = tagreader.read_tag(img, want_crops=False, want_rotated=True)
     ms_barcode = (time.perf_counter() - t0) * 1000
 
     if not tags:
-        if allow_unanchored and recognizer is not None:
-            # Barcode is optional in the station. Use the same text-line detector
-            # on a bounded copy of the full frame when no barcode can anchor it.
-            h, w = img.shape[:2]
-            scale = min(1.0, 1920 / w, 1080 / h)
-            scan = cv2.resize(img, None, fx=scale, fy=scale) if scale < 1 else img
-            crops = []
-            for char_h in (20, 40, 80):
-                crops.extend(find_text_lines(scan, char_h, max_lines=max_lines))
-            lines, used, ms_ocr = [], [], 0.0
-            for crop in crops[:max_lines * 3]:
-                t0 = time.perf_counter()
-                out = recognizer.read(Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)))
-                ms_ocr += (time.perf_counter() - t0) * 1000
-                lines.append({"text": out["text"], "confidence": out["confidence"],
-                              "min_char": out.get("min_char"), "chars": out.get("chars", []), "ms": out["ms"]})
-                used.append(crop)
-            return TaskResult(
-                reads=[TagRead(None, None, 0, "unanchored", compare(None, []),
-                               lines=lines, line_crops=used, crop=used[0] if used else None)],
-                ms_barcode=ms_barcode, ms_ocr=ms_ocr,
-                ms_total=(time.perf_counter() - t_start) * 1000,
-                error=None if lines else "글자 줄을 찾지 못했습니다",
-            )
         return TaskResult(
             reads=[], ms_barcode=ms_barcode,
             ms_total=(time.perf_counter() - t_start) * 1000,
@@ -150,7 +125,8 @@ def process_task(
                     best_crop = crop
                 # 바코드 값과 구분자만 다른 줄을 찾았으면 나머지는 읽을 이유가 없다.
                 # 무작위 텍스트가 시리얼과 우연히 완전일치할 확률은 사실상 0이라 조기 종료가 안전하다.
-                if target and normalize_strict(out["text"]) == target:
+                if target and (normalize_strict(out["text"]) == target or
+                               normalize_loose(out["text"]) == normalize_loose(tag.text)):
                     best_crop = crop
                     break
 
@@ -173,4 +149,7 @@ def process_task(
         ms_barcode=ms_barcode,
         ms_ocr=ms_ocr,
         ms_total=(time.perf_counter() - t_start) * 1000,
+        error=("바코드 위치를 찾지 못했습니다" if recognizer is not None and
+               all(tag.rotated is None or tag._rotated_quad is None for tag in tags)
+               else None),
     )

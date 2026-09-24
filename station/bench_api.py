@@ -263,7 +263,9 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
             if not camera.status().get("connected"):
                 raise Conflict("카메라를 먼저 연결하세요.")
             started = time.perf_counter()
-            frame, timing = camera.after(time.monotonic_ns(), 10)
+            # The live test uses the frame already arriving from the camera.
+            # Waiting for two more frames adds hundreds of milliseconds at low FPS.
+            frame, timing = camera.read_latest()
             capture_ms = (time.perf_counter() - started) * 1000
             result = app.state.vision.test_auto(frame, body.correction.model_dump())
             result["timing"] = timing

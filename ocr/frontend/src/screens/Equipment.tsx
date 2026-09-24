@@ -15,7 +15,8 @@ type OcrLine = {
   chars: { ch: string; p: number }[];
 };
 type OcrResult = { reads: { barcode: string | null; verdict: string; lines: OcrLine[] }[];
-  error: string | null; capture_ms: number; processing_ms: number; ms_ocr: number };
+  error: string | null; capture_ms: number; processing_ms: number;
+  ms_model_load: number; ms_barcode: number; ms_ocr: number };
 const initialCorrection: Correction = { gain: 1, offset: 0, gamma: 1, contrast: 1, clahe: false };
 
 export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy }: {
@@ -90,7 +91,7 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy }: {
         <label className="flex items-center gap-3 text-lg font-bold"><input type="checkbox" className="h-6 w-6" checked={correction.clahe}
           onChange={e => { setCorrection(v => ({ ...v, clahe: e.target.checked })); setSaved(""); }}/>국소 대비 보정</label>
         <div className="flex flex-wrap gap-3">
-          <button className="btn btn-primary flex-1" disabled={!canRead} onClick={read}>{busy ? "검사 중" : "촬영하고 OCR 검사"}</button>
+          <button className="btn btn-primary flex-1" disabled={!canRead} onClick={read}>{busy ? "검사 중" : "현재 영상 OCR 검사"}</button>
           <button className="btn btn-outline flex-1" disabled={locked || busy} onClick={save}>보정값 저장</button>
         </div>
         {error && <p role="alert" className="text-lg font-bold text-danger">{error}</p>}
@@ -106,7 +107,8 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy }: {
             </div>)}
           </div>)}
           {!result.error && result.reads.every(read => !read.lines.length) && <p className="text-xl font-bold">글자를 찾지 못했습니다</p>}
-          <p className="text-lg font-bold">촬영 대기 {result.capture_ms.toFixed(1)} ms, OCR 처리 {result.processing_ms.toFixed(1)} ms</p>
+          <p className="text-lg font-bold">프레임 복사 {result.capture_ms.toFixed(1)} ms</p>
+          <p className="text-lg font-bold">모델 준비 {result.ms_model_load.toFixed(1)} ms, 바코드 검출 {result.ms_barcode.toFixed(1)} ms, OCR {result.ms_ocr.toFixed(1)} ms</p>
         </div>}
       </div>
     </div>

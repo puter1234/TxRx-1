@@ -88,7 +88,8 @@ it("reads automatically detected OCR lines with correction", async () => {
         text: "ABC123", confidence: 0.94, min_char: 0.9, ms: 8,
         crop_width: 320, crop_height: 100, preview: "data:image/jpeg;base64,dGVzdA==",
         chars: [{ ch: "A", p: 0.95 }],
-      }] }], error: null, capture_ms: 1, processing_ms: 8, ms_ocr: 8,
+      }] }], error: null, capture_ms: 1, processing_ms: 8,
+      ms_model_load: 0, ms_barcode: 2, ms_ocr: 6,
     };
     return {};
   });
@@ -99,7 +100,7 @@ it("reads automatically detected OCR lines with correction", async () => {
   const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
   try {
     render(<OcrLiveTest bench={mocks.bench} locked={false} checkOcr={() => {}} ocr={null} ocrBusy={false}/>);
-    const read = screen.getByRole("button", { name: "촬영하고 OCR 검사" }) as HTMLButtonElement;
+    const read = screen.getByRole("button", { name: "현재 영상 OCR 검사" }) as HTMLButtonElement;
     await waitFor(() => expect(read.disabled).toBe(false));
     fireEvent.click(read);
     expect(await screen.findByText("ABC123")).toBeTruthy();

@@ -580,7 +580,7 @@ def test_live_ocr_reads_auto_detected_line_without_saving_a_photo(rig, monkeypat
         "profile": profile, "save": False, "expected_revision": 0,
     }).status_code == 200
     frame = np.full((480, 640, 3), 40, dtype=np.uint8)
-    app.state.camera.after = lambda *args: (frame, {"seq": 101})
+    app.state.camera.read_latest = lambda: (frame, {"seq": 101})
 
     class Reader:
         device = "cpu"

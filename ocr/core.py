@@ -10,6 +10,7 @@ from __future__ import annotations
 import threading
 import time
 import sys
+import math
 from pathlib import Path
 
 import torch
@@ -66,13 +67,11 @@ def build_transform(img_size):
 
 @torch.inference_mode()
 def infer(model, tensor):
-    """이미지 텐서 1장 -> (문자열, 전체 confidence, 문자별 confidence)."""
+    """이미지 텐서 1장 -> (문자열, 문자별 confidence 텐서)."""
     logits = model(tensor)
     probs = logits.softmax(-1)
     labels, confidences = model.tokenizer.decode(probs)
-    conf = confidences[0]
-    score = float(conf.prod()) if conf.numel() else 0.0
-    return labels[0], score, conf
+    return labels[0], confidences[0]
 
 
 def to_rgb(image: Image.Image) -> Image.Image:
@@ -107,17 +106,19 @@ class Recognizer:
         tensor = self.transform(to_rgb(image)).unsqueeze(0).to(self.device)
         with self._lock:
             start = time.perf_counter()
-            label, score, per_char = infer(self.model, tensor)
+            label, per_char = infer(self.model, tensor)
             if self.device.type == "cuda":
                 torch.cuda.synchronize()
+            # One device-to-host transfer instead of a GPU sync per character.
+            probabilities = per_char.detach().cpu().tolist()
             elapsed = (time.perf_counter() - start) * 1000.0
 
         return {
             "text": label,
-            "confidence": score,
-            "min_char": float(per_char.min()) if per_char.numel() else 0.0,
+            "confidence": math.prod(probabilities) if probabilities else 0.0,
+            "min_char": min(probabilities) if probabilities else 0.0,
             "chars": [
-                {"ch": ch, "p": float(p)} for ch, p in zip(list(label) + ["<eos>"], per_char)
+                {"ch": ch, "p": float(p)} for ch, p in zip(list(label) + ["<eos>"], probabilities)
             ],
             "ms": elapsed,
         }

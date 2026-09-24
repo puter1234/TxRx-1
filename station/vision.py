@@ -9,6 +9,7 @@ import io
 import json
 import sys
 import threading
+import time
 from pathlib import Path
 
 from .schema import Brand, Recipe
@@ -154,6 +155,7 @@ class Vision:
                             candidates.append((fields, line, read.barcode))
                 detail["ocr_lines"] = [line for read in task.reads for line in read.lines]
                 detail["ocr_ms"] = task.ms_ocr
+                detail["ocr_error"] = task.error
                 distinct = {tuple(sorted(fields.items())) for fields, _, _ in candidates}
                 if len(distinct) == 1:
                     fields, line, linked_barcode = candidates[0]
@@ -216,7 +218,7 @@ class Vision:
             rgb = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
             adjusted = correct(rgb, settings)
             frame = cv2.cvtColor(np.asarray(adjusted), cv2.COLOR_RGB2BGR)
-        return pipeline.process_task(frame, self.recognizer, allow_unanchored=True)
+        return pipeline.process_task(frame, self.recognizer)
 
     def test_auto(self, frame, correction=None):
         """Run the production OCR path on a fresh frame without writing a photo."""
@@ -227,6 +229,9 @@ class Vision:
 
             self.error = None
             settings = OCRCorrection.model_validate(correction or {})
+            model_started = time.perf_counter()
+            self.load()
+            ms_model_load = (time.perf_counter() - model_started) * 1000
             task = self._auto_read(frame, settings)
             reads = []
             for read in task.reads:
@@ -250,6 +255,7 @@ class Vision:
                 "correction": settings.model_dump(),
                 "reads": reads, "error": task.error,
                 "ms_barcode": task.ms_barcode, "ms_ocr": task.ms_ocr,
+                "ms_model_load": ms_model_load,
                 "ms_total": task.ms_total,
             }
         except Exception as exc:

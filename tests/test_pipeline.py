@@ -17,6 +17,29 @@ ROOT = Path(__file__).resolve().parent.parent
 EXPECTED = json.loads((ROOT / "tests" / "expected.json").read_text(encoding="utf-8"))
 
 
+def test_whole_image_barcode_keeps_corners_for_ocr(monkeypatch):
+    from types import SimpleNamespace
+    import numpy as np
+    import tagreader
+
+    def point(x, y):
+        return SimpleNamespace(x=x, y=y)
+
+    position = SimpleNamespace(
+        top_left=point(30, 35), top_right=point(160, 35),
+        bottom_right=point(160, 55), bottom_left=point(30, 55),
+    )
+    barcode = SimpleNamespace(text="ABC123", format="Code 39", position=position)
+    monkeypatch.setattr(tagreader, "candidate_tiers", lambda gray: iter(()))
+    monkeypatch.setattr(tagreader, "scan", lambda gray: [barcode])
+    result = tagreader.read_tag(np.zeros((100, 200, 3), dtype=np.uint8),
+                                want_crops=False, want_rotated=True)
+    assert result[0].stage == "whole-image"
+    assert result[0].text == "ABC123"
+    assert result[0].rotated is not None
+    assert result[0]._rotated_quad is not None
+
+
 # --------------------------------------------------------------------------- #
 # 정규화/판정 로직 — 모델 없이 도는 순수 로직이라 항상 실행된다
 # --------------------------------------------------------------------------- #
