@@ -126,18 +126,31 @@ def process_task(
 
         if recognizer is not None and tag.rotated is not None and tag._rotated_quad is not None:
             above, below, bar_h = _band_of(tag.rotated, tag._rotated_quad)
-            # 바코드에 가까운 줄부터 읽는다. 시리얼은 바코드에 붙어 인쇄되고, 멀어질수록
-            # 브랜드명·URL 같은 무관한 텍스트라 먼저 읽어봐야 버리는 연산이 된다.
+            # 택마다 상품코드 위치가 다르므로 위/아래 후보를 유지한다.
             crops = _ordered_crops(above, below, bar_h, max_lines)
 
             target = normalize_strict(tag.text) if tag.text else None
-            for crop in crops:
+            outputs = None
+            device = str(getattr(recognizer, "device", "cpu"))
+            if crops and target is None and device.split(":")[0] == "cuda":
                 t0 = time.perf_counter()
-                image = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
-                out = recognizer.read(image)
+                images = [Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)) for crop in crops]
+                outputs = recognizer.read_batch(images)
+                if len(outputs) != len(crops):
+                    raise RuntimeError("OCR 결과 수가 입력한 글자 줄 수와 다릅니다.")
                 ms_ocr += (time.perf_counter() - t0) * 1000
+            for index, crop in enumerate(crops):
+                if outputs is None:
+                    t0 = time.perf_counter()
+                    image = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
+                    out = recognizer.read(image)
+                    ms_ocr += (time.perf_counter() - t0) * 1000
+                else:
+                    out = outputs[index]
                 lines.append({"text": out["text"], "confidence": out["confidence"],
-                              "min_char": out.get("min_char"), "chars": out.get("chars", []), "ms": out["ms"]})
+                              "min_char": out.get("min_char"), "chars": out.get("chars", []), "ms": out["ms"],
+                              "batch_size": out.get("batch_size", 1), "batch_ms": out.get("batch_ms", out["ms"]),
+                              "timing": out.get("timing", "single")})
                 if best_crop is None:
                     best_crop = crop
                 # 바코드 값과 구분자만 다른 줄을 찾았으면 나머지는 읽을 이유가 없다.

@@ -83,10 +83,12 @@ class Vision:
     def _load(self):
         if self.recognizer is not None:
             return
+        from ocr.core import resolve_device
+        device = resolve_device()
         self.model_hash = verify_model(self.directory)
         # Preserve Recognizer.read, tokenizer, official transform, GPU/CPU selection.
         import torch
-        from ocr.core import Recognizer, resolve_device, build_transform
+        from ocr.core import Recognizer, build_transform
 
         sys.path.insert(0, str(self.directory / "source"))
         from strhub.models.utils import create_model
@@ -98,7 +100,7 @@ class Vision:
         model.model.load_state_dict(state, strict=True)
         recognizer = Recognizer.__new__(Recognizer)
         recognizer.model_name = "parseq"
-        recognizer.device = resolve_device()
+        recognizer.device = device
         recognizer.gpu_name = (
             torch.cuda.get_device_name(recognizer.device)
             if recognizer.device.type == "cuda"
@@ -152,6 +154,7 @@ class Vision:
                             candidates.append((fields, line, read.barcode))
                 detail["ocr_lines"] = [line for read in task.reads for line in read.lines]
                 detail["ocr_ms"] = task.ms_ocr
+                detail["ocr_device"] = str(getattr(self.recognizer, "device", "unknown"))
                 detail["ocr_error"] = task.error
                 distinct = {tuple(sorted(fields.items())) for fields, _, _ in candidates}
                 if len(distinct) == 1:
@@ -262,6 +265,10 @@ class Vision:
                 "ms_barcode": task.ms_barcode, "ms_ocr": task.ms_ocr,
                 "ms_model_load": ms_model_load,
                 "ms_total": task.ms_total,
+                "ocr_device": str(getattr(self.recognizer, "device", "unknown")),
+                "ocr_gpu_name": getattr(self.recognizer, "gpu_name", ""),
+                "ocr_batch_size": max((line.get("batch_size", 1)
+                                       for read in task.reads for line in read.lines), default=0),
                 "barcode_diagnostics": diagnostics,
             }
         except Exception as exc:

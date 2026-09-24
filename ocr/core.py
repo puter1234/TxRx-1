@@ -22,8 +22,21 @@ MODEL_NAMES = ["parseq"]
 
 def resolve_device(prefer: str = "auto") -> torch.device:
     if prefer != "auto":
-        return torch.device(prefer)
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = torch.device(prefer)
+        if device.type == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError("OCR GPU를 사용할 수 없습니다. 현재 Python의 PyTorch와 CUDA 설치를 확인해 주세요.")
+        return device
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    # The production Jetson must not silently run OCR on the CPU.
+    if Path("/etc/nv_tegra_release").is_file():
+        if torch.version.cuda is None:
+            raise RuntimeError(
+                "현재 PyTorch는 CPU 전용입니다. Jetson OCR에 필요한 GPU를 사용할 수 없습니다. "
+                "python3 scripts/install_ocr_jetson.py를 실행해 주세요."
+            )
+        raise RuntimeError("Jetson OCR GPU를 사용할 수 없습니다. PyTorch에서 CUDA 초기화에 실패했습니다.")
+    return torch.device("cpu")
 
 
 def load_model(name: str, device: torch.device):
@@ -74,6 +87,17 @@ def infer(model, tensor):
     return labels[0], confidences[0]
 
 
+@torch.inference_mode()
+def infer_batch(model, tensor):
+    """Recognize one batch; transfer probabilities once for official decoding.
+
+    PARSeq's tokenizer calls ids.tolist() for every line. Decoding on the CPU
+    avoids one GPU synchronization per line while preserving its EOS handling.
+    """
+    probabilities = model(tensor).softmax(-1).cpu()
+    return model.tokenizer.decode(probabilities)
+
+
 def to_rgb(image: Image.Image) -> Image.Image:
     """알파 채널은 흰 배경에 합성하고, 폰 사진의 EXIF 회전은 펴준다.
 
@@ -103,25 +127,35 @@ class Recognizer:
         self._lock = threading.Lock()
 
     def read(self, image: Image.Image) -> dict:
-        tensor = self.transform(to_rgb(image)).unsqueeze(0).to(self.device)
+        return self.read_batch([image])[0]
+
+    def read_batch(self, images: list[Image.Image]) -> list[dict]:
+        """One PARSeq invocation for the supplied lines, preserving input order.
+
+        ms is the amortized time per line; batch_ms is the measured batch time.
+        The pipeline independently measures total OCR wall time once per batch.
+        """
+        if not images:
+            return []
         with self._lock:
             start = time.perf_counter()
-            label, per_char = infer(self.model, tensor)
-            if self.device.type == "cuda":
-                torch.cuda.synchronize()
-            # One device-to-host transfer instead of a GPU sync per character.
-            probabilities = per_char.detach().cpu().tolist()
+            tensor = torch.stack([self.transform(to_rgb(image)) for image in images]).to(self.device)
+            labels, confidences = infer_batch(self.model, tensor)
+            probabilities = [per_char.tolist() for per_char in confidences]
             elapsed = (time.perf_counter() - start) * 1000.0
 
-        return {
+        return [{
             "text": label,
-            "confidence": math.prod(probabilities) if probabilities else 0.0,
-            "min_char": min(probabilities) if probabilities else 0.0,
+            "confidence": math.prod(per_char) if per_char else 0.0,
+            "min_char": min(per_char) if per_char else 0.0,
             "chars": [
-                {"ch": ch, "p": float(p)} for ch, p in zip(list(label) + ["<eos>"], probabilities)
+                {"ch": ch, "p": float(p)} for ch, p in zip(list(label) + ["<eos>"], per_char)
             ],
-            "ms": elapsed,
-        }
+            "ms": elapsed / len(images),
+            "batch_ms": elapsed,
+            "batch_size": len(images),
+            "timing": "batch_average" if len(images) > 1 else "single",
+        } for label, per_char in zip(labels, probabilities)]
 
 
 def versions() -> dict:

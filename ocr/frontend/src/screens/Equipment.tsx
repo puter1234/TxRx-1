@@ -17,6 +17,7 @@ type OcrResult = { ok: boolean; mode?: "ocr_only"; reads: { barcode: string | nu
   verdict: string; verdict_label: string; verdict_detail: string; stage: string; lines: OcrLine[] }[];
   error: string | null; capture_ms: number; processing_ms: number;
   ms_model_load: number; ms_barcode: number; ms_ocr: number;
+  ocr_device?: string; ocr_gpu_name?: string; ocr_batch_size?: number;
   frame_width?: number; frame_height?: number; preview_url?: string; original_url?: string;
   barcode_diagnostics?: { status: string; decoded: number; prepare_ms: number; align_ms: number;
     stages: { stage: string; candidates: number; attempted: number; decoded: number; detect_ms: number; decode_ms: number }[];
@@ -101,6 +102,9 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy }: {
           {!result.error && result.reads.every(read => !read.lines.length) && <p className="text-xl font-bold">글자를 찾지 못했습니다</p>}
           <p className="text-lg font-bold">프레임 복사 {result.capture_ms.toFixed(1)} ms</p>
           <p className="text-lg font-bold">모델 준비 {result.ms_model_load.toFixed(1)} ms, {result.mode === "ocr_only" ? "위치 검출과 정렬" : "바코드 처리"} {result.ms_barcode.toFixed(1)} ms, OCR {result.ms_ocr.toFixed(1)} ms</p>
+          {result.ocr_device && <p className="text-lg font-bold">
+            {result.ocr_device.startsWith("cuda") ? `OCR GPU 사용: ${result.ocr_gpu_name || result.ocr_device}` : "OCR CPU 사용 중"}
+          </p>}
           {result.barcode_diagnostics && <details className="space-y-3">
             <summary className="cursor-pointer text-lg font-bold">판독 상세</summary>
             <div className="overflow-x-auto"><table className="w-full text-left text-lg">

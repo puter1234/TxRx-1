@@ -606,7 +606,12 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
                         "tags": tags,
                     }
                 vision.load()
-                return {"ok": vision.status()["loaded"], "detail": "OCR 모델 준비 완료"}
+                status = vision.status()
+                device = str(status.get("device") or "")
+                detail = ("OCR GPU 사용: " + str(status.get("gpu_name") or device)
+                          if device.startswith("cuda") else "OCR CPU 사용 중")
+                return {"ok": status["loaded"], "detail": detail,
+                        "device": device, "gpu_name": status.get("gpu_name")}
             finally:
                 # An abandoned HTTP request must not clear native-worker ownership.
                 maintenance_active.clear()
