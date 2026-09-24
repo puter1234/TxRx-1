@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 from .schema import Brand, Recipe
-from .ocr_correction import OCRCorrection, correct
+from .ocr_correction import OCRCorrection
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -209,16 +209,11 @@ class Vision:
 
     def _auto_read(self, frame, settings):
         self.load()
-        import cv2
-        import numpy as np
-        from PIL import Image
         import pipeline
-
-        if settings != OCRCorrection():
-            rgb = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            adjusted = correct(rgb, settings)
-            frame = cv2.cvtColor(np.asarray(adjusted), cv2.COLOR_RGB2BGR)
-        return pipeline.process_task(frame, self.recognizer)
+        return pipeline.process_task(
+            frame, self.recognizer,
+            correction=OCRCorrection.model_validate(settings or {}),
+        )
 
     def test_auto(self, frame, correction=None):
         """Run the production OCR path on a fresh frame without writing a photo."""
@@ -247,12 +242,17 @@ class Vision:
                         "preview": "data:image/jpeg;base64," + base64.b64encode(memory.getvalue()).decode(),
                     })
                 reads.append({
-                    "barcode": read.barcode, "verdict": read.verdict.status,
+                    "barcode": read.barcode, "barcode_format": read.barcode_format,
+                    "verdict": read.verdict.status,
+                    "verdict_label": read.verdict.label,
+                    "verdict_detail": read.verdict.detail,
+                    "stage": read.stage,
                     "lines": lines,
                 })
             return {
                 "frame_width": frame.shape[1], "frame_height": frame.shape[0],
                 "correction": settings.model_dump(),
+                "ok": len(task.reads) == 1 and task.reads[0].verdict.ok,
                 "reads": reads, "error": task.error,
                 "ms_barcode": task.ms_barcode, "ms_ocr": task.ms_ocr,
                 "ms_model_load": ms_model_load,

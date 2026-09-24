@@ -14,7 +14,8 @@ type OcrLine = {
   crop_width: number; crop_height: number; preview: string;
   chars: { ch: string; p: number }[];
 };
-type OcrResult = { reads: { barcode: string | null; verdict: string; lines: OcrLine[] }[];
+type OcrResult = { ok: boolean; reads: { barcode: string | null; barcode_format: string | null;
+  verdict: string; verdict_label: string; verdict_detail: string; stage: string; lines: OcrLine[] }[];
   error: string | null; capture_ms: number; processing_ms: number;
   ms_model_load: number; ms_barcode: number; ms_ocr: number };
 const initialCorrection: Correction = { gain: 1, offset: 0, gamma: 1, contrast: 1, clahe: false };
@@ -97,9 +98,15 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy }: {
         {error && <p role="alert" className="text-lg font-bold text-danger">{error}</p>}
         {saved && <p role="status" className="text-lg font-bold text-ok">{saved}</p>}
         {result && <div className="space-y-3 rounded-xl border border-line p-4">
+          <p role="status" className={"text-2xl font-extrabold " + (result.ok ? "text-ok" : "text-danger")}>
+            {result.ok ? "검사 통과" : "검사 실패"}
+          </p>
           {result.error && <p role="status" className="text-xl font-bold text-danger">{result.error}</p>}
           {result.reads.map((read, i) => <div key={i} className="space-y-3">
-            {read.barcode && <p className="text-lg font-bold">바코드 {read.barcode}</p>}
+            <p className={"text-lg font-bold " + (read.verdict === "match" || read.verdict === "match_loose" ? "text-ok" : "text-danger")}>
+              {read.verdict_label}{read.barcode ? `  바코드 ${read.barcode}` : ""}
+            </p>
+            {read.verdict_detail && <p className="text-base font-bold">{read.verdict_detail}</p>}
             {read.lines.map((line, j) => <div key={j} className="rounded-xl border border-line p-3">
               <img src={line.preview} alt="자동 검출한 글자 줄" className="max-h-72 w-full rounded-lg bg-white object-contain"/>
               <p className="break-all text-3xl font-extrabold">{line.text || "문자 미검출"}</p>
