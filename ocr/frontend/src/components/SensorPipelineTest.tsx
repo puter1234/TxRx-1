@@ -82,7 +82,7 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
   const lines = frame?.result?.reads.flatMap(read => read.lines) ?? [];
   return <section className="card space-y-5 p-5" onChangeCapture={() => { edited.current = true; setMessage(""); }}>
     <div className="flex items-center gap-3"><h2 className="text-2xl font-extrabold">센서 연동 OCR 시험</h2>
-      <Help text="컨베이어 연동은 DI1에서 저속 전환과 LED 점등, 설정 시간에 촬영, DI2에서 소등과 계수를 진행합니다. OCR 성공 시 나머지 사진의 판독을 생략합니다. 사진과 계수는 시험 결과로만 표시합니다. 센서 촬영 방식은 기존처럼 선택한 센서의 해제에서 계수합니다."/></div>
+      <Help text="컨베이어 연동은 DI1에서 저속 전환과 LED 점등, 설정 시간에 촬영, DI2에서 소등과 계수를 진행합니다. 저속 유지 시간이 끝나면 고속으로 돌아갑니다. OCR 성공 시 나머지 사진의 판독을 생략합니다. 문자를 읽지 못해도 결과를 남기고 운전은 계속합니다. 사진과 계수는 시험 결과로만 표시합니다. 센서 촬영 방식은 기존처럼 선택한 센서의 해제에서 계수합니다."/></div>
     <label className="block space-y-2 text-lg font-bold">시험 방식
       <select aria-label="시험 방식" className="field block w-full" disabled={running} value={linked ? "conveyor" : "sensor"} onChange={e => setLinked(e.target.value === "conveyor")}>
         <option value="conveyor">컨베이어 연동</option><option value="sensor">센서 촬영</option>
@@ -123,7 +123,7 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
     <details className="space-y-3">
       <summary className="cursor-pointer text-lg font-bold">상품코드 형식</summary>
       <div className="flex items-center gap-2"><label htmlFor="sensor-ocr-pattern" className="text-lg font-bold">확인할 형식</label>
-        <Help text="비워두면 문자가 읽힌 프레임에서 중단합니다. 형식을 입력하면 그 형식에 맞는 문자열이 나올 때 중단합니다. [A-Z]는 대문자, [0-9]는 숫자, [A-Z0-9]는 영문 또는 숫자입니다. {4}는 네 글자입니다. OCR 값의 공백은 비교할 때 제외합니다."/></div>
+        <Help text="문자를 읽으면 해당 제품의 나머지 사진 판독을 생략합니다. 형식을 입력하면 형식에 맞는 문자를 읽었을 때 생략합니다. 모터 운전은 계속합니다. [A-Z]는 대문자, [0-9]는 숫자, [A-Z0-9]는 영문 또는 숫자입니다. {4}는 네 글자입니다. OCR 값의 공백은 비교할 때 제외합니다."/></div>
       <input id="sensor-ocr-pattern" className="field w-full text-lg" disabled={running} value={pattern}
         onChange={e => setPattern(e.target.value)} placeholder="[A-Z]{4}[0-9][A-Z][0-9]{3}[A-Z0-9]{2}[0-9]{3}"/>
     </details>

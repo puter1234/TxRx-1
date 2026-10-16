@@ -92,6 +92,7 @@ def trial(tmp_path, monkeypatch):
 
     class Vision:
         text = "AB12"
+        result_error = None
         load_error = None
 
         def __init__(self):
@@ -111,9 +112,12 @@ def trial(tmp_path, monkeypatch):
             self.locators.append(kwargs.get("locator"))
             self.entered.set()
             assert self.release.wait(3)
-            crop_images.append(image[:10].copy())
-            return {"reads": [{"lines": [{"text": self.text, "confidence": .99}]}],
-                    "error": None, "ms_barcode": 1, "ms_ocr": 1, "ms_total": 2}
+            reads = []
+            if self.text is not None:
+                crop_images.append(image[:10].copy())
+                reads = [{"lines": [{"text": self.text, "confidence": .99}]}]
+            return {"reads": reads, "error": self.result_error,
+                    "ms_barcode": 1, "ms_ocr": 1, "ms_total": 2}
 
     camera, vision = Camera(), Vision()
     app = create_app(tmp_path / "data", camera=camera, vision=vision)
@@ -236,15 +240,78 @@ def test_unmatched_sensor_sequence_stops_without_adding_counts(trial, cause):
     assert all(t.values[pin] == 0 for pin in (50, 51, 52))
 
 
-def test_ocr_failure_stops_and_keeps_image_and_result(trial):
+@pytest.mark.parametrize("text,result_error", [
+    ("wrong", None), ("", None), (None, "바코드 영역을 찾지 못했습니다."),
+])
+@pytest.mark.parametrize("frame_count", [1, 3])
+def test_ocr_miss_keeps_motor_running_and_accepts_next_product(trial, text, result_error, frame_count):
     t = trial
-    t.vision.text = "wrong"
-    t.start(capture_delay_ms=0, frame_count=1, pattern="[0-9]{4}")
+    t.vision.text, t.vision.result_error = text, result_error
+    t.start(low_speed_ms=120, capture_delay_ms=0, capture_interval_ms=20,
+            frame_count=frame_count, pattern="[0-9]{4}")
+    run_id = t.app.state.bench.runs["motor"]["id"]
+    start_writes = len(t.writes)
     t.sensor(1, 0)
-    wait_for(lambda: t.state()["failed"] == 1 and not t.state()["active"])
+    assert t.values[50] == 0 and t.values[52] == 1
+    wait_for(lambda: t.state()["failed"] == 1)
+    wait_for(lambda: t.values[50] == 1 or not t.state()["active"])
+    assert t.state()["active"] and t.state()["error"] is None
+    assert t.values[51] == t.values[50] == t.values[52] == 1
     job = t.state()["jobs"][0]
-    assert job["state"] == "failed" and job["frames"][0]["image_available"]
-    assert job["frames"][0]["result"]["reads"][0]["lines"][0]["text"] == "wrong"
+    assert job["state"] == "failed" and len(job["frames"]) == frame_count
+    for frame in job["frames"]:
+        assert frame["state"] == "no_match" and frame["image_available"]
+        assert frame["result"]["error"] == result_error
+        if text is not None:
+            assert frame["result"]["reads"][0]["lines"][0]["text"] == text
+        else:
+            assert frame["result"]["reads"] == []
+    t.sensor(1, 1)
+    t.sensor(2, 0)
+    assert t.state()["count"] == 1 and t.values[52] == 0
+    t.sensor(2, 1)
+
+    t.vision.text, t.vision.result_error = "1234", None
+    t.sensor(1, 0)
+    assert t.values[50] == 0 and t.values[52] == 1
+    wait_for(lambda: t.state()["passed"] == 1 and not t.state()["jobs"][0]["collecting"])
+    wait_for(lambda: t.values[50] == 1)
+    t.sensor(1, 1)
+    t.sensor(2, 0)
+    state = t.state()
+    assert state["active"] and state["error"] is None
+    assert state["detected"] == state["count"] == 2
+    assert state["passed"] == state["failed"] == 1
+    assert state["jobs"][0]["matched_text"] == "1234"
+    assert all(item["counted"] for item in state["jobs"])
+    assert t.values[51] == t.values[50] == 1 and t.values[52] == 0
+    assert t.app.state.bench.runs["motor"]["id"] == run_id
+    assert not any(pin == 51 and raw == 0 for _, pin, raw in t.writes[start_writes:])
+    assert t.client.get("/api/history").json()["inspections"] == []
+
+
+def test_capture_timeout_still_stops_conveyor(trial):
+    t = trial
+    t.start(capture_delay_ms=1000, frame_count=1)
+    t.sensor(1, 0)
+    with t.app.state.sensor_ocr.lock:
+        t.app.state.sensor_ocr.jobs[0]["trigger_ns"] -= 4_000_000_000
+    wait_for(lambda: not t.state()["active"])
+    assert t.state()["error"] == "새 프레임 수집 시간 초과"
+    assert all(t.values[pin] == 0 for pin in (50, 51, 52))
+
+
+def test_ocr_runtime_exception_still_stops_conveyor(trial, monkeypatch):
+    t = trial
+
+    def broken_ocr(*args, **kwargs):
+        raise RuntimeError("OCR 처리 오류")
+
+    monkeypatch.setattr(t.vision, "test_auto", broken_ocr)
+    t.start(capture_delay_ms=0, frame_count=1)
+    t.sensor(1, 0)
+    wait_for(lambda: not t.state()["active"])
+    assert t.state()["error"] == "OCR 처리 오류"
     assert all(t.values[pin] == 0 for pin in (50, 51, 52))
 
 

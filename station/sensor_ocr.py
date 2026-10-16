@@ -329,7 +329,7 @@ class SensorOcrTest:
         try:
             while not self.cancel.is_set():
                 selected = None
-                failed_job = False
+                capture_failure = None
                 with self.lock:
                     for job in self.jobs:
                         if job["state"] not in ("waiting", "reading"):
@@ -340,9 +340,12 @@ class SensorOcrTest:
                             selected = job, frame
                             break
                         if not job["collecting"]:
+                            # A completed OCR miss is a trial result, not a motor
+                            # stop. Acquisition failures still stop linked runs.
                             job["state"] = "failed"
                             self.failed += 1
-                            failed_job = True
+                            if job["capture_error"]:
+                                capture_failure = job["capture_error"]
                     # Bound result history as well as image memory.
                     while len(self.jobs) > 20 and self.jobs[0] is not self.physical:
                         first = self.jobs[0]
@@ -352,8 +355,8 @@ class SensorOcrTest:
                             if f["image"] is not None:
                                 self.bytes_used -= f["image"].nbytes
                         self.jobs.pop(0)
-                if failed_job and self.settings.conveyor_sync:
-                    self._fail("OCR로 문자를 확인하지 못했습니다. 촬영 사진과 설정을 확인하세요.")
+                if capture_failure and self.settings.conveyor_sync:
+                    self._fail(capture_failure)
                     return
                 if selected is None:
                     self.wake.wait(0.05)
