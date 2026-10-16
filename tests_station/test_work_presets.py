@@ -58,3 +58,34 @@ def test_statistics_split_midnight_seoul_and_export_all_rows(controller):
     store.session(session)
     assert not report(store, date(2026,10,14), date(2026,10,15))["jobs"]
     assert report(store, date(2026,10,14), date(2026,10,15), True)["jobs"]
+
+
+def test_legacy_ended_job_without_finish_time_does_not_grow_forever(controller):
+    store = controller.store
+    session = {"id": "old", "created_at": "2026-10-14T01:00:00+00:00", "phase": "FINISHED",
+               "recipe": {"targets": {}}, "brand": {"name": "이전 작업"},
+               "count": 0, "passed": 0, "failed": 0, "adjustments": 0}
+    store.session(session)
+    data = report(store, date(2026, 10, 14), date(2026, 10, 16))
+    assert data["jobs"][0]["stopped_seconds"] is None
+    assert data["jobs"][0]["run_seconds"] is None
+    assert data["timing_unknown_jobs"] == 1
+    assert {d["date"] for d in data["daily"]} == {"2026-10-14"}
+    assert not report(store, date(2026, 10, 15), date(2026, 10, 16))["jobs"]
+
+
+def test_statistics_count_mismatched_products_consistently_across_job_and_day(controller):
+    store = controller.store
+    at = "2026-10-14T01:00:00+00:00"
+    store.session({"id": "s", "created_at": at, "finished_at": at, "phase": "FINISHED",
+                   "recipe": {"targets": {}}, "brand": {"name": "조건 검사"},
+                   "count": 0, "passed": 0, "failed": 1, "adjustments": 0})
+    inspection = {"id": "i", "session_id": "s", "product_id": "p", "attempt": 1,
+                  "created_at": at, "finished_at": at, "status": "FAIL",
+                  "failures": [{"code": "TARGET_MISMATCH", "field": "size"},
+                               {"code": "TARGET_MISMATCH", "field": "color"}]}
+    with store.transaction() as db:
+        db.execute("INSERT INTO inspections VALUES(?,?,?,?,?,?,?)",
+                   ("i", "s", "p", 1, "FAIL", json.dumps(inspection), at))
+    data = report(store, date(2026, 10, 14), date(2026, 10, 14))
+    assert data["jobs"][0]["mismatches"] == data["daily"][0]["mismatches"] == 1

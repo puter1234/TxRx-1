@@ -175,7 +175,11 @@ class FlowCycle(HardwareCycle):
             self.event("HIGH_SPEED_SELECTED")
         if self.finish_task:
             if hits[0]:
+                self.event("DI1_DETECTED")
                 self.c.fault("EARLY_DI1_UNRESOLVED")
+            elif hits[1]:
+                self.event("DI2_DETECTED")
+                self.c.fault("QUANTITY_MISMATCH")
             elif self.camera_required() and not self.camera.status().get("connected"):
                 await self.reconnect(now, cfg)
             return
@@ -184,7 +188,8 @@ class FlowCycle(HardwareCycle):
             if self.pending:
                 self.fail("EARLY_DI1_UNRESOLVED")
             else:
-                self.cancel.clear()
+                if s["phase"] == "FEEDING":
+                    self.cancel.clear()
                 inspection, epoch, brand = self.c.begin(str(uuid.uuid4()), physical=True, moving=True)
                 self.pending = {"inspection": inspection, "epoch": epoch, "brand": brand,
                     "start": self.edges[0].changed, "di2": False, "high": False,
@@ -201,9 +206,17 @@ class FlowCycle(HardwareCycle):
                 self.fail("QUANTITY_MISMATCH")
             self.pending["di2"] = True
             self.pending["inspection"]["di2_at"] = utc()
+        # A product failure takes priority over camera recovery. Never briefly
+        # restart the conveyor before processing an already known mismatch.
+        if self.pending and self.pending["failures"]:
+            if self.pending["frames"]:
+                self.finish_task = asyncio.create_task(self.finish())
+            else:
+                await self.finish()
+            return
         if self.camera_required() and (not self.camera.status().get("connected") or (s["phase"] == "CAMERA_WAIT" and not self.reconnect_ok)):
             await self.reconnect(now, cfg)
-            if not self.camera.status().get("connected") or not self.reconnect_ok:
+            if s["phase"] not in ("FEEDING", "CAMERA_WAIT") or not self.camera.status().get("connected") or not self.reconnect_ok:
                 return
         if s["phase"] == "CAMERA_WAIT":
             if self.reconnect_task and not self.reconnect_task.done():
@@ -222,14 +235,18 @@ class FlowCycle(HardwareCycle):
                     else:
                         await self.finish()
                     return
-                p["start"] += now - self.wait_started
+                p["start"] += now - max(self.wait_started, p["start"])
                 # Resume incomplete channels from the stopped position. Completed
                 # inspection results remain attached to the same product ID.
                 if not p["camera_done"]:
                     p["frames"].clear()
                     p["inspection"].pop("captures", None)
             self.cancel.clear()
-            self.speed_deadline = now if self.speed_deadline is None else self.speed_deadline + now - self.wait_started
+            if self.speed_deadline is None:
+                self.speed_deadline = now
+            else:
+                paused_at = max(self.wait_started, self.speed_deadline - cfg.low_speed_ms / 1000)
+                self.speed_deadline += now - paused_at
             self.speed_serial = self.resume_serial
             with self.c.lock:
                 if s["phase"] != "CAMERA_WAIT" or self.resume_serial != self.c.stop_serial:
@@ -259,21 +276,19 @@ class FlowCycle(HardwareCycle):
             if self.track_task and self.track_task.done():
                 try:
                     result = self.track_task.result()
-                    p["crossings"] += len(result["crossed"])
-                    p["inspection"]["tracking"] = result
-                    self.c.tracking = result
-                    if result["crossed"]:
-                        self.event("VISION_CROSSING", {"count": len(result["crossed"])})
-                    if p["crossings"] > 1:
-                        self.fail("QUANTITY_MISMATCH")
+                    if result is not None:
+                        p["crossings"] += len(result["crossed"])
+                        p["inspection"]["tracking"] = result
+                        self.c.tracking = result
+                        if result["crossed"]:
+                            self.event("VISION_CROSSING", {"count": len(result["crossed"])})
+                        if p["crossings"] > 1:
+                            self.fail("QUANTITY_MISMATCH")
                 except Exception as exc:
                     self.fail("VISION_ERROR", str(exc))
                 self.track_task = None
             if self.track_task is None and not p["failures"]:
-                frame, metadata = self.camera.read_latest()
-                if metadata["seq"] != self.last_sequence:
-                    self.last_sequence = metadata["seq"]
-                    self.track_task = asyncio.create_task(self.offload(self.counter.update, frame, now))
+                self.track_task = asyncio.create_task(self.offload(self.track_frame, now))
         if elapsed >= cfg.result_timeout_ms and (not p["camera_done"] or not p["rfid_done"] or (self.counter and p["crossings"] != 1)):
             self.fail("INSPECTION_TIMEOUT")
         if elapsed >= cfg.departure_timeout_ms and not p["di2"]:
@@ -284,6 +299,15 @@ class FlowCycle(HardwareCycle):
                 self.finish_task = asyncio.create_task(self.finish())
             else:
                 await self.finish()
+
+    def track_frame(self, now):
+        # CameraManager may hold its lock while waiting for a fresh capture.
+        # Both frame acquisition and inference must stay off the I/O monitor.
+        frame, metadata = self.camera.read_latest()
+        if metadata["seq"] == self.last_sequence:
+            return None
+        self.last_sequence = metadata["seq"]
+        return self.counter.update(frame, now)
 
     async def capture(self, p, cfg):
         p["inspection"]["capture_delay_actual_ms"] = (time.monotonic() - p["start"]) * 1000
@@ -389,35 +413,47 @@ class FlowCycle(HardwareCycle):
 
     async def reconnect(self, now, cfg):
         s = self.c.session
+        generation = self.c.stop_serial
         if s["phase"] != "CAMERA_WAIT":
+            # Publish the interruption before awaiting cancelled workers. A STOP
+            # received during their cleanup must remain PAUSED afterward.
+            with self.c.lock:
+                if s["phase"] != "FEEDING" or generation != self.c.stop_serial or self.c.pending_stops:
+                    return
+                self.io.motor(False)
+                self.io.speed(False)
+                self.cancel.set()
+                self.wait_started = now
+                self.reconnect_ok = False
+                self.resume_serial = generation
+                s.update(phase="CAMERA_WAIT", fault="CAMERA_STALE")
+                self.event("CAMERA_DISCONNECTED")
+                self.next_retry = now + cfg.reconnect_interval_ms / 1000
             if self.reconnect_task:
                 self.reconnect_task.cancel()
                 await asyncio.gather(self.reconnect_task, return_exceptions=True)
                 self.reconnect_task = None
-            self.io.motor(False)
-            self.io.speed(False)
-            self.cancel.set()
             for name in ("camera_task", "rfid_task", "track_task"):
                 task = getattr(self, name)
                 if task:
                     task.cancel()
                     await asyncio.gather(task, return_exceptions=True)
                     setattr(self, name, None)
-            self.wait_started = now
-            self.reconnect_ok = False
-            self.resume_serial = self.c.stop_serial
-            s.update(phase="CAMERA_WAIT", fault="CAMERA_STALE")
-            self.event("CAMERA_DISCONNECTED")
-            self.next_retry = now + cfg.reconnect_interval_ms / 1000
+        if s["phase"] != "CAMERA_WAIT" or self.resume_serial != self.c.stop_serial:
+            return
         if self.reconnect_task and self.reconnect_task.done():
             try:
                 self.reconnect_task.result()
-                self.reconnect_ok = True
+                self.reconnect_ok = bool(self.camera.status().get("connected"))
+                if not self.reconnect_ok:
+                    self.event("CAMERA_RETRY_FAILED", {"error": "카메라 영상이 수신되지 않았습니다."})
             except Exception as exc:
                 self.reconnect_ok = False
                 self.event("CAMERA_RETRY_FAILED", {"error": str(exc)})
             self.reconnect_task = None
             self.next_retry = now + cfg.reconnect_interval_ms / 1000
+        if not self.camera.status().get("connected"):
+            self.reconnect_ok = False
         if not self.reconnect_ok and self.reconnect_task is None and now >= self.next_retry and not self.worker_busy():
             self.event("CAMERA_RETRY")
             self.reconnect_task = asyncio.create_task(self.offload(self.camera.connect))

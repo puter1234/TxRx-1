@@ -37,6 +37,7 @@ class GpioIO:
         self.Value = Value
         self.req = None
         self.reader = None
+        self.rfid_error = None
         self.thread = None
         self.fault = None
         self.requested = False
@@ -64,9 +65,20 @@ class GpioIO:
             )
             self._read()
             if config.rfid_port:
-                self.reader = Reader(config.rfid_port)
-                if config.commissioning.rfid_protocol_verified:
-                    self.reader.initialize()
+                try:
+                    self.reader = Reader(config.rfid_port)
+                    if config.commissioning.rfid_protocol_verified:
+                        self.reader.initialize()
+                except Exception as exc:
+                    # A disconnected optional reader does not take GPIO offline.
+                    # RFID jobs still require rfid_ready and can reconnect on reset.
+                    self.rfid_error = str(exc)
+                    if self.reader:
+                        try:
+                            self.reader.close()
+                        except Exception:
+                            pass
+                    self.reader = None
             self.thread = threading.Thread(
                 target=self._poll, daemon=True, name="inspection-io"
             )
@@ -216,6 +228,7 @@ class GpioIO:
                 if not self.config.commissioning.rfid_protocol_verified:
                     raise RuntimeError("RFID 프로토콜 실기 검증이 필요합니다.")
                 self.reader.initialize()
+                self.rfid_error = None
             self.fault = None
 
     def snapshot(self):
@@ -229,7 +242,7 @@ class GpioIO:
             and Path(self.config.rfid_port).exists()
         )
         snap["rfid_ready"] = bool(snap["rfid_connected"] and self.reader.initialized)
-        snap["rfid_error"] = self.reader.last_error if self.reader else None
+        snap["rfid_error"] = self.reader.last_error if self.reader else self.rfid_error
         return snap
 
     def blockers(self):

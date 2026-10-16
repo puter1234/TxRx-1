@@ -122,6 +122,10 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
     bench = bench_factory(config, io, store)
     controller.external_busy = lambda: maintenance_active.is_set() or prior_busy() or bench.busy()
 
+    def current_phase():
+        with controller.lock:
+            return (controller.session or {}).get("phase")
+
     async def watch():
         nonlocal hardware_monitor
         guard = LeaseGuard(io, config.io_lease_ms)
@@ -129,8 +133,7 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
             while True:
                 await asyncio.sleep(0.01)
                 guard.renew()
-                with controller.lock:
-                    phase = (controller.session or {}).get("phase")
+                phase = await asyncio.to_thread(current_phase)
                 if (
                     config.mode == "HARDWARE"
                     and phase
@@ -145,21 +148,21 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
                     )
                     and time.monotonic() - controller.last_client > 3
                 ):
-                    controller.fault("OPERATOR_SCREEN_DISCONNECTED")
+                    await asyncio.to_thread(controller.fault, "OPERATOR_SCREEN_DISCONNECTED")
                 if guard.failed and phase not in (None, "FAULT", "FINISHED", "DONE"):
-                    controller.fault(guard.failed)
+                    await asyncio.to_thread(controller.fault, guard.failed)
                     guard.failed = None
                 if hardware_monitor:
                     try:
                         await hardware_monitor.tick()
                     except Exception as exc:
-                        controller.fault("HARDWARE_MONITOR_ERROR: " + str(exc))
+                        await asyncio.to_thread(controller.fault, "HARDWARE_MONITOR_ERROR: " + str(exc))
         finally:
             guard.close()
 
     async def maintain():
         while True:
-            state = controller.snapshot()
+            state = await asyncio.to_thread(controller.snapshot)
             phase = (state["session"] or {}).get("phase")
             if (
                 phase
@@ -406,12 +409,11 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
         try:
             while auth.valid(ws.cookies.get("txrx_session")):
                 # Only an acknowledged screen heartbeat extends operator presence.
-                await ws.send_json(
-                    {
+                payload = await asyncio.to_thread(lambda: {
                         "state": {**controller.snapshot(), "vision": vision.status()},
                         "event_seq": store.last_event_seq(),
-                    }
-                )
+                    })
+                await ws.send_json(payload)
                 message = await asyncio.wait_for(ws.receive_json(), timeout=2)
                 if not isinstance(message, dict) or message.get("type") != "heartbeat":
                     break

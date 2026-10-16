@@ -44,6 +44,7 @@ def report(store, since: date, until: date, include_tests=False, brand_id=None, 
         di1=0, di2=0, vision=0, camera_retries=0, errors=0, run_seconds=0, stopped_seconds=0, jobs=0, unread=0, mismatches=0, retries=0))
     jobs = []
     details = []
+    timing_unknown_jobs = 0
     for s in sessions:
         if brand_id and s["recipe"].get("brand_id") != brand_id:
             continue
@@ -52,14 +53,26 @@ def report(store, since: date, until: date, include_tests=False, brand_id=None, 
         if s["recipe"].get("test_run") and not include_tests:
             continue
         created = instant(s["created_at"])
-        finished = instant(s["finished_at"]) if s.get("finished_at") else now
-        if created >= end or finished < start:
-            continue
         es = by_event[s["id"]]
         rows = by_inspection[s["id"]]
-        metrics = Counter(di1=0, di2=0, vision=0, camera_retries=0, errors=0, retries=0, run_seconds=0, stopped_seconds=0)
+        known_finish = s.get("finished_at") or next((e["created_at"] for e in es
+            if e["body"].get("phase", e["body"].get("result", {}).get("phase")) in ENDED), None)
+        timing_unknown = s["phase"] in ENDED and not known_finish
+        finished = instant(known_finish) if known_finish else now
+        if timing_unknown:
+            # Bound the filter by recorded activity, without inventing a duration
+            # or treating an old finished job as still stopped today.
+            finished = max([created, *(instant(e["created_at"]) for e in es),
+                            *(instant(r.get("finished_at", r["created_at"])) for r in rows)])
+        if created >= end or finished < start:
+            continue
+        timing_unknown_jobs += int(timing_unknown)
+        metrics = Counter(di1=0, di2=0, vision=0, camera_retries=0, errors=0, retries=0,
+                          unread=0, mismatches=0, aborted=0, run_seconds=0, stopped_seconds=0)
         previous, phase = created, "READY"
         def segment(a, b, state):
+            if timing_unknown:
+                return
             key = "run_seconds" if state in RUNNING else "stopped_seconds"
             metrics[key] += max(0, (b - a).total_seconds())
             a, b = max(a, start), min(b, end)
@@ -94,14 +107,19 @@ def report(store, since: date, until: date, include_tests=False, brand_id=None, 
             if r.get("elapsed_ms") is not None:
                 latencies.append(r["elapsed_ms"])
             failures.update(f["code"] for f in r.get("failures", []))
+            codes = {f["code"] for f in r.get("failures", [])}
+            unread = int(bool(codes & {"REQUIRED_FIELD_MISSING", "OCR_MISSING", "RFID_MISSING"}))
+            mismatches = int(bool(codes & {"TARGET_MISMATCH", "QUANTITY_MISMATCH"}))
+            metrics["unread"] += unread
+            metrics["mismatches"] += mismatches
+            metrics["aborted"] += int(r["status"] == "ABORTED")
             if start <= at < end:
                 key = {"PASS": "passed", "FAIL": "failed", "ABORTED": "aborted"}.get(r["status"])
                 if key:
                     daily[at.date().isoformat()][key] += 1
                 daily[at.date().isoformat()]["retries"] += int(r["attempt"] > 1)
-                codes = {f["code"] for f in r.get("failures", [])}
-                daily[at.date().isoformat()]["unread"] += int(bool(codes & {"REQUIRED_FIELD_MISSING", "OCR_MISSING", "RFID_MISSING"}))
-                daily[at.date().isoformat()]["mismatches"] += int(bool(codes & {"TARGET_MISMATCH", "QUANTITY_MISMATCH"}))
+                daily[at.date().isoformat()]["unread"] += unread
+                daily[at.date().isoformat()]["mismatches"] += mismatches
                 if r["status"] == "PASS":
                     daily[at.date().isoformat()]["count"] += 1
                 details.append({"session_id": s["id"], "inspection_id": r["id"], "time": at.isoformat(),
@@ -110,20 +128,21 @@ def report(store, since: date, until: date, include_tests=False, brand_id=None, 
                     "elapsed_ms": r.get("elapsed_ms"),
                     "capture_delay_ms": r.get("capture_delay_actual_ms"), "rfid_delay_ms": r.get("rfid_delay_actual_ms"),
                     "inference_ms": (r.get("tracking") or {}).get("inference_ms"), "failures": ", ".join(f["code"] for f in r.get("failures", []))})
+        if timing_unknown:
+            metrics["run_seconds"] = metrics["stopped_seconds"] = None
         jobs.append({"id": s["id"], "work": s["recipe"].get("work_name") or s["brand"]["name"],
             "brand": s["brand"]["name"], "options": json.dumps(s["recipe"]["targets"], ensure_ascii=False),
             "preset_revision": s["recipe"].get("preset_revision"), "model": (s["recipe"].get("flow") or {}).get("model_path", ""),
             "model_sha256": s.get("model_identity", {}).get("sha256", ""),
-            "unread": sum(v for k, v in failures.items() if k in ("REQUIRED_FIELD_MISSING", "OCR_MISSING", "RFID_MISSING")),
-            "mismatches": sum(v for k, v in failures.items() if k in ("TARGET_MISMATCH", "QUANTITY_MISMATCH")),
             "per_minute": round(s["count"] * 60 / metrics["run_seconds"], 3) if metrics["run_seconds"] else None,
-            "started_at": created.isoformat(), "finished_at": finished.isoformat() if s.get("finished_at") else "",
+            "started_at": created.isoformat(), "finished_at": finished.isoformat() if known_finish else "",
             "phase": s["phase"], "test_run": bool(s["recipe"].get("test_run")),
             "count": s["count"], "passed": s["passed"], "failed": s["failed"], "adjustments": s["adjustments"],
             **dict(metrics), "average_ms": sum(latencies) / len(latencies) if latencies else None,
             "maximum_ms": max(latencies) if latencies else None,
             "failures": json.dumps(dict(failures), ensure_ascii=False)})
     return {"timezone": "Asia/Seoul", "since": str(since), "until": str(until), "jobs": jobs,
+            "timing_unknown_jobs": timing_unknown_jobs,
             "daily": [{"date": key, **dict(value)} for key, value in sorted(daily.items(), reverse=True)], "inspections": details}
 
 

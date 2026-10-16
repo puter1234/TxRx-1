@@ -84,12 +84,16 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
 
     async def native(function, *, allow_led=False, allow_outputs=False, camera_only=False):
         busy_field = "rfid_busy" if allow_outputs and not camera_only else "native_busy"
-        with controller.lock, bench.lock:
-            available(allow_led, allow_outputs, camera_only)
-            setattr(bench, busy_field, True)
-            bench.cancel.clear()
+        generation = bench.stop_serial
 
         def run():
+            # Waiting for a start/configuration lock must not block HTTP STOP.
+            with controller.lock, bench.lock:
+                if generation != bench.stop_serial:
+                    raise Conflict("정지 요청 이후에는 다시 실행하세요.")
+                available(allow_led, allow_outputs, camera_only)
+                setattr(bench, busy_field, True)
+                bench.cancel.clear()
             try:
                 return function()
             except (Conflict, ValueError, HTTPException):
@@ -98,11 +102,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
                 raise ValueError(str(exc)) from exc
             finally:
                 setattr(bench, busy_field, False)
-        try:
-            future = asyncio.get_running_loop().run_in_executor(None, run)
-        except BaseException:
-            setattr(bench, busy_field, False)
-            raise
+        future = asyncio.get_running_loop().run_in_executor(None, run)
         workers.add(future)
 
         def completed(f):

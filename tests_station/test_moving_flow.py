@@ -284,7 +284,7 @@ def test_do4_uses_speed_channel_and_rejects_duplicate_pins():
         StationConfig(speed_line=51)
 
 
-@pytest.mark.parametrize("interruption", ["stop", "camera"])
+@pytest.mark.parametrize("interruption", ["stop", "camera", "extra_di2"])
 def test_slow_photo_save_does_not_block_monitor_or_count_after_stop(controller, recipe, monkeypatch, interruption):
     import threading
     from station import evidence
@@ -316,6 +316,12 @@ def test_slow_photo_save_does_not_block_monitor_or_count_after_stop(controller, 
             await asyncio.wait_for(cycle.tick(), .1)
         if interruption == "stop":
             c.command(command(c, "stop"), "test")
+        elif interruption == "extra_di2":
+            io.raw[1] = 1
+            await cycle.tick()
+            io.raw[1] = 0
+            await cycle.tick()
+            assert not io.on and c.session["fault"] == "QUANTITY_MISMATCH"
         else:
             camera.connected = False
             await cycle.tick()
@@ -324,7 +330,7 @@ def test_slow_photo_save_does_not_block_monitor_or_count_after_stop(controller, 
         for _ in range(50):
             await asyncio.sleep(.002)
             await cycle.tick()
-        if interruption == "stop":
+        if interruption in ("stop", "extra_di2"):
             assert not io.on and c.session["count"] == 0 and c.last_result["status"] == "ABORTED"
         else:
             assert not io.on and c.session["count"] == 1 and c.session["phase"] == "CAMERA_WAIT"
@@ -353,3 +359,196 @@ def test_low_speed_deadline_survives_early_product_completion(controller, monkey
         await cycle.tick()
         assert io.high and io.on
     asyncio.run(run())
+
+
+def test_new_product_coasting_into_di1_during_camera_wait_is_preserved(controller, recipe, monkeypatch):
+    recipe.channels = ["ocr"]
+    c, io, camera, cycle, clock = rig(controller, monkeypatch, recipe, reconnect_interval_ms=500,
+                                     capture_delay_ms=100, low_speed_ms=200)
+    async def run():
+        await cycle.tick()
+        camera.connected = False
+        await cycle.tick()
+        clock[0] += .3
+        io.raw[0] = 0
+        await cycle.tick()
+        product = c.session["active_product"]
+        assert product and c.session["phase"] == "CAMERA_WAIT" and not io.on
+        clock[0] += .21
+        for _ in range(30):
+            await asyncio.sleep(.002)
+            await cycle.tick()
+        assert io.on and c.session["active_product"] == product
+        assert cycle.pending["start"] == pytest.approx(clock[0])
+        clock[0] += .21
+        await cycle.tick()
+        assert io.high
+        for _ in range(30):
+            await asyncio.sleep(.002)
+            await cycle.tick()
+        io.raw[1] = 0
+        for _ in range(30):
+            await asyncio.sleep(.002)
+            await cycle.tick()
+        assert c.session["count"] == 1
+    asyncio.run(run())
+
+
+def test_early_di1_during_camera_wait_faults_without_motor_restart(controller, recipe, monkeypatch):
+    recipe.channels = ["ocr"]
+    c, io, camera, cycle, clock = rig(controller, monkeypatch, recipe, reconnect_interval_ms=100)
+    async def run():
+        await cycle.tick()
+        io.raw[0] = 0
+        await cycle.tick()
+        camera.connected = False
+        await cycle.tick()
+        io.raw[0] = 1
+        await cycle.tick()
+        io.raw[0] = 0
+        await cycle.tick()
+        assert c.session["phase"] == "HOLD"
+        assert c.session["fault"] == "EARLY_DI1_UNRESOLVED"
+        clock[0] += .2
+        for _ in range(20):
+            await asyncio.sleep(.002)
+            await cycle.tick()
+        assert ("motor", True) not in io.log and c.session["count"] == 0
+    asyncio.run(run())
+
+
+def test_stop_while_cancelling_capture_cannot_be_replaced_by_camera_wait(controller, recipe, monkeypatch):
+    recipe.channels = ["ocr"]
+    c, io, camera, cycle, clock = rig(controller, monkeypatch, recipe, reconnect_interval_ms=100)
+    async def run():
+        await cycle.tick()
+        async def capture():
+            try:
+                await asyncio.Future()
+            finally:
+                c.command(command(c, "stop"), "test")
+        cycle.camera_task = asyncio.create_task(capture())
+        await asyncio.sleep(0)
+        camera.connected = False
+        await cycle.tick()
+        assert c.session["phase"] == "PAUSED" and not io.on
+        clock[0] += .2
+        for _ in range(20):
+            await asyncio.sleep(.002)
+            await cycle.tick()
+        assert not io.on and ("motor", True) not in io.log
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("order", [("reset", "discard"), ("discard", "reset")])
+def test_recovery_actions_stay_available_in_either_order(controller, monkeypatch, order):
+    c, io, _, cycle, _ = rig(controller, monkeypatch)
+    fault = [None]
+    snapshot = io.snapshot
+    io.snapshot = lambda: {**snapshot(), "fault": fault[0]}
+    io.reset = lambda: fault.__setitem__(0, None)
+    async def run():
+        await cycle.tick()
+        io.raw[0] = 0
+        await cycle.tick()
+        c.fault("IO_FAULT")
+        await cycle.tick()
+        fault[0] = "IO_FAULT"
+        c.config.mode = "HARDWARE"
+        from station.controller import Conflict
+        with pytest.raises(Conflict, match="두 제품 센서"):
+            c.command(command(c, "discard"), "test")
+        io.raw = [1, 1, 1]
+        for action in order:
+            assert c.session["phase"] in ("PAUSED", "HOLD", "FAULT")
+            c.command(command(c, action), "test")
+        assert c.session["phase"] == "READY"
+        assert c.session["active_product"] is None and fault[0] is None and not io.on
+    asyncio.run(run())
+
+
+def test_camera_retry_continues_when_connect_returns_without_live_frames(controller, recipe, monkeypatch):
+    recipe.channels = ["ocr"]
+    c, io, camera, cycle, clock = rig(controller, monkeypatch, recipe, reconnect_interval_ms=100)
+    def connect():
+        camera.retries += 1
+        camera.connected = camera.retries >= 2
+    camera.connect = connect
+    async def run():
+        await cycle.tick()
+        camera.connected = False
+        await cycle.tick()
+        for _ in range(2):
+            clock[0] += .11
+            for _ in range(20):
+                await asyncio.sleep(.002)
+                await cycle.tick()
+        assert camera.retries == 2 and io.on and c.session["phase"] == "FEEDING"
+    asyncio.run(run())
+
+
+def test_tracking_frame_read_does_not_block_io_monitor(controller, monkeypatch):
+    import threading
+    gate, reading = threading.Event(), threading.Event()
+    recipe = Recipe(kind="vision", brand_id="__simple__", brand_revision=1, targets={}, channels=[],
+                    flow=FlowSettings(counter="cvzone"))
+    c, io, camera, cycle, _ = rig(controller, monkeypatch, recipe, counter="cvzone", capture_delay_ms=0)
+    cycle.counter = SimpleNamespace(update=lambda *a: {"crossed": [], "boxes": []})
+    def read_latest():
+        reading.set()
+        gate.wait(.5)
+        return np.zeros((50, 50, 3), dtype=np.uint8), {"seq": 1}
+    camera.read_latest = read_latest
+    async def run():
+        await cycle.tick()
+        io.raw[0] = 0
+        started = time.monotonic()
+        await cycle.tick()
+        assert time.monotonic() - started < .1
+        for _ in range(20):
+            await asyncio.sleep(.002)
+            if reading.is_set(): break
+        assert reading.is_set()
+        started = time.monotonic()
+        await cycle.tick()
+        assert time.monotonic() - started < .1
+        c.command(command(c, "stop"), "test")
+        assert not io.on
+        gate.set()
+        await cycle.close()
+    try:
+        asyncio.run(run())
+    finally:
+        gate.set()
+
+
+def test_disconnected_optional_rfid_does_not_disable_gpio_at_startup(monkeypatch):
+    import enum
+    import sys
+    from station.hardware import GpioIO
+    class Direction(enum.Enum):
+        INPUT = 1
+        OUTPUT = 2
+    class Value(enum.Enum):
+        INACTIVE = 0
+        ACTIVE = 1
+    class Request:
+        def get_values(self, lines): return [Value.ACTIVE] * len(lines)
+        def get_value(self, line): return Value.ACTIVE
+        def set_values(self, values): pass
+        def set_value(self, line, value): pass
+        def release(self): pass
+    fake = SimpleNamespace(LineSettings=lambda **kw: kw, request_lines=lambda *a, **kw: Request())
+    monkeypatch.setitem(sys.modules, "gpiod", fake)
+    monkeypatch.setitem(sys.modules, "gpiod.line", SimpleNamespace(Direction=Direction, Value=Value))
+    monkeypatch.setattr("platform.system", lambda: "Linux")
+    def missing(port): raise OSError("reader unplugged")
+    monkeypatch.setattr("station.hardware.Reader", missing)
+    io = GpioIO(StationConfig(do_on_raw=1, permit_line=107, permit_active_raw=1, speed_line=108,
+                             rfid_port="/missing/reader", commissioning={"feedback_timeout_ms": 100}))
+    try:
+        snap = io.snapshot()
+        assert snap["connected"] and not snap["rfid_ready"] and snap["rfid_error"] == "reader unplugged"
+        assert io.blockers() == []
+    finally:
+        io.close()

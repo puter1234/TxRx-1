@@ -40,6 +40,14 @@ export default function Work() {
       .catch(reportError);
   }, []);
   const command = async (name: string) => {
+    if (name === "stop") {
+      try {
+        await sendCommand(name);
+      } catch (e) {
+        reportError(e);
+      }
+      return;
+    }
     if (busy) return;
     setBusy(true);
     try {
@@ -137,7 +145,6 @@ export default function Work() {
                 </button>
                 <button
                   className="btn btn-danger btn-lg"
-                  disabled={busy}
                   onClick={() => command("stop")}
                 >
                   정지

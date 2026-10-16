@@ -44,10 +44,11 @@ export default function Statistics() {
     };
   }, [params]);
   const rows = data?.[kind] || [];
-  const hours = (s: number) => (s / 3600).toFixed(2);
+  const hours = (s: number | null) => s == null ? "미기록" : (s / 3600).toFixed(2);
   return (
     <section className="card space-y-4 p-5">
       <h2 className="text-2xl font-bold">작업 통계</h2>
+      {!!data?.timing_unknown_jobs && <p>종료 시각이 없는 이전 작업 {data.timing_unknown_jobs}건은 시간 합계에서 제외했습니다.</p>}
       <div className="flex flex-wrap items-end gap-3">
         <label className="font-bold">
           시작일

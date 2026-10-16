@@ -3,6 +3,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import App from "../App";
+import Work from "../screens/Work";
 import { useApp } from "../lib/store";
 import {
   acceptSnapshot,
@@ -92,6 +93,33 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("restored original screens", () => {
+  it("allows STOP on the work screen before the start response arrives", async () => {
+    const user = userEvent.setup();
+    const current = { ...snapshot, mode: "HARDWARE" as const, can_start: true, session };
+    acceptSnapshot(current);
+    let finish: (v: any) => void = () => {};
+    const fetcher = vi.fn((path: string, options?: any): Promise<any> => {
+      if (path === "/api/presets") return Promise.resolve(response([]));
+      if (path === "/api/status") return Promise.resolve(response(current));
+      if (path === "/api/commands" && JSON.parse(options.body).action === "start")
+        return new Promise(resolve => { finish = resolve; });
+      return Promise.resolve(response({}));
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<MemoryRouter><Work /></MemoryRouter>);
+    await user.click(screen.getByRole("button", { name: "운전 시작" }));
+    try {
+      expect(screen.getByRole("button", { name: "정지" })).toHaveProperty("disabled", false);
+      await user.click(screen.getByRole("button", { name: "정지" }));
+      expect(fetcher.mock.calls.filter(([p]) => p === "/api/commands")
+        .map(([, args]) => JSON.parse(args.body).action)).toEqual(["start", "stop"]);
+      // The earlier start is still pending even though STOP finished first.
+      expect(screen.getByRole("button", { name: "운전 시작" })).toHaveProperty("disabled", true);
+    } finally {
+      finish(response({}));
+      await waitFor(() => expect(useApp.getState().pending).toHaveLength(0));
+    }
+  });
   it("opens registered work without worker algorithm controls", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => response([{id: "simple", name: "단순 계수", enabled: true, kind: "simple", brand_id: "__simple__", channels: [], flow: {counter: "sensor"}, revision: 1}])));
     render(<MemoryRouter><App /></MemoryRouter>);

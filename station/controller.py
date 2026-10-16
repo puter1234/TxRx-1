@@ -354,7 +354,8 @@ class Controller:
                 if self.stop_fault or self.io.snapshot().get("km2_on") is True:
                     raise Conflict("출력 정지를 확인할 수 없습니다.")
                 # Reset clears the fault only. It never energizes the motor.
-                s.update(phase="READY", fault=None)
+                needs_removal = bool(s["recipe"].get("flow") and s["active_product"])
+                s.update(phase="PAUSED" if needs_removal else "READY", fault=None)
                 self.epoch += 1
             elif cmd.action == "release":
                 if s["phase"] != "PASSED" or self.busy:
@@ -374,14 +375,17 @@ class Controller:
                     raise Conflict("장비 정지를 확인할 수 없습니다.")
                 if self.config.mode == "HARDWARE":
                     raw = self.io.snapshot().get("di_raw")
+                    active_raw = 0 if s["recipe"].get("flow") else self.config.commissioning.sensor_active_raw
                     if not raw or any(
-                        v == self.config.commissioning.sensor_active_raw
+                        v == active_raw
                         for v in raw[:2]
                     ):
                         raise Conflict(
                             "제품 제거 후 두 제품 센서가 해제되었는지 확인하세요."
                         )
-                s.update(phase="READY", active_product=None, fault=None)
+                remaining_fault = self.io.snapshot().get("fault")
+                s.update(phase="FAULT" if remaining_fault else "READY",
+                         active_product=None, fault=remaining_fault)
                 self.epoch += 1
             elif cmd.action == "finish":
                 if self.busy:
@@ -427,11 +431,13 @@ class Controller:
             self.stop_outputs()
         with self.lock:
             s = self.session
+            waiting_camera = bool(s and physical and moving and s["recipe"].get("flow")
+                                  and s["phase"] == "CAMERA_WAIT")
             if (
                 not s
                 or self.busy
-                or self.external_busy()
-                or s["phase"] not in ("READY", "FEEDING", "RETRY_PENDING")
+                or (self.external_busy() and not waiting_camera)
+                or (s["phase"] not in ("READY", "FEEDING", "RETRY_PENDING") and not waiting_camera)
                 or self.stop_fault
             ):
                 raise Conflict("검사를 시작할 수 없는 상태입니다.")
@@ -455,7 +461,8 @@ class Controller:
                 raise Conflict("이미 계수한 제품입니다.")
             self.check_disk()
             self.busy = True
-            s.update(phase="FEEDING" if moving else "STOPPING", active_product=product_id)
+            s.update(phase="CAMERA_WAIT" if waiting_camera else "FEEDING" if moving else "STOPPING",
+                     active_product=product_id)
             inspection = {
                 "id": str(uuid.uuid4()),
                 "session_id": s["id"],

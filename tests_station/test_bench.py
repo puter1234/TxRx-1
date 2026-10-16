@@ -178,7 +178,8 @@ def test_stop_invalidates_delayed_on_and_duplicate_does_not_reenergize(rig):
     assert pulse(c, issued_at=time.time() - 20).status_code == 409
 
 
-def test_stop_during_pending_output_write_prevents_on(rig):
+@pytest.mark.parametrize("waiting_camera", [False, True])
+def test_stop_during_pending_output_write_prevents_on(rig, waiting_camera):
     c, app = rig
     setup(c)
     c.post("/api/bench/io/connect", json={})
@@ -194,6 +195,11 @@ def test_stop_during_pending_output_write_prevents_on(rig):
     with ThreadPoolExecutor() as pool:
         start = pool.submit(pulse, c)
         assert entered.wait(2)
+        # Let the periodic monitor run while the start request owns the lock.
+        time.sleep(.05)
+        if waiting_camera:
+            reading = pool.submit(c.post, "/api/bench/camera/inspect", json={"device": "/dev/video0"})
+            time.sleep(.05)
         stopping = pool.submit(c.post, "/api/bench/stop", json={})
         deadline = time.monotonic() + 2
         while b.stop_serial == 0 and time.monotonic() < deadline:
@@ -202,6 +208,8 @@ def test_stop_during_pending_output_write_prevents_on(rig):
         release.set()
         assert start.result().status_code == 409
         assert stopping.result().status_code == 200
+        if waiting_camera:
+            assert reading.result().status_code == 409
     assert not b.io.led and not any(on for _, on in b.io.calls)
 
 
