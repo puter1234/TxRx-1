@@ -143,20 +143,20 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
         return sensor_ocr.status()
 
     @app.get("/api/bench/pipeline/frames/{job_id}/{sequence}")
-    def pipeline_image(job_id: str, sequence: int, request: Request, crop: int | None = None):
+    def pipeline_image(job_id: str, sequence: int, request: Request, crop: int | None = None, original: bool = False):
         permitted(request)
         image = sensor_ocr.image(job_id, sequence, crop)
         if image is None:
             raise HTTPException(410, "이 프레임은 메모리에서 정리되었습니다.")
         import cv2
-        height, width = image.shape[:2]
-        scale = min(1.0, 1280 / max(height, width))
-        if scale < 1:
-            image = cv2.resize(image, (max(1, round(width * scale)), max(1, round(height * scale))))
-        ok, encoded = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        ok, encoded = cv2.imencode(".png", image, [cv2.IMWRITE_PNG_COMPRESSION, 1])
         if not ok:
             raise HTTPException(500, "프레임을 표시하지 못했습니다.")
-        return Response(encoded.tobytes(), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+        headers = {"Cache-Control": "no-store"}
+        if original:
+            suffix = f"-crop-{crop}" if crop is not None else ""
+            headers["Content-Disposition"] = f'attachment; filename="sensor-frame-{sequence}{suffix}.png"'
+        return Response(encoded.tobytes(), media_type="image/png", headers=headers)
 
     @app.post("/api/bench/camera/batch/cancel")
     def cancel_batch(request: Request):

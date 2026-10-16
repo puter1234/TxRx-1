@@ -183,7 +183,7 @@ def test_settings_reach_gpio_capture_ocr_and_di2_count(trial):
     assert job["matched_text"] == "AB12" and job["counted"]
     assert job["frames"][0]["result"]["reads"][0]["lines"][0]["text"] == "AB12"
     image = t.client.get(f'/api/bench/pipeline/frames/{job["id"]}/{frames[0]["seq"]}')
-    assert image.status_code == 200 and image.headers["content-type"] == "image/jpeg"
+    assert image.status_code == 200 and image.headers["content-type"] == "image/png"
     assert t.client.get("/api/history").json()["inspections"] == []
 
 
@@ -272,3 +272,26 @@ def test_trial_restart_waits_five_seconds_without_delaying_stop(trial):
         b.next_output_at["motor"] = time.monotonic() - .001
     t.start(frame_count=1)
     assert t.values[51] == 1
+
+
+def test_sensor_images_preserve_full_resolution_and_pixels(trial):
+    import cv2
+    t = trial
+    # Fine detail above the previous 1280-pixel limit catches both resizing and JPEG loss.
+    original = np.random.default_rng(12).integers(0, 256, (1100, 1920, 3), dtype=np.uint8)
+    crop = original[400:500, 100:1700].copy()
+    with t.app.state.sensor_ocr.lock:
+        t.app.state.sensor_ocr.jobs.append({"id": "image-check", "frames": [
+            {"seq": 42, "image": original, "crops": [crop]}]})
+    try:
+        url = "/api/bench/pipeline/frames/image-check/42"
+        for query, expected in (("", original), ("?crop=0", crop), ("?original=true", original)):
+            response = t.client.get(url + query)
+            assert response.status_code == 200 and response.headers["content-type"] == "image/png"
+            decoded = cv2.imdecode(np.frombuffer(response.content, np.uint8), cv2.IMREAD_COLOR)
+            np.testing.assert_array_equal(decoded, expected)
+            assert ("attachment" in response.headers.get("content-disposition", "")) == (query == "?original=true")
+        assert t.client.get(url + "?crop=99").status_code == 410
+    finally:
+        with t.app.state.sensor_ocr.lock:
+            t.app.state.sensor_ocr.jobs.clear()

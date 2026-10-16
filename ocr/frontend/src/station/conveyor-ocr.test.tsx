@@ -77,3 +77,23 @@ it("supports one photo and retains the original selected-sensor trial", async ()
     conveyor_sync: false, sensor_channel: 2, active_raw: 1, frame_count: 1,
   })));
 });
+
+it("shows the captured original, supports full-size inspection and downloads the same frame", async () => {
+  state.jobs = [{ id: "job1", number: 1, state: "passed", counted: true, collecting: false,
+    missed_frames: 0, capture_error: null, matched_text: "AB12", frames: [{
+      seq: 42, after_trigger_ms: 100, state: "passed", image_available: true, crop_count: 1,
+      result: { error: null, ms_barcode: 1, ms_ocr: 2, ms_total: 3,
+        reads: [{ lines: [{ text: "AB12", confidence: .99 }] }] },
+    }] }];
+  render(<SensorPipelineTest bench={bench} locked={false}/>);
+  const image = await screen.findByAltText("센서 감지 후 수집한 프레임");
+  const url = "/api/bench/pipeline/frames/job1/42";
+  expect(image.getAttribute("src")).toBe(url);
+  expect(screen.getByRole("link", { name: "원본 저장" }).getAttribute("href")).toBe(url + "?original=true");
+  fireEvent.click(screen.getByRole("button", { name: "원본 크기" }));
+  expect(image.className).toBe("max-w-none");
+  expect(screen.getByAltText("OCR에 입력한 글자").className).toBe("max-w-none");
+  fireEvent.click(screen.getByRole("button", { name: "화면 맞춤" }));
+  expect(image.getAttribute("src")).toBe(url);
+  expect(image.className).toContain("object-contain");
+});

@@ -31,6 +31,7 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
   const initialized = useRef(false), edited = useRef(false);
   const [state, setState] = useState<State | null>(null), [error, setError] = useState("");
   const [selection, setSelection] = useState<{ job: string; seq: number } | null>(null);
+  const [actualSize, setActualSize] = useState(false);
   useEffect(() => {
     let alive = true, timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
@@ -156,13 +157,24 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
           onClick={() => setSelection({ job: job.id, seq: item.seq })}>{i + 1}번 {states[item.state] || item.state}</button>)}</div>
         {frame && <>
           <p className="text-lg font-bold">프레임 {frame.seq}　감지 후 {frame.after_trigger_ms.toFixed(1)} ms</p>
-          {frame.image_available ? <img src={frameUrl} alt="센서 감지 후 수집한 프레임" className="max-h-[600px] w-full rounded-xl object-contain"/>
+          {frame.image_available ? <>
+            <div className="flex flex-wrap gap-2">
+              <button className={`btn btn-sm ${actualSize ? "btn-outline" : "btn-primary"}`} aria-pressed={!actualSize} onClick={() => setActualSize(false)}>화면 맞춤</button>
+              <button className={`btn btn-sm ${actualSize ? "btn-primary" : "btn-outline"}`} aria-pressed={actualSize} onClick={() => setActualSize(true)}>원본 크기</button>
+              <a className="btn btn-sm btn-outline" href={`${frameUrl}?original=true`} download>원본 저장</a>
+            </div>
+            <div className="max-h-[600px] overflow-auto rounded-xl">
+              <img src={frameUrl} alt="센서 감지 후 수집한 프레임" className={actualSize ? "max-w-none" : "max-h-[600px] w-full object-contain"}/>
+            </div>
+          </>
             : <p className="text-lg font-bold">사진이 메모리에서 정리되었습니다</p>}
           {frame.state === "skipped" && <p className="text-lg font-bold">앞 프레임에서 성공하여 OCR 생략</p>}
           {frame.result?.error && <p className="text-lg font-bold text-danger">{frame.result.error}</p>}
           {frame.result && <p className="text-lg font-bold">위치 검출과 정렬 {frame.result.ms_barcode.toFixed(1)} ms, OCR {frame.result.ms_ocr.toFixed(1)} ms</p>}
           {lines.map((line, index) => <div key={index} className="space-y-2 rounded-xl border border-line p-3">
-            {frame.image_available && index < frame.crop_count && <img src={`${frameUrl}?crop=${index}`} alt="OCR에 입력한 글자" className="max-h-56 max-w-full"/>}
+            {frame.image_available && index < frame.crop_count && <div className="max-h-56 overflow-auto">
+              <img src={`${frameUrl}?crop=${index}`} alt="OCR에 입력한 글자" className={actualSize ? "max-w-none" : "max-h-56 max-w-full"}/>
+            </div>}
             <p className="break-all text-3xl font-extrabold">{line.text || "문자 미검출"}</p>
           </div>)}
         </>}
