@@ -552,3 +552,19 @@ def test_disconnected_optional_rfid_does_not_disable_gpio_at_startup(monkeypatch
         assert io.blockers() == []
     finally:
         io.close()
+
+
+def test_counter_can_return_to_previous_settings_after_failed_prepare(controller, monkeypatch):
+    from station.schema import WorkPreset
+    cycle = FlowCycle(controller, None, None, Vision())
+    def create(cfg):
+        if cfg.threshold == 128:
+            raise ValueError("모델 설정 오류")
+        return SimpleNamespace(identity={"counter": cfg.counter})
+    monkeypatch.setattr("station.flow.ObjectCounter", create)
+    good = WorkPreset(id="vision", name="와펜", kind="vision", flow={"counter": "cvzone"}).model_dump()
+    cycle.prepare(good)
+    bad = {**good, "flow": {**good["flow"], "threshold": 128}}
+    with pytest.raises(ValueError): cycle.prepare(bad)
+    cycle.prepare(good)
+    assert cycle.counter is not None and cycle.counter_error is None

@@ -108,6 +108,8 @@ class Controller:
             blockers.append("검사 작업을 먼저 생성하세요.")
         elif self.session["phase"] not in ("READY", "PAUSED"):
             blockers.append("현재 상태에서는 운전 준비가 불가능합니다.")
+        if self.session and self.session["recipe"].get("flow") and self.target_reached():
+            blockers.append("목표 수량을 완료했습니다.")
         if self.busy or self.external_busy():
             blockers.append("검사 처리 종료 대기")
         if self.stop_fault:
@@ -121,6 +123,19 @@ class Controller:
         if self.config.mode == "HARDWARE":
             blockers += self.hardware_blockers()
         return blockers
+
+    def target_reached(self):
+        s = self.session
+        target = s["recipe"].get("target_count") if s else None
+        return target is not None and s["count"] >= target
+
+    def complete_corrected_target(self):
+        s = self.session
+        if (s and s["phase"] in ("READY", "PAUSED") and not s["active_product"]
+                and not s["fault"] and not self.stop_fault and self.target_reached()):
+            self.stop_outputs()
+            s.update(phase="FAULT" if self.stop_fault else "DONE",
+                     fault="IO_STOP_UNCONFIRMED" if self.stop_fault else None)
 
     def hardware_blockers(self):
         recipe = (self.session or {}).get("recipe", {})
@@ -297,6 +312,8 @@ class Controller:
                     or self.stop_fault
                 ):
                     raise Conflict("지금은 운전을 시작할 수 없습니다.")
+                if s["recipe"].get("flow") and self.target_reached():
+                    raise Conflict("목표 수량을 완료했습니다.")
                 self.check_disk()
                 counted = False
                 if s["active_product"]:
@@ -351,11 +368,16 @@ class Controller:
                 if self.config.mode == "HARDWARE" and hasattr(self.io, "reset"):
                     self.io.reset()
                     self.stop_fault = None
-                if self.stop_fault or self.io.snapshot().get("km2_on") is True:
+                reset_state = self.io.snapshot()
+                if (self.stop_fault or reset_state.get("km2_on") is True or
+                        (self.config.mode == "HARDWARE" and
+                         (not reset_state.get("connected") or reset_state.get("fault") or
+                          reset_state.get("km2_on") is not False))):
                     raise Conflict("출력 정지를 확인할 수 없습니다.")
                 # Reset clears the fault only. It never energizes the motor.
                 needs_removal = bool(s["recipe"].get("flow") and s["active_product"])
                 s.update(phase="PAUSED" if needs_removal else "READY", fault=None)
+                self.complete_corrected_target()
                 self.epoch += 1
             elif cmd.action == "release":
                 if s["phase"] != "PASSED" or self.busy:
@@ -386,6 +408,7 @@ class Controller:
                 remaining_fault = self.io.snapshot().get("fault")
                 s.update(phase="FAULT" if remaining_fault else "READY",
                          active_product=None, fault=remaining_fault)
+                self.complete_corrected_target()
                 self.epoch += 1
             elif cmd.action == "finish":
                 if self.busy:
@@ -581,6 +604,9 @@ class Controller:
                                          fault="CAMERA_STALE" if waiting_camera and not done else None, active_product=None)
                                 if done:
                                     self.stop_outputs()
+                                    if self.stop_fault:
+                                        s.update(phase="FAULT", fault="IO_STOP_UNCONFIRMED")
+                                        self.changed("FAULT", {"reason": "IO_STOP_UNCONFIRMED"}, c)
                             else:
                                 s.update(phase="PASSED", fault=None)
                         else:
@@ -657,16 +683,7 @@ class Controller:
                 not s
                 or item.session_id != s["id"]
                 or self.busy
-                or s["phase"]
-                in (
-                    "FEEDING",
-                    "EJECTING",
-                    "INSPECTING",
-                    "STOPPING",
-                    "RETRY_PENDING",
-                    "CAMERA_WAIT",
-                    "FINISHED",
-                )
+                or s["phase"] not in ("READY", "PAUSED", "HOLD", "FAULT")
             ):
                 raise Conflict("정지 상태에서 현재 작업의 수량만 보정할 수 있습니다.")
             if s["count"] + item.delta < 0:
@@ -674,6 +691,7 @@ class Controller:
             before = copy.deepcopy(s)
             s["count"] += item.delta
             s["adjustments"] += item.delta
+            self.complete_corrected_target()
             result = {
                 "count": s["count"],
                 "delta": item.delta,

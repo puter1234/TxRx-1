@@ -73,6 +73,7 @@ class FlowCycle(HardwareCycle):
             key += file_sha256(path)
         if key != self.counter_key:
             self.counter = None
+            self.counter_key = None
             self.counter_error = None
             try:
                 if cfg.counter != "sensor":
@@ -87,6 +88,11 @@ class FlowCycle(HardwareCycle):
         if not recipe.get("flow"):
             return super().blockers()
         reasons = []
+        session = self.c.session
+        if session["phase"] in ("READY", "PAUSED") and (
+                self.session_id != session["id"] or
+                not all(edge.armed and edge.value == 1 for edge in self.edges)):
+            reasons.append("DI1과 DI2의 해제 신호를 확인 중입니다.")
         if self.worker_busy():
             reasons.append("장비 처리 종료 대기")
         if self.camera_required() and (not self.camera or not self.camera.status().get("connected")):
@@ -193,7 +199,7 @@ class FlowCycle(HardwareCycle):
                 inspection, epoch, brand = self.c.begin(str(uuid.uuid4()), physical=True, moving=True)
                 self.pending = {"inspection": inspection, "epoch": epoch, "brand": brand,
                     "start": self.edges[0].changed, "di2": False, "high": False,
-                    "observations": {}, "failures": [], "frames": [], "crossings": 0,
+                    "observations": {}, "failures": [], "frames": [], "crossings": 0, "tracking_started": False,
                     "camera_done": not self.camera_required(), "rfid_done": "rfid" not in s["recipe"]["channels"]}
                 self.io.speed(False)
         if hits[1]:
@@ -273,6 +279,14 @@ class FlowCycle(HardwareCycle):
                 p[done_key] = True
                 setattr(self, name, None)
         if self.counter and elapsed >= cfg.capture_delay_ms:
+            if not p["tracking_started"]:
+                # Accepted DI1 starts a new product, so a previous product's
+                # counted ID cannot suppress this product's crossing.
+                from .counting import CrossingTracker
+                self.counter.tracker = CrossingTracker(cfg)
+                self.last_sequence = None
+                self.c.tracking = None
+                p["tracking_started"] = True
             if self.track_task and self.track_task.done():
                 try:
                     result = self.track_task.result()

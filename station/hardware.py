@@ -234,6 +234,10 @@ class GpioIO:
     def snapshot(self):
         with self.lock:
             snap = dict(self.latest)
+            # Requested outputs are known immediately. Physical feedback keeps
+            # the timestamp of the latest input sample.
+            snap.update(motor_requested=self.requested, led_requested=self.led_requested,
+                        speed_requested=self.speed_requested, fault=self.fault)
         if time.time() - snap.get("observed_at", 0) > 0.5:
             snap.update(connected=False, fault="IO_STALE")
         snap["rfid_connected"] = bool(

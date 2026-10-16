@@ -26,6 +26,26 @@ class WorkStart(Model):
     test_run: bool = False
 
 
+def prepare_session(controller, vision, monitor, recipe, actor):
+    # All creation routes must check ownership before touching the active model.
+    with controller.lock:
+        if controller.session and controller.session["phase"] not in ("DONE", "FINISHED", "ABORTED"):
+            raise Conflict("현재 작업을 종료하세요.")
+        if controller.busy or controller.external_busy():
+            raise Conflict("진행 중인 장비 시험을 종료하세요.")
+        recipe = controller.resolve_recipe(recipe)
+        if "ocr" in recipe.channels:
+            vision.load()
+        if monitor and recipe.flow:
+            monitor.prepare(recipe.model_dump())
+        result = controller.new_session(recipe, actor)
+        if monitor and recipe.flow and monitor.counter:
+            controller.session["model_identity"] = monitor.counter.identity
+            controller.changed("MODEL_SELECTED", monitor.counter.identity)
+            result = controller.snapshot()
+        return result
+
+
 def install_work_api(app, controller, permitted, vision, monitor):
     store = controller.store
     if store.get("work_presets") is None:
@@ -78,21 +98,7 @@ def install_work_api(app, controller, permitted, vision, monitor):
                         channels=preset.channels, targets=body.targets, target_count=body.target_count,
                         preset_id=preset.id, preset_revision=preset.revision, flow=preset.flow,
                         work_name=preset.name, test_run=body.test_run)
-        with controller.lock:
-            if controller.session and controller.session["phase"] not in ("DONE", "FINISHED", "ABORTED"):
-                raise Conflict("현재 작업을 종료하세요.")
-            if controller.busy or controller.external_busy():
-                raise Conflict("진행 중인 장비 시험을 종료하세요.")
-            if "ocr" in recipe.channels:
-                vision.load()
-            if monitor:
-                monitor.prepare(recipe.model_dump())
-            result = controller.new_session(recipe, actor)
-            if monitor and monitor.counter:
-                controller.session["model_identity"] = monitor.counter.identity
-                controller.changed("MODEL_SELECTED", monitor.counter.identity)
-                result = controller.snapshot()
-            return result
+        return prepare_session(controller, vision, monitor, recipe, actor)
 
     @app.get("/api/statistics")
     def statistics(since: date, until: date, include_tests: bool = False, brand_id: str | None = None, preset_id: str | None = None):

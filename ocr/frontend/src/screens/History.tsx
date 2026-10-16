@@ -199,7 +199,7 @@ export default function History() {
                             : "bg-panel text-ink-700")
                         }
                       >
-                        {job.mode === "condition" ? "조건 계수" : "단순 계수"}
+                        {{ condition: "조건 계수", simple: "단순 계수", vision: "와펜 계수" }[job.mode]}
                       </span>
                     </td>
                     <td className="px-4 py-3.5 text-base font-bold">
@@ -209,7 +209,7 @@ export default function History() {
                       {job.config?.item?.sku || "없음"}
                     </td>
                     <td className="px-4 py-3.5 text-right text-lg font-extrabold tabular-nums">
-                      {job.count}벌
+                      {job.count}개
                     </td>
                     <td
                       className="max-w-[220px] truncate px-4 py-3.5 text-lg font-semibold text-ink-700"

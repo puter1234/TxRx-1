@@ -19,7 +19,10 @@ export default function Statistics() {
     [test, setTest] = useState(false);
   const [kind, setKind] = useState("daily"),
     [data, setData] = useState<any>(null),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [loadedParams, setLoadedParams] = useState(""),
+    [loadError, setLoadError] = useState(""),
+    [reload, setReload] = useState(0);
   const params = new URLSearchParams({
     since,
     until,
@@ -27,28 +30,40 @@ export default function Statistics() {
     ...(brand ? { brand_id: brand } : {}),
     ...(preset ? { preset_id: preset } : {}),
   }).toString();
+  const validRange = !!since && !!until && since <= until;
   useEffect(() => {
-    if (!since || !until || since > until) return;
+    setLoadedParams("");
+    setData(null);
+    setLoadError("");
+    setBusy(false);
+    if (!validRange) return;
     let alive = true;
     setBusy(true);
     api("/statistics?" + params)
       .then((r) => {
-        if (alive) setData(r);
+        if (alive) {
+          setData(r);
+          setLoadedParams(params);
+        }
       })
-      .catch(reportError)
+      .catch((error) => {
+        if (alive) setLoadError(error instanceof Error ? error.message : "통계를 불러오지 못했습니다.");
+      })
       .finally(() => {
         if (alive) setBusy(false);
       });
     return () => {
       alive = false;
     };
-  }, [params]);
-  const rows = data?.[kind] || [];
+  }, [params, reload]);
+  const currentData = loadedParams === params ? data : null;
+  const rows = currentData?.[kind] || [];
+  const canExport = validRange && !busy && !loadError && currentData !== null;
   const hours = (s: number | null) => s == null ? "미기록" : (s / 3600).toFixed(2);
   return (
     <section className="card space-y-4 p-5">
       <h2 className="text-2xl font-bold">작업 통계</h2>
-      {!!data?.timing_unknown_jobs && <p>종료 시각이 없는 이전 작업 {data.timing_unknown_jobs}건은 시간 합계에서 제외했습니다.</p>}
+      {!!currentData?.timing_unknown_jobs && <p>종료 시각이 없는 이전 작업 {currentData.timing_unknown_jobs}건은 시간 합계에서 제외했습니다.</p>}
       <div className="flex flex-wrap items-end gap-3">
         <label className="font-bold">
           시작일
@@ -125,20 +140,25 @@ export default function Statistics() {
             {text}
           </button>
         ))}
+        <button className="btn btn-outline" disabled={busy || !validRange} onClick={() => setReload(v => v + 1)}>
+          다시 조회
+        </button>
         <a
-          className="btn btn-outline ml-auto"
-          href={`/api/statistics.csv?${params}&kind=${kind}`}
+          className={"btn btn-outline ml-auto" + (canExport ? "" : " opacity-50")}
+          aria-disabled={!canExport}
+          href={canExport ? `/api/statistics.csv?${params}&kind=${kind}` : undefined}
         >
           CSV 내보내기
         </a>
         <a
-          className="btn btn-outline"
-          href={`/api/statistics.csv?${params}&kind=inspections`}
+          className={"btn btn-outline" + (canExport ? "" : " opacity-50")}
+          aria-disabled={!canExport}
+          href={canExport ? `/api/statistics.csv?${params}&kind=inspections` : undefined}
         >
           검사 상세 CSV
         </a>
       </div>
-      {busy ? (
+      {!validRange ? <p role="alert">시작일과 종료일을 확인하세요.</p> : loadError ? <p role="alert">{loadError}</p> : busy ? (
         <p role="status">통계를 불러오는 중입니다.</p>
       ) : (
         <div className="overflow-auto">

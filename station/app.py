@@ -487,12 +487,12 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
         store.delete_brand(ident, revision, actor, reason)
         return {"ok": True}
 
-    from .work_api import install_work_api
+    from .work_api import install_work_api, prepare_session
     install_work_api(app, controller, permitted, vision, hardware_monitor)
 
     @app.post("/api/sessions")
     def new_session(recipe: Recipe, request: Request):
-        recipe = controller.resolve_recipe(recipe)
+        actor = permitted(request)
         if config.mode == "HARDWARE" and not recipe.preset_id:
             permitted(request, ("admin",))
             from .schema import FlowSettings
@@ -501,11 +501,7 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
             permitted(request, ("admin",))
         if recipe.flow and not recipe.preset_id:
             permitted(request, ("admin",))
-        if "ocr" in recipe.channels:
-            vision.load()
-        if hardware_monitor and recipe.flow:
-            hardware_monitor.prepare(recipe.model_dump())
-        return controller.new_session(recipe, permitted(request))
+        return prepare_session(controller, vision, hardware_monitor, recipe, actor)
 
     @app.post("/api/commands")
     def command(cmd: Command, request: Request):
