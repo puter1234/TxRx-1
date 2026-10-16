@@ -167,13 +167,14 @@ export function OutputTests({ bench, ledOnly = false, compact = false }: { bench
         const wait = Math.ceil((state?.cooldown_ms?.[target] || 0) / 1000);
         return <div key={target} role="group" aria-label={target === "motor" ? "모터 스위치" : target === "led" ? "LED 스위치" : "속도 선택"} className="flex items-center gap-2">
           <span className="font-extrabold">{target === "motor" ? "모터" : target === "led" ? "LED" : "속도"}</span>
-          <button className={"btn btn-sm " + (!on ? "btn-primary" : "btn-outline")} aria-pressed={!on} disabled={locked || wait > 0 || (target === "speed" && state?.pins.speed == null)}
+          <button className={"btn btn-sm " + (!on ? "btn-primary" : "btn-outline")} aria-pressed={!on} disabled={locked || (target !== "motor" && wait > 0) || (target === "speed" && state?.pins.speed == null)}
             onClick={() => bench.action(() => api(`/bench/${target}/off`, {}))}>{target === "speed" ? "저속" : "끄기"}</button>
           <button className={"btn btn-sm " + (on ? "btn-primary" : "btn-outline")} aria-pressed={on} disabled={locked || !state || !!state.runs[target] || wait > 0 || (target === "speed" && state?.pins.speed == null)}
             onClick={() => bench.pulse(target)}>{target === "speed" ? "고속" : "켜기"}</button>
         </div>;
       })}
     </div>
+    {motorWait > 0 && <p role="status">모터 재시작까지 {motorWait}초</p>}
     {motorRun && <p role="status" className={motorRun.feedback_error ? "font-bold text-danger" : "text-sm"}>{motorRun.feedback_error || (motorRun.feedback_checked ? "DI3 접촉기 응답 확인" : "DI3 응답 대기 (3초)")}</p>}
     {!!state?.output_blockers.length && <details><summary className="cursor-pointer font-bold">모터 시험 준비 필요</summary>
       {state.output_blockers.map(reason => <p key={reason}>{reason}</p>)}
@@ -183,12 +184,13 @@ export function OutputTests({ bench, ledOnly = false, compact = false }: { bench
   return <>
     {!ledOnly && <div className="card space-y-4 p-5">
       <div className="flex items-center gap-3"><Play size={26}/><h2 className="text-xl font-extrabold">모터</h2>
-        <Help text="켜기와 끄기를 직접 선택합니다. 연속 조작은 1초 간격입니다. 켠 뒤 3초 후 DI3를 확인하며 미응답은 표시만 합니다. 속도는 US-52에서 조절합니다. 장비 테스트를 종료하거나 통신이 끊기면 시험 출력을 끕니다."/></div>
+        <Help text="켜기와 끄기를 직접 선택합니다. 끄기는 즉시 작동하고, 끈 뒤 5초가 지나야 다시 켤 수 있습니다. 켠 뒤 3초 후 DI3를 확인하며 미응답은 표시만 합니다. 속도는 US-52에서 조절합니다. 장비 테스트를 종료하거나 통신이 끊기면 시험 출력을 끕니다."/></div>
       <p className="text-xl font-bold">{state?.io.km2_on === true ? "접촉기 켜짐" : state?.io.km2_on === false ? "접촉기 꺼짐" : "접촉기 미확인"}</p>
       <div role="group" aria-label="모터 스위치" className="grid grid-cols-2 gap-2">
-        <button aria-pressed={!motorOn} className={`btn !min-h-[72px] text-2xl ${!motorOn ? "btn-primary" : "btn-outline"}`} disabled={motorWait > 0 || locked} onClick={() => bench.action(() => api("/bench/motor/off", {}))}>끄기</button>
+        <button aria-pressed={!motorOn} className={`btn !min-h-[72px] text-2xl ${!motorOn ? "btn-primary" : "btn-outline"}`} disabled={locked} onClick={() => bench.action(() => api("/bench/motor/off", {}))}>끄기</button>
         <button aria-pressed={motorOn} className={`btn !min-h-[72px] text-2xl ${motorOn ? "btn-primary" : "btn-outline"}`} disabled={!canOutput || motorWait > 0} onClick={() => { setRequestedTarget("motor"); return bench.pulse("motor"); }}>켜기</button>
       </div>
+      {motorWait > 0 && <p role="status">모터 재시작까지 {motorWait}초</p>}
       {requestedTarget === "motor" && bench.error && <p role="alert" className="text-lg font-bold text-danger">{bench.error}</p>}
       {motorRun && <p role="status" className={`text-lg font-bold ${motorRun.feedback_error ? "text-danger" : ""}`}>{motorRun.feedback_error ? `${motorRun.feedback_error} (켜기 명령 유지)` : motorRun.feedback_checked ? "DI3 응답 확인" : "DI3 응답 대기 (3초)"}</p>}
       {!!state?.output_blockers.length && <div className="space-y-2"><p className="text-lg font-bold">가동할 수 없는 이유</p>{state.output_blockers.map(reason => <p className="text-lg" key={reason}>{reason}</p>)}
@@ -227,7 +229,7 @@ export function BenchHeader({ bench, compact = false }: { bench: BenchHook; comp
     {state?.error && <div className="flex items-center gap-3">
       <button className="btn btn-primary" disabled={bench.busy || locked || !!state.native_busy || !!state.run}
         onClick={() => bench.action(() => api("/bench/error/clear", {}))}>오류 해제</button>
-      <Help text="출력 OFF와 DI3 접촉기 꺼짐을 확인한 뒤 오류를 해제합니다. 자동으로 켜지지 않으며, 신호 변경 후 1초가 지나면 다시 시험할 수 있습니다."/>
+      <Help text="출력 OFF와 DI3 접촉기 꺼짐을 확인한 뒤 오류를 해제합니다. 자동으로 켜지지 않습니다. 모터는 정지 후 5초, LED는 신호 변경 후 1초가 지나면 다시 시험할 수 있습니다."/>
     </div>}
     {!!state?.output_blockers.length && <div className="flex items-center"><span className="text-lg font-bold">출력 시험 준비 필요</span><Help text={state.output_blockers.join(" ")}/></div>}
   </div>;

@@ -94,6 +94,8 @@ def line(tmp_path, monkeypatch, brand):
     monkeypatch.setenv("TXRX_CONFIG", str(config_path))
     camera, vision = Camera(), Vision()
     app = create_app(tmp_path / "data", camera=camera, vision=vision)
+    # Most cases begin after startup. Startup protection has a dedicated case below.
+    app.state.controller.io.motor_ready_at = time.monotonic() - 1
     app.state.store.save_brand(brand.model_dump(), None, "test")
     with TestClient(app) as client:
         login(client)
@@ -193,6 +195,40 @@ def test_gpio_reset_reports_cleared_fault_immediately(line):
     line.io._read()
     line.io.reset()
     assert line.io.snapshot()["fault"] is None
+
+
+@pytest.mark.parametrize("stop_method", ["stop", "motor_off", "reset", "permit_loss"])
+def test_gpio_enforces_five_seconds_on_every_off_path(line, monkeypatch, stop_method):
+    io = line.io
+    clock = [time.monotonic()]
+    monkeypatch.setattr("station.hardware.time", SimpleNamespace(monotonic=lambda: clock[0], time=time.time))
+    with io.lock:
+        io.motor(True)
+        io.light(True)
+        io.speed(True)
+        io.speed(False)
+        assert io.snapshot()["motor_requested"]  # DO4 does not stop DO1.
+        if stop_method == "motor_off":
+            io.motor(False)
+        elif stop_method == "permit_loss":
+            line.gpio.values[107] = 0
+            io._read()
+            line.gpio.values[107] = 1
+            io.reset()
+        else:
+            getattr(io, stop_method)()
+        assert not io.snapshot()["motor_requested"]
+        assert io.snapshot()["motor_restart_ms"] == 5000
+        clock[0] += 4.999
+        with pytest.raises(RuntimeError, match="모터 정지 후 5초"):
+            io.motor(True)
+        assert line.gpio.values[51] == 0
+        io.reset()
+        assert 0 < io.snapshot()["motor_restart_ms"] <= 2
+        clock[0] += .002
+        io.motor(True)
+        assert line.gpio.values[51] == 1
+        io.stop()
 
 
 def test_gpio_snapshot_reports_current_output_requests_without_waiting_for_poll(line):
@@ -379,7 +415,11 @@ def test_camera_reconnect_preserves_product_and_obeys_manual_stop(line, monkeypa
             state = line.client.get("/api/status").json()
             assert state["session"]["phase"] == "READY" and not state["session"]["active_product"]
         else:
-            state = wait_state(line, lambda s: s["session"]["phase"] == "FEEDING")
+            # A successful reconnection must still wait out the motor OFF interval.
+            time.sleep(.15)
+            assert not line.io.snapshot()["motor_requested"]
+            assert line.io.snapshot()["motor_restart_ms"] > 0
+            state = wait_state(line, lambda s: s["session"]["phase"] == "FEEDING", timeout=6)
             assert state["session"]["active_product"] == product
             assert line.io.snapshot()["motor_requested"]
             line.gpio.sensor(2, 0)

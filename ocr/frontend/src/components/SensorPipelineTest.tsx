@@ -54,6 +54,7 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
   }, []);
   const signal = activeRaw ?? bench.state?.setup?.sensor_active_raw?.[channel - 1] ?? 0;
   const running = !!state?.busy;
+  const motorWait = Math.ceil((bench.state?.cooldown_ms?.motor || 0) / 1000);
   const manualOutputs = linked && !running && Object.keys(bench.state?.runs || {}).length > 0;
   const settings: Settings = { conveyor_sync: linked, low_speed_ms: lowMs, capture_delay_ms: delayMs,
     capture_interval_ms: intervalMs, departure_timeout_ms: departureMs, frame_count: count,
@@ -125,10 +126,11 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
     {!bench.state?.connected && <p>위쪽의 입력 연결을 누르세요.</p>}
     {!bench.state?.camera?.connected && <p>카메라를 연결하면 시험을 시작할 수 있습니다.</p>}
     {manualOutputs && <p>수동 출력 시험이 켜져 있습니다. 위쪽의 시험 비상정지로 끈 뒤 연동 시험을 시작하세요.</p>}
+    {!running && motorWait > 0 && <p role="status">모터 재시작까지 {motorWait}초</p>}
     {!valid && <p role="alert" className="font-bold text-danger">촬영 장수와 시간을 확인하세요. 마지막 촬영은 DI2 도착 제한 시간보다 빨라야 합니다.</p>}
     <div className="grid grid-cols-2 gap-3">
       <button className="btn btn-primary !min-h-[72px] text-xl" onClick={start}
-        disabled={locked || running || manualOutputs || !bench.state?.connected || !bench.state?.camera?.connected || !valid}>
+        disabled={locked || running || manualOutputs || motorWait > 0 || !bench.state?.connected || !bench.state?.camera?.connected || !valid}>
         <Play size={24}/>시험 시작</button>
       <button className="btn btn-danger !min-h-[72px] text-xl" onClick={() => bench.stop()}><Square size={24}/>시험 정지</button>
     </div>

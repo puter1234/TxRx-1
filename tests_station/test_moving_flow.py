@@ -549,7 +549,8 @@ def test_disconnected_optional_rfid_does_not_disable_gpio_at_startup(monkeypatch
     try:
         snap = io.snapshot()
         assert snap["connected"] and not snap["rfid_ready"] and snap["rfid_error"] == "reader unplugged"
-        assert io.blockers() == []
+        assert 0 < snap["motor_restart_ms"] <= 5000
+        assert len(io.blockers()) == 1 and "모터 정지 후 5초" in io.blockers()[0]
     finally:
         io.close()
 

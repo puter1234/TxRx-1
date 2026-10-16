@@ -232,6 +232,8 @@ class FlowCycle(HardwareCycle):
                 return
             if self.worker_busy():
                 return
+            if self.io.snapshot().get("motor_restart_ms", 0):
+                return
             if self.pending:
                 p = self.pending
                 if p["di2"] and not p["camera_done"]:

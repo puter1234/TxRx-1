@@ -22,6 +22,7 @@ class HardwareCycle:
         self.eject_started = None
         self.exit_seen = False
         self.clear_since = None
+        self.feed_restart_serial = None
         self.workers = 0
         self.worker_lock = threading.Lock()
 
@@ -74,6 +75,8 @@ class HardwareCycle:
         if not s:
             return
         phase = s["phase"]
+        if phase != "READY" or self.feed_restart_serial != self.c.stop_serial:
+            self.feed_restart_serial = None
         cfg = self.c.config.commissioning
         snap = self.io.snapshot()
         active = phase not in (
@@ -118,6 +121,8 @@ class HardwareCycle:
             self.cancel.clear()
             self.task = asyncio.create_task(self.cycle())
         elif phase == "PASSED" and self.c.config.automatic_cycle and self.task is None:
+            if snap.get("motor_restart_ms", 0):
+                return
             self.issue("release")
             self.eject_started = time.monotonic()
             self.exit_seen = False
@@ -141,10 +146,17 @@ class HardwareCycle:
                 self.c.departed()
                 self.eject_started = None
                 if self.c.session["phase"] == "READY" and self.c.config.automatic_cycle:
-                    self.issue("start")
+                    self.feed_restart_serial = self.c.stop_serial
+                    if not self.io.snapshot().get("motor_restart_ms", 0):
+                        self.issue("start")
+                        self.feed_restart_serial = None
             elif time.monotonic() - self.eject_started > cfg.release_timeout_ms / 1000:
                 self.c.fault("PRODUCT_DEPARTURE_TIMEOUT")
                 self.eject_started = None
+        elif phase == "READY" and self.feed_restart_serial is not None:
+            if not snap.get("motor_restart_ms", 0):
+                self.issue("start")
+                self.feed_restart_serial = None
         else:
             self.eject_started = None
             self.exit_seen = False

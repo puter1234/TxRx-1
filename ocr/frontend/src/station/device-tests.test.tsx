@@ -37,6 +37,18 @@ it("keeps motor ON available while LED is on and within its own cooldown", () =>
   expect(mocks.bench.pulse).toHaveBeenCalledWith("motor");
 });
 
+it.each([false, true])("shows the restart wait and leaves motor OFF available (compact=%s)", compact => {
+  mocks.bench.state.cooldown_ms.motor = 4800;
+  const view = render(<MemoryRouter><OutputTests bench={mocks.bench} compact={compact}/></MemoryRouter>);
+  const motor = () => within(screen.getByRole("group", { name: "모터 스위치" }));
+  expect(motor().getByRole("button", { name: "켜기" })).toHaveProperty("disabled", true);
+  expect(motor().getByRole("button", { name: "끄기" })).toHaveProperty("disabled", false);
+  expect(screen.getByText("모터 재시작까지 5초")).toBeTruthy();
+  mocks.bench.state.cooldown_ms.motor = 0;
+  view.rerender(<MemoryRouter><OutputTests bench={mocks.bench} compact={compact}/></MemoryRouter>);
+  expect(motor().getByRole("button", { name: "켜기" })).toHaveProperty("disabled", false);
+});
+
 it("finds and saves RFID ports independently of camera errors and connected GPIO", async () => {
   mocks.api.mockImplementation(async (path: string) => {
     if (path === "/bench/camera/devices") throw new Error("카메라 검색 실패");

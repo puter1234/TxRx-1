@@ -252,3 +252,23 @@ def test_model_load_failure_never_enables_outputs(trial):
     assert response.status_code == 422
     assert "모델 파일 없음" in response.text
     assert not t.writes and not t.state()["active"]
+
+
+def test_trial_restart_waits_five_seconds_without_delaying_stop(trial):
+    t = trial
+    t.start(frame_count=1)
+    assert t.client.post("/api/bench/motor/off", json={}).status_code == 200
+    assert t.values[51] == 0
+    wait_for(lambda: not t.state()["busy"])
+    b = t.app.state.bench
+    deadline = b.next_output_at["motor"]
+    assert 4500 < b.status()["cooldown_ms"]["motor"] <= 5000
+    before = sum(pin == 51 and raw == 1 for _, pin, raw in t.writes)
+    response = t.client.post("/api/bench/pipeline/start", json=SensorOcrSettings(conveyor_sync=True).model_dump())
+    assert response.status_code == 409 and "5초" in response.text
+    assert sum(pin == 51 and raw == 1 for _, pin, raw in t.writes) == before
+    assert b.next_output_at["motor"] == deadline
+    with b.lock:
+        b.next_output_at["motor"] = time.monotonic() - .001
+    t.start(frame_count=1)
+    assert t.values[51] == 1

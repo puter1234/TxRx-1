@@ -25,6 +25,19 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+it("blocks OCR trial restart during motor wait while keeping stop available", async () => {
+  bench.state.cooldown_ms = { motor: 4100 };
+  const view = render(<SensorPipelineTest bench={bench} locked={false}/>);
+  await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/bench/pipeline"));
+  expect(screen.getByText("모터 재시작까지 5초")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "시험 시작" })).toHaveProperty("disabled", true);
+  fireEvent.click(screen.getByRole("button", { name: "시험 정지" }));
+  expect(bench.stop).toHaveBeenCalled();
+  bench.state.cooldown_ms.motor = 0;
+  view.rerender(<SensorPipelineTest bench={bench} locked={false}/>);
+  expect(screen.getByRole("button", { name: "시험 시작" })).toHaveProperty("disabled", false);
+});
+
 it("saves timings and starts physical OCR without a GPIO-number field", async () => {
   const view = render(<SensorPipelineTest bench={bench} locked={false}/>);
   await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/bench/pipeline"));

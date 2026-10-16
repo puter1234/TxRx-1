@@ -258,7 +258,7 @@ def test_motor_feedback_is_reported_after_three_seconds_without_stopping(rig):
 
 
 @pytest.mark.parametrize("target", ["motor", "led"])
-def test_output_requires_one_second_after_stop_and_reconnect(rig, target):
+def test_output_requires_full_interval_after_stop_and_reconnect(rig, target):
     c, app = rig
     setup(c)
     c.post("/api/bench/io/connect", json={})
@@ -266,13 +266,41 @@ def test_output_requires_one_second_after_stop_and_reconnect(rig, target):
     assert pulse(c, target, 10).status_code == 200
     assert c.post("/api/bench/stop", json={}).status_code == 200
     assert b.run is None and not b.io.motor and not b.io.led
-    assert 0 < b.status()["cooldown_ms"][target] <= 1000
+    interval_ms = 5000 if target == "motor" else 1000
+    assert interval_ms - 200 < b.status()["cooldown_ms"][target] <= interval_ms
     assert pulse(c, target, 10).status_code == 409
     c.post("/api/bench/io/disconnect", json={})
     c.post("/api/bench/io/connect", json={})
     assert pulse(c, target, 10).status_code == 409
     b.next_output_at[target] = time.monotonic() - 0.01
     assert pulse(c, target, 10).status_code == 200
+
+
+def test_motor_off_is_immediate_and_repeated_off_does_not_extend_wait(rig):
+    c, app = rig
+    c.post("/api/bench/io/connect", json={})
+    b = app.state.bench
+    assert pulse(c, "motor", None).status_code == 200
+    assert c.post("/api/bench/motor/off", json={}).status_code == 200
+    assert not b.io.motor
+    assert 4800 < b.status()["cooldown_ms"]["motor"] <= 5000
+    deadline = b.next_output_at["motor"]
+    assert c.post("/api/bench/motor/off", json={}).status_code == 200
+    assert c.post("/api/bench/stop", json={}).status_code == 200
+    assert b.next_output_at["motor"] == deadline
+    assert pulse(c, "motor", None).status_code == 409
+    assert pulse(c, "led", None).status_code == 200
+
+
+def test_server_restart_preserves_motor_restart_protection(rig):
+    _, app = rig
+    app.state.store.put("bench_outputs_used", ["motor"])
+    fresh = Bench(app.state.bench.config, app.state.controller.io, app.state.store, gpio_factory=FakeGPIO)
+    try:
+        assert 4800 < fresh.status()["cooldown_ms"]["motor"] <= 5000
+    finally:
+        fresh.closed.set()
+        fresh.thread.join(timeout=1)
 
 
 def test_di3_reports_raw_feedback_and_transitions(rig):
@@ -368,7 +396,7 @@ def test_real_gpio_led_off_requests_only_do2():
 
 
 @pytest.mark.parametrize("target", ["motor", "led"])
-def test_manual_switch_holds_until_off_and_blocks_changes_for_one_second(rig, target):
+def test_manual_switch_holds_until_off_and_protects_restart(rig, target):
     c, app = rig
     c.post("/api/bench/io/connect", json={})
     b = app.state.bench
@@ -377,8 +405,9 @@ def test_manual_switch_holds_until_off_and_blocks_changes_for_one_second(rig, ta
     calls = b.io.calls[:]
     assert pulse(c, target, None).status_code == 409
     assert b.io.calls == calls
-    assert c.post(f"/api/bench/{target}/off", json={}).status_code == 409
-    assert 0 < b.next_output_at[target] - time.monotonic() <= 1
+    if target == "led":
+        assert c.post(f"/api/bench/{target}/off", json={}).status_code == 409
+        assert 0 < b.next_output_at[target] - time.monotonic() <= 1
     with b.lock:
         b.run["started"] -= 120
         b._tick()
@@ -506,7 +535,8 @@ def test_simultaneous_outputs_both_stop_on_emergency_or_connection_loss(rig, cau
             b._tick()
     assert not b.io.motor and not b.io.led and not b.runs
     cooldown = b.status()["cooldown_ms"]
-    assert all(0 < cooldown[target] <= 1000 for target in ("motor", "led"))
+    assert 4800 < cooldown["motor"] <= 5000
+    assert 0 < cooldown["led"] <= 1000
     assert cooldown["speed"] == 0  # DO4 was not used in this test.
 
 

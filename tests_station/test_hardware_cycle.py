@@ -239,3 +239,59 @@ def test_cancelled_native_call_keeps_readiness_blocked(controller):
         assert not cycle.worker_busy()
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("manual_stop", [False, True])
+def test_automatic_release_and_next_product_wait_for_motor_cooldown(controller, recipe, manual_stop):
+    class DelayedIO(TestIO):
+        remaining = 0
+
+        def stop(self):
+            if self.on:
+                self.remaining = 5000
+            super().stop()
+
+        def snapshot(self):
+            return {**super().snapshot(), "motor_restart_ms": self.remaining}
+
+        def motor(self, value, allowed=None):
+            assert not value or self.remaining == 0
+            super().motor(value, allowed)
+
+    c = controller
+    io = c.io = DelayedIO()
+    c.config.mode = "HARDWARE"
+    c.config.automatic_cycle = True
+    c.config.commissioning = Commissioning(product_sensor=1, departure_sensor=2,
+                                          sensor_active_raw=0, sensor_clear_ms=10,
+                                          release_timeout_ms=1000)
+    c.hardware_blockers = lambda: []
+    c.new_session(recipe)
+    c.session["phase"] = "PASSED"
+    io.raw = [1, 1, 1]
+    io.remaining = 5000
+    cycle = HardwareCycle(c, None, None, TestVision())
+
+    async def run():
+        await cycle.tick()
+        assert c.session["phase"] == "PASSED" and not io.on
+        io.remaining = 0
+        await cycle.tick()
+        assert c.session["phase"] == "EJECTING" and io.on
+        io.raw[1] = 0
+        await cycle.tick()
+        io.raw[1] = 1
+        await cycle.tick()
+        await asyncio.sleep(.02)
+        await cycle.tick()
+        assert c.session["phase"] == "READY" and not io.on and io.remaining == 5000
+        await cycle.tick()
+        assert not io.on
+        if manual_stop:
+            c.command(command(c, "stop"), "test")
+        io.remaining = 0
+        await cycle.tick()
+        assert io.on is not manual_stop
+        assert c.session["phase"] == ("PAUSED" if manual_stop else "FEEDING")
+
+    asyncio.run(run())

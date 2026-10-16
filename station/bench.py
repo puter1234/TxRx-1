@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import threading
+import math
 import time
 import uuid
 from collections import deque
@@ -10,6 +11,7 @@ from pathlib import Path
 from pydantic import Field, model_validator
 from .schema import Model
 from .controller import Conflict
+from .motor import MOTOR_RESTART_SECONDS, restart_message
 
 
 class BenchSetup(Model):
@@ -176,7 +178,7 @@ class Bench:
         # Reconnection must not reset the interval. After a server restart,
         # previously used outputs wait a full interval before being enabled.
         used = store.get("bench_outputs_used", [])
-        self.next_output_at = {target: time.monotonic() + (1 if target in used else 0)
+        self.next_output_at = {target: time.monotonic() + ((MOTOR_RESTART_SECONDS if target == "motor" else 1) if target in used else 0)
                                for target in (("motor", "led", "speed") if config.speed_line is not None else ("motor", "led"))}
         self.seen = deque(maxlen=256)
         self.transitions = [0, 0, 0]
@@ -294,30 +296,39 @@ class Bench:
         with self.lock:
             if target not in self.next_output_at:
                 raise ValueError("출력 채널이 올바르지 않습니다.")
-            if time.monotonic() < self.next_output_at[target]:
+            if target != "motor" and time.monotonic() < self.next_output_at[target]:
                 raise Conflict("신호 변경 후 1초 뒤 다시 조작하세요.")
             with self.stop_lock:
                 self.stop_serial += 1
             output_polarity(self.config, self.setup, target)
             if not self.io:
                 self.connect()
-            self.runs.pop(target, None)
+            was_running = self.runs.pop(target, None) is not None or self.last.get(target + "_requested")
             self.generation += 1
             try:
                 self.io.set_output(target, False)
-                self.next_output_at[target] = time.monotonic() + 1
                 self.last = self.io.snapshot()
                 if target == "motor" and self.last.get("km2_on") is not False:
                     self.stop_wait_until = time.monotonic() + 3
             except Exception as exc:
                 self.error = "끄기 명령 실패: " + str(exc)
                 raise Conflict(self.error) from exc
+            finally:
+                if target != "motor" or was_running:
+                    self.next_output_at[target] = time.monotonic() + (MOTOR_RESTART_SECONDS if target == "motor" else 1)
             self.store.put("bench_outputs_used", sorted(set(self.store.get("bench_outputs_used", [])) | {target}))
             self.store.event("BENCH_OUTPUT_OFF", {"target": target, "raw": 1 - output_polarity(self.config, self.setup, target)})
             return self.status()
 
     def led_off(self):
         return self.output_off("led")
+
+    def cooldown_ms(self, target):
+        remaining = max(0, math.ceil((self.next_output_at[target] - time.monotonic()) * 1000))
+        if target == "motor":
+            # Production and bench operations can share the same GPIO owner.
+            remaining = max(remaining, self.production_io.snapshot().get("motor_restart_ms", 0))
+        return remaining
 
     def sequence_output(self, target, on, serial):
         """Sensor-driven LED/speed changes under the motor run's heartbeat."""
@@ -346,8 +357,9 @@ class Bench:
                 raise Conflict("현재 시험이 끝난 후 다시 시도하세요.")
             if target not in self.next_output_at:
                 raise ValueError("모터 또는 LED를 선택하세요.")
-            if time.monotonic() < self.next_output_at[target]:
-                raise Conflict("신호 변경 후 1초 뒤 다시 조작하세요.")
+            remaining = self.cooldown_ms(target)
+            if remaining:
+                raise Conflict(restart_message(remaining) if target == "motor" else "신호 변경 후 1초 뒤 다시 조작하세요.")
             blockers = self.led_blockers() if target != "motor" else self.output_blockers()
             if target == "speed" and self.config.speed_line is None:
                 blockers.append("이 장비의 DO4 연결 정보가 없습니다.")
@@ -372,13 +384,13 @@ class Bench:
             self.store.event("BENCH_OUTPUT_START", {"target": target, "seconds": seconds, "id": run["id"]})
             used = set(self.store.get("bench_outputs_used", []))
             self.store.put("bench_outputs_used", sorted(used | {target}))
-            self.next_output_at[target] = now + 1
+            self.next_output_at[target] = now + (0 if target == "motor" else 1)
             self.runs[target] = run
             try:
                 self.io.set_output(target, True, allowed=lambda: serial == self.stop_serial)
                 sent = time.monotonic()
                 run.update(started=sent, deadline=None if seconds is None else sent + seconds, last_heartbeat=sent)
-                self.next_output_at[target] = sent + 1
+                self.next_output_at[target] = sent + (0 if target == "motor" else 1)
                 self.last = self.io.snapshot()
             except Exception:
                 self.stop("출력 설정 실패")
@@ -425,8 +437,6 @@ class Bench:
             self.generation += 1
             self.cancel.set()
             old, self.runs = self.runs, {}
-            for target in old:
-                self.next_output_at[target] = time.monotonic() + 1
             try:
                 if self.io:
                     self.io.stop()
@@ -435,6 +445,10 @@ class Bench:
                         self.stop_wait_until = time.monotonic() + 3
             except Exception as exc:
                 self.error = "출력 OFF 확인 실패: " + str(exc)
+            finally:
+                # Count from completion of the OFF write, never before a slow write.
+                for target in old:
+                    self.next_output_at[target] = time.monotonic() + (MOTOR_RESTART_SECONDS if target == "motor" else 1)
             for run in old.values():
                 try:
                     self.store.event("BENCH_OUTPUT_STOP", {"id": run["id"], "reason": reason, "error": self.error})
@@ -532,8 +546,7 @@ class Bench:
             raw = self.last.get("di_raw")
             return {"connected": self.io is not None and bool(self.last.get("connected")),
                     "motor_test_max_seconds": 60,
-                    "cooldown_ms": {target: max(0, round((deadline - time.monotonic()) * 1000))
-                                    for target, deadline in self.next_output_at.items()},
+                    "cooldown_ms": {target: self.cooldown_ms(target) for target in self.next_output_at},
                     "feedback": {"channel": 3, "line": self.config.di_lines[2],
                                  "raw": raw[2] if raw else None,
                                  "active": self.last.get("km2_on") if raw else None,

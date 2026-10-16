@@ -4,12 +4,14 @@ from __future__ import annotations
 import hashlib
 import importlib
 import importlib.util
+import math
 import platform
 import threading
 import time
 from pathlib import Path
 
 from .rfid import Reader
+from .motor import MOTOR_RESTART_SECONDS, restart_message
 
 
 class GpioIO:
@@ -44,6 +46,8 @@ class GpioIO:
         self.led_requested = False
         self.speed_requested = False
         self.changed = time.monotonic()
+        # A new GPIO owner cannot know when the previous process stopped DO1.
+        self.motor_ready_at = time.monotonic() + MOTOR_RESTART_SECONDS
         self.last_lease = time.monotonic()
         self.permit_epoch = 0
         self.prior_permit = None
@@ -63,6 +67,7 @@ class GpioIO:
             self.req = gpiod.request_lines(
                 config.gpio_chip, consumer="inspection-io", config=mapping
             )
+            self.motor_ready_at = time.monotonic() + MOTOR_RESTART_SECONDS
             self._read()
             if config.rfid_port:
                 try:
@@ -92,6 +97,8 @@ class GpioIO:
         return self.Value.ACTIVE if raw else self.Value.INACTIVE
 
     def _outputs(self, motor, led):
+        if motor and not self.requested and self.motor_restart_ms():
+            raise RuntimeError(restart_message(self.motor_restart_ms()))
         self.req.set_values(
             {
                 self.config.do_lines[0]: self._value(motor),
@@ -100,10 +107,15 @@ class GpioIO:
         )
         if motor != self.requested:
             self.changed = time.monotonic()
+            if not motor:
+                self.motor_ready_at = self.changed + MOTOR_RESTART_SECONDS
         self.requested = motor
         self.led_requested = led
         if not motor and not led:
             self.speed(False)
+
+    def motor_restart_ms(self):
+        return max(0, math.ceil((self.motor_ready_at - time.monotonic()) * 1000))
 
     def _read(self):
         raw = [v.value for v in self.req.get_values(list(self.config.di_lines))]
@@ -237,7 +249,8 @@ class GpioIO:
             # Requested outputs are known immediately. Physical feedback keeps
             # the timestamp of the latest input sample.
             snap.update(motor_requested=self.requested, led_requested=self.led_requested,
-                        speed_requested=self.speed_requested, fault=self.fault)
+                        speed_requested=self.speed_requested, fault=self.fault,
+                        motor_restart_ms=self.motor_restart_ms())
         if time.time() - snap.get("observed_at", 0) > 0.5:
             snap.update(connected=False, fault="IO_STALE")
         snap["rfid_connected"] = bool(
@@ -258,7 +271,7 @@ class GpioIO:
                 else []
             )
             + ([] if s.get("physical_permit") else ["물리 START 허가 확인 필요"])
-
+            + ([restart_message(s["motor_restart_ms"])] if s["motor_restart_ms"] else [])
         )
 
     def inventory(self, window_ms, cancel):
