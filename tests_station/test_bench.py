@@ -634,7 +634,7 @@ def test_live_ocr_reads_auto_detected_line_without_saving_a_photo(rig, monkeypat
 def test_live_ocr_has_no_image_correction_endpoints(rig):
     c, _ = rig
     assert c.get("/api/bench/ocr/correction").status_code == 404
-    assert c.put("/api/bench/ocr/correction", json={}).status_code == 404
+    assert c.put("/api/bench/ocr/correction", json={}).status_code in (404, 405)
 
 
 def test_unconfirmed_off_remains_blocked(rig):

@@ -12,7 +12,7 @@ import re
 import threading
 import time
 
-from .usb_camera import CameraManager, CameraProfile, UVCStream
+from .usb_camera import CameraManager, CameraProfile, UVCStream, fixed_camera_profile
 
 
 def device_id(index, name):
@@ -320,6 +320,7 @@ class WindowsCameraManager(CameraManager):
             return super().apply(profile, persist=persist, actor=actor)
         with self.lock:
             previous = self.profile if self.stream else None
+            profile = fixed_camera_profile(profile, self.inspect(profile.device))
             self._close_stream()
             self.error = None
             try:

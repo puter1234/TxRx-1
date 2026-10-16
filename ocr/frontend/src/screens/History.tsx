@@ -7,6 +7,7 @@ import type { Job } from "../lib/types";
 import { api as request, ResultCard, type Result } from "../station/shared";
 import { reportError } from "../lib/station";
 import Modal from "../components/Modal";
+import Statistics from "../components/Statistics";
 
 function InspectionHistory({
   job,
@@ -113,31 +114,7 @@ export default function History() {
 
   const loadJob = (job: Job) => {
     const cfg = job.config;
-    if (job.mode === "condition" && cfg) {
-      setW({
-        step: 3,
-        brandId: cfg.brandId ?? null,
-        checks: cfg.checks ?? {
-          rfid: false,
-          ocr: false,
-          barcode_tag: false,
-          barcode_poly: false,
-        },
-        countMode: cfg.countMode ?? "target",
-        target: cfg.target ?? 40,
-        sku: cfg.item?.sku ?? "",
-        color: cfg.item?.color ?? "",
-        size: cfg.item?.size ?? "",
-        targets: cfg.targets || {
-          style: cfg.item?.sku || "",
-          color: cfg.item?.color || "",
-          size: cfg.item?.size || "",
-        },
-      });
-      nav("/condition/setup");
-    } else {
-      nav("/simple");
-    }
+    nav("/", {state: {presetId: cfg?.presetId, targets: cfg?.targets || {}, target: cfg?.target || null}});
   };
 
   return (
@@ -158,7 +135,8 @@ export default function History() {
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-6">
+      <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-6">
+        <Statistics />
         <div className="mx-auto max-w-6xl space-y-4">
           <div className="card overflow-x-auto">
             <table className="w-full">

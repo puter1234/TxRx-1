@@ -210,13 +210,15 @@ def test_archive_restore_preserves_evidence_and_counts(controller, recipe, tmp_p
         assert db.execute("SELECT COUNT(*) FROM counts").fetchone()[0] == 1
 
 
-def test_pass_photo_policy_retains_failures_and_filtered_history(tmp_path, recipe):
+def test_pass_photo_policy_retains_failures_and_filtered_history(tmp_path, recipe, brand):
     from PIL import Image
     from io import BytesIO
     from test_api import EPC
     from test_controller import command
 
     app = create_app(tmp_path)
+    if not app.state.store.brands():
+        app.state.store.save_brand(brand.model_dump(), None, "test")
     photo = BytesIO()
     Image.new("RGB", (8, 8), "white").save(photo, format="PNG")
     with TestClient(app) as client:

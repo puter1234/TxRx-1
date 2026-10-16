@@ -63,6 +63,8 @@ class SensorOcrTest:
         return self.active or any(t and t.is_alive() for t in (self.capture_thread, self.ocr_thread))
 
     def start(self, settings):
+        if hasattr(self.camera, "verify_fixed_controls"):
+            self.camera.verify_fixed_controls()
         status = self.camera.status()
         if not status.get("connected"):
             raise Conflict("카메라를 먼저 연결하세요.")
@@ -207,6 +209,8 @@ class SensorOcrTest:
                     previous = job["frames"][-1]["seq"] if job["frames"] else job["baseline_seq"]
                     job["missed_frames"] += max(0, seq - previous - 1)
                     job["frames"].append({"seq": seq, "received_ns": received,
+                        "camera_settings_revision": meta.get("camera_settings_revision"),
+                        "camera_profile": meta.get("camera_profile"),
                         "after_trigger_ms": round((received - job["trigger_ns"]) / 1e6, 2),
                         "image": image, "crops": [], "result": None,
                         "state": "skipped" if job["state"] == "passed" else "waiting"})

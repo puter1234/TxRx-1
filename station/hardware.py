@@ -41,6 +41,7 @@ class GpioIO:
         self.fault = None
         self.requested = False
         self.led_requested = False
+        self.speed_requested = False
         self.changed = time.monotonic()
         self.last_lease = time.monotonic()
         self.permit_epoch = 0
@@ -54,7 +55,7 @@ class GpioIO:
         mapping.update(
             {
                 line: gpiod.LineSettings(direction=Direction.OUTPUT, output_value=off)
-                for line in config.do_lines
+                for line in (*config.do_lines, *([config.speed_line] if config.speed_line is not None else []))
             }
         )
         try:
@@ -89,6 +90,8 @@ class GpioIO:
             self.changed = time.monotonic()
         self.requested = motor
         self.led_requested = led
+        if not motor and not led:
+            self.speed(False)
 
     def _read(self):
         raw = [v.value for v in self.req.get_values(list(self.config.di_lines))]
@@ -100,12 +103,14 @@ class GpioIO:
             self.permit_epoch += 1
             self.fault = "MOTOR_PERMIT_LOST"
             self._outputs(False, False)
+            self.speed(False)
         self.prior_permit = permit
         self.latest = {
             "source": "HARDWARE",
             "connected": True,
             "motor_requested": self.requested,
             "led_requested": self.led_requested,
+            "speed_requested": self.speed_requested,
             "led_confirmed": None,
             "km2_on": raw[2] == 0,
             "di_raw": raw,
@@ -161,6 +166,7 @@ class GpioIO:
         with self.lock:
             if self.req:
                 self._outputs(False, False)
+                self.speed(False)
 
     def motor(self, on, allowed=None):
         with self.lock:
@@ -182,13 +188,25 @@ class GpioIO:
             self.last_lease = time.monotonic()
             self._outputs(self.requested, on)
 
+    def speed(self, high, allowed=None):
+        with self.lock:
+            line = self.config.speed_line
+            if line is None:
+                if high:
+                    raise RuntimeError("DO4 GPIO 핀을 지정하세요.")
+                return
+            if high and (self.fault or (allowed is not None and not allowed())):
+                raise RuntimeError("STOP_REQUEST_HAS_PRIORITY")
+            self.req.set_value(line, self._value(high))
+            self.speed_requested = high
+
     def reset(self):
         with self.lock:
             self._outputs(False, False)
             snap = self._read()
             if snap["km2_on"] or not snap["physical_permit"]:
                 raise RuntimeError("현장 정지/새 START 상태를 확인하세요.")
-            if not self.snapshot().get("rfid_ready"):
+            if self.config.rfid_port and getattr(self, "require_rfid", True) and not self.snapshot().get("rfid_ready"):
                 if self.reader:
                     try:
                         self.reader.close()
@@ -223,7 +241,7 @@ class GpioIO:
                 else []
             )
             + ([] if s.get("physical_permit") else ["물리 START 허가 확인 필요"])
-            + ([] if s.get("rfid_ready") else ["RFID 초기화·프로토콜 검증 필요"])
+
         )
 
     def inventory(self, window_ms, cancel):

@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import { connectWS } from "./lib/ws";
 import { useApp } from "./lib/store";
 import TopBar from "./components/TopBar";
-import Home from "./screens/Home";
+import Home from "./screens/Work";
 import SimpleCount from "./screens/SimpleCount";
 import ConditionWizard from "./screens/ConditionWizard";
 import ConditionRun from "./screens/ConditionRun";

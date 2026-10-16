@@ -1,11 +1,9 @@
-import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../station/shared";
 import { useApp } from "../lib/store";
-import { ended } from "../lib/station";
+import { cameraEditable, ended } from "../lib/station";
 import Help from "./Help";
-import BatchCapture from "./BatchCapture";
-import { BenchHeader, CameraView, OutputTests, useBench } from "./DeviceTests";
+import { BenchHeader, useBench, type BenchHook } from "./DeviceTests";
 
 type Mode = { width: number; height: number; fps: number; pixel_format: string };
 type Control = { name: string; type: string; value: number; min?: number; max?: number; step?: number; flags: string; menu: Record<string, string> };
@@ -49,14 +47,26 @@ function controlActive(c: Control, controls: Control[], values: Record<string, n
 }
 
 export default function DeviceSettings() {
-  const bench = useBench(), nav = useNavigate();
-  const locked = !ended(useApp(s => s.snapshot?.session));
+  const bench = useBench();
+  return <><BenchHeader bench={bench}/><DeviceSettingsPanels bench={bench}/></>;
+}
+
+export function DeviceSettingsPanels({ bench, tab = "all" }: { bench: BenchHook; tab?: string }) {
+  const snapshot = useApp(s => s.snapshot);
+  const locked = !ended(snapshot?.session);
+  const cameraLocked = !cameraEditable(snapshot);
   const [devices, setDevices] = useState<{device: string; name: string}[]>([]);
   const [device, setDevice] = useState(""), [discovery, setDiscovery] = useState("");
   const [caps, setCaps] = useState<{ modes: Mode[]; controls: Control[]; current: any } | null>(null);
   const [modeIndex, setModeIndex] = useState(0), [values, setValues] = useState<Record<string, number>>({});
   const [setup, setSetup] = useState<any>(null), [ports, setPorts] = useState<{device: string; name: string}[]>([]);
   const [message, setMessage] = useState("");
+  const [cameraMessage, setCameraMessage] = useState("");
+  const [baseline, setBaseline] = useState("");
+  const [revision, setRevision] = useState(0);
+  const attempted = useRef("");
+  const discovered = useRef(false);
+  const dirty = !!caps && baseline !== JSON.stringify({ modeIndex, values });
   const [portsBusy, setPortsBusy] = useState(false), [portsError, setPortsError] = useState("");
   const findPorts = async () => {
     setPortsBusy(true); setPortsError("");
@@ -71,15 +81,31 @@ export default function DeviceSettings() {
     const prior = bench.state?.camera?.profile?.device || bench.state?.camera?.saved_profile?.device;
     setDevice(old => old || prior || result.devices?.[0]?.device || "");
   };
-  useEffect(() => { void find().catch(e => setDiscovery(e.message)); }, []);
+  useEffect(() => {
+    if (!bench.state || discovered.current) return;
+    discovered.current = true;
+    void find().catch(e => setDiscovery(e.message));
+  }, [bench.state]);
   useEffect(() => { void findPorts(); }, []);
   const inspect = async () => {
     const data = await api("/bench/camera/inspect", { device });
     setCaps(data);
     const current = data.current;
-    setModeIndex(Math.max(0, data.modes.findIndex((m: Mode) => current && m.width === current.width && m.height === current.height && Math.abs(m.fps - current.fps) < 0.05 && m.pixel_format === current.pixel_format)));
-    setValues(Object.fromEntries(data.controls.map((c: Control) => [c.name, c.value])));
-    setMessage("");
+    const index = Math.max(0, data.modes.findIndex((m: Mode) => current && m.width === current.width && m.height === current.height && Math.abs(m.fps - current.fps) < 0.05 && m.pixel_format === current.pixel_format));
+    const actual = Object.fromEntries(data.controls.map((c: Control) => [c.name, c.value]));
+    const fixed = { ...actual };
+    for (const name of ["focus_auto", "focus_automatic_continuous", "white_balance_temperature_auto", "white_balance_automatic"]) {
+      if (name in fixed) fixed[name] = 0;
+    }
+    setModeIndex(index); setValues(fixed);
+    setBaseline(JSON.stringify({ modeIndex: index, values: actual }));
+    setRevision(data.revision ?? bench.state?.camera?.revision ?? 0);
+    const saved = data.saved_profile ?? bench.state?.camera?.saved_profile;
+    const matchesSaved = saved && saved.device === device && current &&
+      ["width", "height", "pixel_format"].every(key => saved[key] === current[key]) &&
+      Math.abs(saved.fps - current.fps) < 0.05 &&
+      Object.entries(saved.controls).every(([key, value]) => actual[key] === value);
+    setCameraMessage(matchesSaved ? "저장한 설정과 같습니다" : saved ? "저장한 설정과 다릅니다" : "저장된 설정이 없습니다");
   };
   const apply = (save: boolean) => bench.action(async () => {
     if (!caps?.modes[modeIndex]) return;
@@ -88,68 +114,71 @@ export default function DeviceSettings() {
       .map(c => [c.name, values[c.name]]));
     const result = await api("/bench/camera/apply", {
       profile: { device, ...caps.modes[modeIndex], controls }, save,
-      expected_revision: bench.state?.camera?.revision || 0,
+      expected_revision: revision,
     });
     setCaps(result.capabilities);
-    setValues(Object.fromEntries(result.capabilities.controls.map((c: Control) => [c.name, c.value])));
-    setMessage(save ? "적용값을 확인하고 저장했습니다" : "시험 설정을 적용했습니다");
+    const actual = Object.fromEntries(result.capabilities.controls.map((c: Control) => [c.name, c.value]));
+    setValues(actual);
+    setBaseline(JSON.stringify({ modeIndex, values: actual }));
+    setRevision(result.revision);
+    setCameraMessage(save ? "설정을 적용하고 저장했습니다" : "영상에 적용했습니다. 저장 전입니다.");
   });
-  const disabled = locked || bench.busy || !!bench.state?.native_busy;
+  const disabled = locked || bench.busy || !!bench.state?.native_busy || !!bench.state?.sensor_ocr?.busy;
+  const cameraDisabled = cameraLocked || bench.busy || !!bench.state?.native_busy || !!bench.state?.rfid_busy || !!bench.state?.sensor_ocr?.busy || !!bench.state?.runs.motor;
+  useEffect(() => {
+    if (!device || cameraDisabled || attempted.current === device) return;
+    attempted.current = device;
+    void bench.action(inspect);
+  }, [device, cameraDisabled]);
   const field = (key: string, value: any) => setSetup((old: any) => ({ ...old, [key]: value }));
   return <div className="space-y-5">
-    <div className="flex gap-4"><button className="btn btn-outline" onClick={() => nav("/equipment")}>장비 점검으로</button></div>
-    <BenchHeader bench={bench}/>
-    <section className="card space-y-5 p-6">
+    <section role="tabpanel" id="panel-camera" aria-labelledby="tab-camera" hidden={tab !== "all" && tab !== "camera"} className="card space-y-5 p-5">
       <div className="flex items-center"><h2 className="text-2xl font-extrabold">카메라 설정</h2>
         <Help text="지원 목록을 읽고 해상도와 촬영값을 지정합니다. 시험 적용으로 영상을 확인한 뒤 저장하세요. 설정 변경 중에는 생산 작업을 시작할 수 없습니다."/></div>
       <div className="flex flex-wrap items-end gap-4">
         <label className="min-w-72 flex-1 text-lg font-bold">카메라
-          <select className="field mt-2" value={device} disabled={disabled} onChange={e => { setDevice(e.target.value); setCaps(null); setMessage(""); }}>
+          <select className="field mt-2" value={device} disabled={cameraDisabled} onChange={e => { setDevice(e.target.value); setCaps(null); setCameraMessage(""); }}>
             <option value="">카메라 선택</option>{devices.map(d => <option value={d.device} key={d.device}>{d.name} ({d.device})</option>)}
           </select></label>
-        <button className="btn btn-outline" disabled={disabled} onClick={() => bench.action(find)}>장치 찾기</button>
-        <button className="btn btn-primary" disabled={disabled || !device} onClick={() => bench.action(inspect)}>설정 읽기</button>
+        <button className="btn btn-outline" disabled={cameraDisabled} onClick={() => bench.action(find)}>장치 찾기</button>
+        <button className="btn btn-primary" disabled={cameraDisabled || !device} onClick={() => bench.action(inspect)}>{dirty ? "초안 버리고 다시 읽기" : "실제 설정 다시 읽기"}</button>
       </div>
       {discovery && <p className="text-lg font-bold">{discovery}</p>}
-      <div className="grid gap-5 xl:grid-cols-2">
-        <div className="space-y-4"><CameraView connected={bench.state?.camera?.connected === true}/>
-          {bench.state?.camera?.width && <p className="text-lg font-bold">실제 영상 {bench.state.camera.width} × {bench.state.camera.height} / {Number(bench.state.camera.mean_received_fps || 0).toFixed(1)} fps</p>}
-          <BatchCapture bench={bench} locked={locked}/>
-          <details><summary className="cursor-pointer text-lg font-bold">조명 시험</summary><OutputTests bench={bench} ledOnly/></details>
-        </div>
+      <p className="text-base text-ink-700">초점과 화이트밸런스는 수동으로 고정합니다.</p>
+      <div>
         {caps && <div className="space-y-4">
           <label className="block text-lg font-bold">해상도와 촬영 속도
-            <select className="field mt-2" value={modeIndex} disabled={disabled} onChange={e => { setModeIndex(Number(e.target.value)); setMessage(""); }}>
+            <select className="field mt-2" value={modeIndex} disabled={cameraDisabled} onChange={e => { setModeIndex(Number(e.target.value)); setCameraMessage(""); }}>
               {caps.modes.map((m, i) => <option value={i} key={i}>{m.width} × {m.height} / {m.fps} fps / {m.pixel_format}</option>)}
             </select></label>
           {[true, false].map(primary => <details key={String(primary)} open={primary}>
-          <summary className="mb-3 cursor-pointer text-xl font-bold">{primary ? "노출, 게인, 초점" : "추가 설정"}</summary>
-          <div className="grid gap-4 sm:grid-cols-2">{caps.controls.filter(c => labels[c.name] && (/(exposure|focus|gain)/.test(c.name) === primary)).map(c => {
-            const readonly = /read-only|disabled/.test(c.flags);
+          <summary className="mb-3 cursor-pointer text-xl font-bold">{primary ? "노출, 초점, 화이트밸런스" : "추가 설정"}</summary>
+          <div className="grid gap-4 sm:grid-cols-2">{caps.controls.filter(c => labels[c.name] && !["focus_auto", "focus_automatic_continuous", "white_balance_temperature_auto", "white_balance_automatic"].includes(c.name) && (/(exposure|focus|gain|white_balance)/.test(c.name) === primary)).map(c => {
+            const readonly = /read-only|disabled/.test(c.flags) || ["focus_auto", "focus_automatic_continuous", "white_balance_temperature_auto", "white_balance_automatic"].includes(c.name);
             // An inactive manual control can be changed with its automatic mode in the same apply.
             const inactive = !controlActive(c, caps.controls, values);
             const label = labels[c.name], value = values[c.name] ?? c.value;
-            return <div key={c.name} className="rounded-xl border border-line p-4">
+            return <div key={c.name} className="border-b border-line pb-4">
               <div className="mb-3 flex items-center"><label htmlFor={"camera-" + c.name} className="text-lg font-bold">{label}</label>
                 <Help text={c.name.includes("focus") ? "초점 숫자는 렌즈 위치입니다. 거리 단위가 아닙니다. 영상의 글자를 보면서 맞추세요." : c.name.includes("exposure") ? "카메라가 보고한 제어값입니다. 자동 노출을 수동으로 바꾼 뒤 조절하세요." : "카메라가 보고한 범위 안에서 조절합니다."}/></div>
-              {Object.keys(c.menu).length ? <select id={"camera-" + c.name} className="field" disabled={disabled || readonly || inactive} value={value} onChange={e => setValues(v => ({ ...v, [c.name]: Number(e.target.value) }))}>
+              {Object.keys(c.menu).length ? <select id={"camera-" + c.name} className="field" disabled={cameraDisabled || readonly || inactive} value={value} onChange={e => setValues(v => ({ ...v, [c.name]: Number(e.target.value) }))}>
                 {Object.entries(c.menu).map(([n, text]) => <option key={n} value={n}>{menuLabel(text)}</option>)}
-              </select> : c.type === "bool" ? <button id={"camera-" + c.name} role="switch" aria-label={label} aria-checked={value !== 0} className={"btn w-full " + (value ? "btn-primary" : "btn-outline")} disabled={disabled || readonly || inactive} onClick={() => setValues(v => ({ ...v, [c.name]: value ? 0 : 1 }))}>{value ? "켜짐" : "꺼짐"}</button>
+              </select> : c.type === "bool" ? <button id={"camera-" + c.name} role="switch" aria-label={label} aria-checked={value !== 0} className={"btn w-full " + (value ? "btn-primary" : "btn-outline")} disabled={cameraDisabled || readonly || inactive} onClick={() => setValues(v => ({ ...v, [c.name]: value ? 0 : 1 }))}>{value ? "켜짐" : "꺼짐"}</button>
                 : <div className="flex items-center gap-2">
-                  <button aria-label={label + " 줄이기"} className="btn btn-outline px-4 text-2xl" disabled={disabled || readonly || inactive || value <= (c.min ?? 0)} onClick={() => setValues(v => ({ ...v, [c.name]: Math.max(c.min ?? 0, value - (c.step || 1)) }))}>−</button>
-                  <input id={"camera-" + c.name} type="number" className="field min-w-0 text-center" min={c.min} max={c.max} step={c.step || 1} disabled={disabled || readonly || inactive} value={value} onChange={e => setValues(v => ({ ...v, [c.name]: Number(e.target.value) }))}/>
-                  <button aria-label={label + " 늘리기"} className="btn btn-outline px-4 text-2xl" disabled={disabled || readonly || inactive || value >= (c.max ?? value)} onClick={() => setValues(v => ({ ...v, [c.name]: Math.min(c.max ?? value, value + (c.step || 1)) }))}>+</button>
+                  <button aria-label={label + " 줄이기"} className="btn btn-outline px-4 text-2xl" disabled={cameraDisabled || readonly || inactive || value <= (c.min ?? 0)} onClick={() => setValues(v => ({ ...v, [c.name]: Math.max(c.min ?? 0, value - (c.step || 1)) }))}>−</button>
+                  <input id={"camera-" + c.name} type="number" className="field min-w-0 text-center" min={c.min} max={c.max} step={c.step || 1} disabled={cameraDisabled || readonly || inactive} value={value} onChange={e => setValues(v => ({ ...v, [c.name]: Number(e.target.value) }))}/>
+                  <button aria-label={label + " 늘리기"} className="btn btn-outline px-4 text-2xl" disabled={cameraDisabled || readonly || inactive || value >= (c.max ?? value)} onClick={() => setValues(v => ({ ...v, [c.name]: Math.min(c.max ?? value, value + (c.step || 1)) }))}>+</button>
                 </div>}
             </div>;
           })}</div></details>)}
           {!caps.controls.some(c => c.name === "gain") && <p className="text-lg font-bold">게인: 카메라 드라이버에서 제어를 제공하지 않습니다.</p>}
-          <div className="flex gap-3"><button className="btn btn-outline flex-1" disabled={disabled || !caps.modes.length} onClick={() => apply(false)}>시험 적용</button>
-            <button className="btn btn-primary flex-1" disabled={disabled || !caps.modes.length} onClick={() => apply(true)}>적용하고 저장</button></div>
-          {message && <p role="status" className="text-lg font-bold">{message}</p>}
+          <div className="sticky bottom-0 z-10 flex gap-3 border-t border-line bg-white py-3"><button className="btn btn-outline flex-1" disabled={cameraDisabled || !caps.modes.length} onClick={() => apply(false)}>시험 적용</button>
+            <button className="btn btn-primary flex-1" disabled={cameraDisabled || !caps.modes.length} onClick={() => apply(true)}>적용하고 저장</button></div>
+          {(dirty || cameraMessage) && <p role="status" className="text-lg font-bold">{dirty ? "변경한 설정이 아직 적용되지 않았습니다." : cameraMessage}</p>}
         </div>}
       </div>
     </section>
-    {setup && <details id="io" open={window.location.hash === "#io"} className="card space-y-5 p-6"><summary className="cursor-pointer text-xl font-bold">입출력 및 RFID 설정</summary>
+    {setup && <details role="tabpanel" aria-labelledby="tab-connections" hidden={tab !== "all" && tab !== "connections"} id="panel-connections" open className="card space-y-5 p-6"><summary className="cursor-pointer text-xl font-bold">입출력 및 RFID 설정</summary>
       <div className="flex items-center"><h2 className="text-2xl font-extrabold">입출력 연결</h2><Help text="배선 확인 후 값을 입력하세요. 입력 연결을 종료해야 수정할 수 있습니다. 저장해도 생산 운전 승인은 바뀌지 않습니다."/></div>
       <p className="text-lg font-bold">모터 DO1 ({bench.state?.pins.motor}), LED DO2 ({bench.state?.pins.led}), 접촉기 DI3 ({bench.state?.pins.feedback})</p>
       {bench.state?.connected && <div className="space-y-3"><p className="text-lg font-bold">입력 연결 중에는 설정이 잠깁니다.</p>

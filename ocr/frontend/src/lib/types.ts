@@ -37,7 +37,11 @@ export interface ItemCond {
 }
 
 export interface SessionConfig {
-  mode: "simple" | "condition";
+  mode: "simple" | "condition" | "vision";
+  presetId?: string;
+  presetRevision?: number;
+  workName?: string;
+  modelPath?: string;
   brandId?: string;
   brandName?: string;
   checks?: Checks;
@@ -62,7 +66,7 @@ export type SessionStatus =
   | "done";
 
 export interface SessionState {
-  mode: "simple" | "condition" | null;
+  mode: "simple" | "condition" | "vision" | null;
   status: SessionStatus;
   count: number;
   startedAt: string | null;
@@ -82,7 +86,7 @@ export interface Job {
   id: string;
   date: string;
   time: string;
-  mode: "simple" | "condition";
+  mode: "simple" | "condition" | "vision";
   count: number;
   config: SessionConfig | null;
   dir: string;

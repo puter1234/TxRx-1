@@ -34,7 +34,7 @@ from .schema import Model, Brand, Recipe, Command, Adjustment, StationConfig
 from .storage import Store, utc
 from .telemetry import collect
 from .vision import Vision
-from .runtime import HardwareCycle
+from .flow import FlowCycle as HardwareCycle
 from .bench import Bench
 from .usb_camera import CameraManager
 
@@ -68,6 +68,9 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
         if config_path.exists()
         else StationConfig()
     )
+    saved_speed = store.get("speed_line")
+    if saved_speed is not None:
+        config = StationConfig.model_validate({**config.model_dump(), "speed_line": saved_speed})
     camera = camera or CameraManager(config, store)
     detector = None
     hardware_errors = []
@@ -91,7 +94,8 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
                     config.commissioning.detector_sha256,
                 )
             except Exception as exc:
-                hardware_errors.append(str(exc))
+                if config.commissioning.detector_module:
+                    hardware_errors.append(str(exc))
     vision = vision or Vision()
     controller = Controller(store, io, config)
     controller.external_busy = lambda: vision.status().get("busy", False)
@@ -123,10 +127,10 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
         guard = LeaseGuard(io, config.io_lease_ms)
         try:
             while True:
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.01)
                 guard.renew()
-                state = controller.snapshot()
-                phase = (state["session"] or {}).get("phase")
+                with controller.lock:
+                    phase = (controller.session or {}).get("phase")
                 if (
                     config.mode == "HARDWARE"
                     and phase
@@ -137,6 +141,7 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
                         "STOPPING",
                         "INSPECTING",
                         "RETRY_PENDING",
+                        "CAMERA_WAIT",
                     )
                     and time.monotonic() - controller.last_client > 3
                 ):
@@ -480,10 +485,24 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
         store.delete_brand(ident, revision, actor, reason)
         return {"ok": True}
 
+    from .work_api import install_work_api
+    install_work_api(app, controller, permitted, vision, hardware_monitor)
+
     @app.post("/api/sessions")
     def new_session(recipe: Recipe, request: Request):
+        recipe = controller.resolve_recipe(recipe)
+        if config.mode == "HARDWARE" and not recipe.preset_id:
+            permitted(request, ("admin",))
+            from .schema import FlowSettings
+            recipe.flow = recipe.flow or FlowSettings()
+        if recipe.test_run:
+            permitted(request, ("admin",))
+        if recipe.flow and not recipe.preset_id:
+            permitted(request, ("admin",))
         if "ocr" in recipe.channels:
             vision.load()
+        if hardware_monitor and recipe.flow:
+            hardware_monitor.prepare(recipe.model_dump())
         return controller.new_session(recipe, permitted(request))
 
     @app.post("/api/commands")
@@ -558,16 +577,23 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
         from fastapi.responses import Response
 
         def encode():
-            frame, _ = camera.read_latest()
+            frame, metadata = camera.read_latest()
             # Preview is bounded; saved test captures keep the original resolution.
             if frame.shape[1] > 1280:
                 frame = cv2.resize(frame, (1280, max(1, round(frame.shape[0] * 1280 / frame.shape[1]))))
             ok, data = cv2.imencode(".jpg", frame)
             if not ok:
                 raise RuntimeError("카메라 영상 변환 실패")
-            return data.tobytes()
+            headers = {"Cache-Control": "no-store"}
+            for field, header in (("seq", "X-Camera-Frame"),
+                                  ("camera_settings_revision", "X-Camera-Revision"),
+                                  ("host_received_ns", "X-Camera-Received-Ns")):
+                if metadata.get(field) is not None:
+                    headers[header] = str(metadata[field])
+            return data.tobytes(), headers
 
-        return Response(await asyncio.to_thread(encode), media_type="image/jpeg")
+        data, headers = await asyncio.to_thread(encode)
+        return Response(data, media_type="image/jpeg", headers=headers)
 
     @app.post("/api/device/test/{kind}")
     async def device_test(kind: str, request: Request):

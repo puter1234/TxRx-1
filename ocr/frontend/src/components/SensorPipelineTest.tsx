@@ -43,7 +43,7 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
     await bench.adoptRuns(next);
     setSelection(null);
     setState(await api<State>("/bench/pipeline"));
-  });
+  }, true);
   const job = state?.jobs.find(j => j.id === selection?.job) ?? state?.jobs[0];
   const frame = job?.frames.find(f => f.seq === selection?.seq) ?? job?.frames[0];
   const frameUrl = job && frame ? `/api/bench/pipeline/frames/${job.id}/${frame.seq}` : "";

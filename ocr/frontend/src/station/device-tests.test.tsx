@@ -70,9 +70,11 @@ it("allows RFID reading with both outputs on and displays read errors beside the
   mocks.bench.state.io.motor_requested = true;
   mocks.api.mockImplementation(async (path: string) => {
     if (path === "/bench/rfid") throw new Error("RFID response timeout: 08");
+    if (path === "/bench/pipeline") return { active: false, busy: false, jobs: [] };
+    if (path === "/bench/captures/latest" || path === "/bench/batches/latest") return null;
     return {};
   });
-  render(<MemoryRouter><Equipment/></MemoryRouter>);
+  render(<MemoryRouter initialEntries={["/equipment?tab=rfid"]}><Equipment/></MemoryRouter>);
   const read = screen.getByRole("button", { name: "태그 읽기" }) as HTMLButtonElement;
   expect(read.disabled).toBe(false);
   fireEvent.click(read);

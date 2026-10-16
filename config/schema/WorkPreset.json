@@ -1,0 +1,272 @@
+{
+  "$defs": {
+    "FlowSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "low_speed_ms": {
+          "default": 500,
+          "maximum": 60000,
+          "minimum": 0,
+          "title": "Low Speed Ms",
+          "type": "integer"
+        },
+        "capture_delay_ms": {
+          "default": 100,
+          "maximum": 60000,
+          "minimum": 0,
+          "title": "Capture Delay Ms",
+          "type": "integer"
+        },
+        "capture_count": {
+          "default": 1,
+          "maximum": 30,
+          "minimum": 1,
+          "title": "Capture Count",
+          "type": "integer"
+        },
+        "capture_interval_ms": {
+          "default": 100,
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Capture Interval Ms",
+          "type": "integer"
+        },
+        "rfid_delay_ms": {
+          "default": 100,
+          "maximum": 60000,
+          "minimum": 0,
+          "title": "Rfid Delay Ms",
+          "type": "integer"
+        },
+        "result_timeout_ms": {
+          "default": 5000,
+          "maximum": 120000,
+          "minimum": 100,
+          "title": "Result Timeout Ms",
+          "type": "integer"
+        },
+        "departure_timeout_ms": {
+          "default": 10000,
+          "maximum": 120000,
+          "minimum": 100,
+          "title": "Departure Timeout Ms",
+          "type": "integer"
+        },
+        "reconnect_interval_ms": {
+          "default": 2000,
+          "maximum": 60000,
+          "minimum": 100,
+          "title": "Reconnect Interval Ms",
+          "type": "integer"
+        },
+        "di1_debounce_ms": {
+          "default": 20,
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Di1 Debounce Ms",
+          "type": "integer"
+        },
+        "di2_debounce_ms": {
+          "default": 20,
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Di2 Debounce Ms",
+          "type": "integer"
+        },
+        "counter": {
+          "default": "sensor",
+          "enum": [
+            "sensor",
+            "cvzone",
+            "yolo"
+          ],
+          "title": "Counter",
+          "type": "string"
+        },
+        "model_path": {
+          "default": "",
+          "maxLength": 1000,
+          "title": "Model Path",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 0.5,
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "classes": {
+          "items": {
+            "type": "integer"
+          },
+          "maxItems": 100,
+          "title": "Classes",
+          "type": "array"
+        },
+        "image_size": {
+          "default": 640,
+          "maximum": 2048,
+          "minimum": 32,
+          "title": "Image Size",
+          "type": "integer"
+        },
+        "threshold": {
+          "default": 127,
+          "maximum": 255,
+          "minimum": 0,
+          "title": "Threshold",
+          "type": "integer"
+        },
+        "invert": {
+          "default": false,
+          "title": "Invert",
+          "type": "boolean"
+        },
+        "min_area": {
+          "default": 100,
+          "maximum": 10000000,
+          "minimum": 1,
+          "title": "Min Area",
+          "type": "integer"
+        },
+        "roi": {
+          "default": [
+            0,
+            0,
+            1,
+            1
+          ],
+          "maxItems": 4,
+          "minItems": 4,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Roi",
+          "type": "array"
+        },
+        "axis": {
+          "default": "y",
+          "enum": [
+            "x",
+            "y"
+          ],
+          "title": "Axis",
+          "type": "string"
+        },
+        "direction": {
+          "default": 1,
+          "enum": [
+            1,
+            -1
+          ],
+          "title": "Direction",
+          "type": "integer"
+        },
+        "line": {
+          "default": 0.5,
+          "exclusiveMaximum": 1,
+          "exclusiveMinimum": 0,
+          "title": "Line",
+          "type": "number"
+        },
+        "hysteresis": {
+          "default": 0.02,
+          "maximum": 0.2,
+          "minimum": 0,
+          "title": "Hysteresis",
+          "type": "number"
+        },
+        "match_distance": {
+          "default": 0.15,
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "title": "Match Distance",
+          "type": "number"
+        },
+        "track_lost_ms": {
+          "default": 500,
+          "maximum": 10000,
+          "minimum": 10,
+          "title": "Track Lost Ms",
+          "type": "integer"
+        }
+      },
+      "title": "FlowSettings",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,47}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "name": {
+      "maxLength": 80,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "revision": {
+      "default": 1,
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "enabled": {
+      "default": true,
+      "title": "Enabled",
+      "type": "boolean"
+    },
+    "kind": {
+      "default": "simple",
+      "enum": [
+        "simple",
+        "condition",
+        "vision"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "brand_id": {
+      "default": "__simple__",
+      "title": "Brand Id",
+      "type": "string"
+    },
+    "channels": {
+      "items": {
+        "enum": [
+          "ocr",
+          "rfid",
+          "barcode"
+        ],
+        "type": "string"
+      },
+      "maxItems": 3,
+      "title": "Channels",
+      "type": "array"
+    },
+    "flow": {
+      "$ref": "#/$defs/FlowSettings"
+    }
+  },
+  "required": [
+    "id",
+    "name"
+  ],
+  "title": "WorkPreset",
+  "type": "object"
+}

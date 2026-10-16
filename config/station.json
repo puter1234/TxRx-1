@@ -1,8 +1,15 @@
 {
   "mode": "REPLAY",
   "gpio_chip": "/dev/gpiochip0",
-  "di_lines": [105, 144, 106],
-  "do_lines": [51, 52],
+  "di_lines": [
+    105,
+    144,
+    106
+  ],
+  "do_lines": [
+    51,
+    52
+  ],
   "do_on_raw": null,
   "permit_line": null,
   "permit_active_raw": null,
@@ -16,5 +23,6 @@
   "disk_min_free_mb": 1024,
   "retention_days": null,
   "automatic_cycle": true,
-  "commissioning": {}
+  "commissioning": {},
+  "speed_line": null
 }

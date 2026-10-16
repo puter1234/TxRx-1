@@ -6,7 +6,7 @@ import uuid
 
 from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse, Response
-from pydantic import Field
+from pydantic import Field, model_validator
 from .schema import Model
 from .controller import Conflict
 from .bench import BenchSetup, serial_ports
@@ -15,7 +15,7 @@ from .sensor_ocr import SensorOcrTest, SensorOcrSettings
 
 
 class Pulse(Model):
-    target: str = Field(pattern="^(motor|led)$")
+    target: str = Field(pattern="^(motor|led|speed)$")
     seconds: float | None = Field(default=None, ge=0.1, le=60)
     generation: int = Field(ge=0)
     request_id: str = Field(min_length=8, max_length=100)
@@ -44,6 +44,13 @@ class CameraApply(Model):
 
 class BatchCapture(Model):
     count: int = Field(ge=1, le=500)
+    interval_ms: int = Field(default=0, ge=0, le=10000)
+
+    @model_validator(mode="after")
+    def duration(self):
+        if (self.count - 1) * self.interval_ms >= 300000:
+            raise ValueError("촬영 간격과 장수를 줄여 총 촬영 시간이 5분 미만이 되게 하세요.")
+        return self
 
 
 def install(app, controller, bench, camera, permitted, editable, production_busy, maintenance_active, workers):
@@ -56,8 +63,18 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
     sensor_ocr = SensorOcrTest(bench, camera, app.state.vision)
     app.state.sensor_ocr = sensor_ocr
 
-    def available(allow_led=False, allow_outputs=False):
-        editable()
+    def available(allow_led=False, allow_outputs=False, camera_only=False):
+        state = controller.snapshot()
+        session = state["session"]
+        # Camera adjustment is allowed before the first product without ending
+        # and recreating the job. Other job/configuration contracts stay intact.
+        ready_camera = camera_only and not state["busy"] and session and session["phase"] == "READY" and not session["active_product"]
+        if not ready_camera:
+            editable()
+        else:
+            io_state = controller.io.snapshot()
+            if io_state.get("motor_requested") is True or io_state.get("km2_on") is True:
+                raise Conflict("컨베이어를 정지한 뒤 카메라를 조정하세요.")
         if sensor_ocr.busy():
             raise Conflict("파이프라인 시험을 먼저 정지하세요.")
         if production_busy() or maintenance_active.is_set() or bench.native_busy or bench.rfid_busy:
@@ -65,10 +82,10 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
         if bench.runs and not allow_outputs and not (allow_led and set(bench.runs) == {"led"}):
             raise Conflict("출력 시험을 먼저 정지하세요.")
 
-    async def native(function, *, allow_led=False, allow_outputs=False):
-        busy_field = "rfid_busy" if allow_outputs else "native_busy"
+    async def native(function, *, allow_led=False, allow_outputs=False, camera_only=False):
+        busy_field = "rfid_busy" if allow_outputs and not camera_only else "native_busy"
         with controller.lock, bench.lock:
-            available(allow_led, allow_outputs)
+            available(allow_led, allow_outputs, camera_only)
             setattr(bench, busy_field, True)
             bench.cancel.clear()
 
@@ -144,23 +161,28 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
     @app.post("/api/bench/camera/batch")
     async def batch_capture(body: BatchCapture, request: Request):
         actor = permitted(request)
+        # Clear cancellation before scheduling the worker, never after a slow
+        # driver query: leaving the workspace during that query must cancel it.
+        with controller.lock, bench.lock:
+            available(allow_outputs=True, camera_only=True)
+            batch_cancel.clear()
         def execute():
             from .camera_batch import capture_batch
+            camera.verify_fixed_controls()
             ident = str(uuid.uuid4())
             captures.mkdir(exist_ok=True)
-            batch_cancel.clear()
             batch.update(active=True, completed=0, target=body.count)
             try:
                 result = capture_batch(camera, captures / (ident + ".zip"), body.count,
                     lambda: batch_cancel.is_set() or bench.cancel.is_set(), controller.check_disk,
-                    lambda completed: batch.update(completed=completed))
+                    lambda completed: batch.update(completed=completed), interval_ms=body.interval_ms)
                 result.update(id=ident, url="/api/bench/batches/" + ident)
                 store.event("BENCH_CAMERA_BATCH", {**result, "actor": actor})
                 store.put("last_bench_batch", result)
                 return result
             finally:
                 batch["active"] = False
-        return await native(execute, allow_led=True)
+        return await native(execute, allow_outputs=True, camera_only=True)
 
     @app.get("/api/bench/batches/latest")
     def latest_batch():
@@ -205,6 +227,14 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
         bench.stop("점검 종료")
         return await native(bench.disconnect)
 
+    @app.post("/api/bench/close")
+    async def close_workspace(request: Request):
+        permitted(request)
+        # Normal workspace exit releases the commissioning GPIO owner. Keeping
+        # its input handle open would block the next production job. Unlike the
+        # emergency stop route, this must not fault a prepared READY job.
+        return await native(bench.disconnect, allow_outputs=True, camera_only=True)
+
     @app.post("/api/bench/output")
     def pulse(body: Pulse, request: Request):
         permitted(request)
@@ -222,6 +252,11 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
         with controller.lock, bench.lock:
             available()
             return bench.clear_error()
+
+    @app.post("/api/bench/speed/off")
+    def speed_off(request: Request):
+        permitted(request)
+        return bench.output_off("speed")
 
     @app.post("/api/bench/heartbeat")
     def heartbeat(body: Heartbeat, request: Request):
@@ -288,6 +323,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
         def execute():
             if not camera.status().get("connected"):
                 raise Conflict("카메라를 먼저 연결하세요.")
+            camera.verify_fixed_controls()
             with ocr_frame_lock:
                 ocr_frame.update(id=None, image=None)
             started = time.perf_counter()
@@ -308,7 +344,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
             result["original_url"] = result["preview_url"] + "?original=true"
             return result
 
-        return await native(execute, allow_led=True)
+        return await native(execute, allow_outputs=True, camera_only=True)
 
     @app.get("/api/bench/ocr/frames/{ident}")
     def ocr_image(ident: str, request: Request, original: bool = False):
@@ -342,7 +378,8 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
     @app.post("/api/bench/camera/inspect")
     async def inspect(body: Device, request: Request):
         permitted(request)
-        return await native(lambda: camera.inspect(body.device), allow_led=True)
+        return await native(lambda: {**camera.inspect(body.device), "revision": camera.revision,
+                                     "saved_profile": camera.saved}, allow_led=True, camera_only=True)
 
     @app.post("/api/bench/camera/apply")
     async def apply(body: CameraApply, request: Request):
@@ -351,12 +388,12 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
             if body.expected_revision != camera.revision:
                 raise Conflict("다른 화면에서 카메라 설정을 변경했습니다. 다시 불러오세요.")
             return camera.apply(body.profile, persist=body.save, actor=actor)
-        return await native(execute, allow_led=True)
+        return await native(execute, allow_led=True, camera_only=True)
 
     @app.post("/api/bench/camera/connect")
     async def camera_connect(request: Request):
         permitted(request)
-        return await native(camera.connect, allow_led=True)
+        return await native(camera.connect, allow_led=True, camera_only=True)
 
     @app.post("/api/bench/camera/disconnect")
     async def camera_disconnect(request: Request):
@@ -364,7 +401,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
         def execute():
             camera.close()
             return camera.status()
-        return await native(execute, allow_led=True)
+        return await native(execute, allow_led=True, camera_only=True)
 
     @app.post("/api/bench/camera/capture")
     async def capture(request: Request):
@@ -372,6 +409,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
         def execute():
             import cv2
             controller.check_disk()
+            camera.verify_fixed_controls()
             image, meta = camera.after(time.monotonic_ns(), 10)
             ident = str(uuid.uuid4())
             captures.mkdir(exist_ok=True)
@@ -390,7 +428,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
                 path.unlink(missing_ok=True)
                 raise
             return result
-        return await native(execute, allow_led=True)
+        return await native(execute, allow_outputs=True, camera_only=True)
 
     @app.get("/api/bench/captures/latest")
     def latest():

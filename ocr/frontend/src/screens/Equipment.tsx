@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { ArrowLeft, CreditCard, ScanText, Settings } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { ArrowLeft, CreditCard, ScanText } from "lucide-react";
 import { api } from "../station/shared";
 import { useApp } from "../lib/store";
-import { ended, reportError } from "../lib/station";
+import { cameraEditable, ended, reportError } from "../lib/station";
 import Help from "../components/Help";
+import { DeviceSettingsPanels } from "../components/DeviceSettings";
+import { LoginGate } from "./Settings";
 import SensorPipelineTest from "../components/SensorPipelineTest";
 import { Equipment as EquipmentDetails } from "../station/StationApp";
 import { BenchHeader, CameraTest, OutputTests, SensorTest, useBench } from "../components/DeviceTests";
@@ -26,16 +28,16 @@ type OcrResult = { ok: boolean; mode?: "ocr_only"; reads: { barcode: string | nu
 const barcodeStages: Record<string, string> = {
   small: "축소본 위치 검출", full: "원본 위치 검출", tiled: "분할 위치 검출", "whole-image": "원본 전체 판독",
 };
-export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy }: {
+export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy, sharedPreview = false }: {
   bench: ReturnType<typeof useBench>; locked: boolean;
-  checkOcr: () => void; ocr: { ok: boolean; detail: string } | null; ocrBusy: boolean;
+  checkOcr: () => void; ocr: { ok: boolean; detail: string } | null; ocrBusy: boolean; sharedPreview?: boolean;
 }) {
   const connected = bench.state?.camera?.connected === true;
   const [url, setUrl] = useState("");
   const [result, setResult] = useState<OcrResult | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
   useEffect(() => {
-    if (!connected) { setUrl(""); return; }
+    if (!connected || sharedPreview) { setUrl(""); return; }
     let alive = true, current = "", timer: ReturnType<typeof setTimeout>;
     const abort = new AbortController();
     const next = async () => {
@@ -51,7 +53,7 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy }: {
     };
     void next();
     return () => { alive = false; abort.abort(); clearTimeout(timer); if (current) URL.revokeObjectURL(current); };
-  }, [connected]);
+  }, [connected, sharedPreview]);
 
   const read = async () => {
     setBusy(true); setError(""); setResult(null);
@@ -59,13 +61,13 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy }: {
     catch (e) { setError(e instanceof Error ? e.message : "OCR 검사 실패"); }
     finally { setBusy(false); await bench.refresh().catch(() => {}); }
   };
-  const canRead = connected && !!url && !locked && !busy;
+  const canRead = connected && (sharedPreview || !!url) && !locked && !busy;
   return <section className="card space-y-5 p-5">
     <div className="flex items-center gap-3"><ScanText size={26}/><h2 className="text-xl font-extrabold">OCR 촬영 시험</h2>
       <Help text="바코드 위치를 기준으로 택을 정렬하고 주변 인쇄 문자를 읽습니다. 바코드 값은 판독하지 않습니다. 읽은 문자와 사진을 확인하는 시험이며 목표값 합격 판정은 작업 검사에서 진행합니다."/></div>
-    <div className="grid gap-5 xl:grid-cols-2">
+    <div className={sharedPreview ? "space-y-5" : "grid gap-5 xl:grid-cols-2"}>
       <div className="space-y-3">
-        <div className="rounded-xl bg-ink-900 p-2">
+        <div hidden={sharedPreview} className="rounded-xl bg-ink-900 p-2">
           {connected && url ? <img src={url} alt="카메라 영상" className="mx-auto block max-h-[520px] max-w-full"/>
             : <p className="p-8 text-center text-2xl font-bold text-white">{connected ? "영상 수신 중" : "카메라 미연결"}</p>}
         </div>
@@ -132,6 +134,27 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy }: {
 
 export default function Equipment() {
   const nav = useNavigate(), bench = useBench();
+  const [params, setParams] = useSearchParams();
+  const tabs = [
+    { id: "camera", label: "카메라 설정" }, { id: "sensors", label: "센서 시험" },
+    { id: "ocr", label: "OCR 시험" }, { id: "rfid", label: "RFID 시험" },
+    { id: "connections", label: "연결 설정" }, { id: "details", label: "장비 정보" },
+  ];
+  const tab = tabs.some(item => item.id === params.get("tab")) ? params.get("tab")! : "camera";
+  const panel = useRef<HTMLDivElement>(null);
+  const positions = useRef<Record<string, number>>({});
+  useLayoutEffect(() => {
+    if (panel.current) panel.current.scrollTop = positions.current[tab] || 0;
+  }, [tab]);
+  const [admin, setAdmin] = useState(false), [authLoading, setAuthLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    const expired = () => setAdmin(false);
+    api("/auth").then(auth => { if (alive) setAdmin(auth.authenticated && auth.user?.role === "admin"); })
+      .catch(() => {}).finally(() => { if (alive) setAuthLoading(false); });
+    window.addEventListener("txrx-login-required", expired);
+    return () => { alive = false; window.removeEventListener("txrx-login-required", expired); };
+  }, []);
   const state = useApp(s => s.snapshot), online = useApp(s => s.connected);
   const [ocr, setOcr] = useState<{ok: boolean; detail: string} | null>(null);
   const [ocrBusy, setOcrBusy] = useState(false);
@@ -139,7 +162,7 @@ export default function Equipment() {
   const [rfidError, setRfidError] = useState("");
   const pipelineLocked = !online || !ended(state?.session) || bench.busy || !!bench.state?.native_busy || !!bench.state?.rfid_busy;
   const rfidLocked = pipelineLocked || !!bench.state?.sensor_ocr?.busy || rfidBusy;
-  const locked = pipelineLocked || !!bench.state?.sensor_ocr?.busy || !!bench.state?.runs?.motor || bench.state?.run?.target === "motor";
+  const locked = !online || !cameraEditable(state) || bench.busy || !!bench.state?.native_busy || !!bench.state?.rfid_busy || !!bench.state?.sensor_ocr?.busy;
   const rfid = bench.state?.rfid;
   const readRfid = async () => {
     setRfidError(""); setRfidBusy(true);
@@ -159,18 +182,36 @@ export default function Equipment() {
     }
   });
   return <div className="flex h-full flex-col">
-    <div className="flex shrink-0 items-center gap-4 px-6 pt-5">
-      <button className="btn btn-outline btn-sm" onClick={() => nav("/")}><ArrowLeft size={20}/>처음 화면</button>
-      <h1 className="text-2xl font-extrabold">장비 점검</h1>
-      <button className="btn btn-outline ml-auto" onClick={() => nav("/settings?tab=devices")}><Settings size={22}/>연결 설정</button>
+    <div className="flex shrink-0 items-center gap-4 px-5 py-3">
+      <button className="btn btn-outline btn-sm" onClick={async () => { if (await bench.leave()) nav("/"); }}><ArrowLeft size={20}/>처음 화면</button>
+      <h1 className="text-2xl font-extrabold">장비 테스트</h1>
+      {admin && <button className="btn btn-outline btn-sm ml-auto" onClick={async () => {
+        try { await api("/auth/logout", {}); setAdmin(false); } catch (e) { reportError(e); }
+      }}>설정 잠금</button>}
     </div>
-    <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-6">
-      <BenchHeader bench={bench}/>
-      <div className="grid gap-5 md:grid-cols-2"><OutputTests bench={bench}/></div>
-      <SensorTest bench={bench}/>
-      <SensorPipelineTest bench={bench} locked={pipelineLocked}/>
-      <CameraTest bench={bench}/>
-      <div className="grid gap-5 md:grid-cols-2">
+    <div className="shrink-0 px-5 pb-3"><BenchHeader bench={bench} compact/></div>
+    <div className="grid min-h-0 flex-1 grid-cols-2 gap-5 px-5 pb-5">
+      <div className="flex min-h-0 min-w-0 flex-col gap-3" aria-label="실시간 영상과 출력 시험">
+        <div className="shrink-0"><OutputTests bench={bench} compact/></div>
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1"><CameraTest bench={bench}/></div>
+      </div>
+      <div className="flex min-h-0 min-w-0 flex-col">
+        <div role="tablist" aria-label="장비 테스트 항목" className="mb-3 flex shrink-0 flex-wrap gap-2">
+          {tabs.map(item => <button key={item.id} id={"tab-" + item.id} role="tab" aria-selected={tab === item.id}
+            aria-controls={"panel-" + item.id} className={"btn btn-sm " + (tab === item.id ? "btn-primary" : "btn-outline")}
+            onClick={() => { positions.current[tab] = panel.current?.scrollTop || 0; setParams({ tab: item.id }, { replace: true }); }}>{item.label}</button>)}
+        </div>
+        <div ref={panel} className="min-h-0 flex-1 overflow-y-auto pr-1">
+          <div hidden={tab !== "camera" && tab !== "connections"}>
+            {authLoading ? <p role="status">관리자 상태 확인 중</p> : !admin ? <LoginGate onOk={() => setAdmin(true)}/> : <DeviceSettingsPanels bench={bench} tab={tab}/>}
+          </div>
+          <div role="tabpanel" id="panel-sensors" aria-labelledby="tab-sensors" hidden={tab !== "sensors"} className="space-y-4">
+            <SensorTest bench={bench}/><SensorPipelineTest bench={bench} locked={pipelineLocked}/>
+          </div>
+          <div role="tabpanel" id="panel-ocr" aria-labelledby="tab-ocr" hidden={tab !== "ocr"}>
+            <OcrLiveTest bench={bench} locked={locked} checkOcr={checkOcr} ocr={ocr} ocrBusy={ocrBusy} sharedPreview/>
+          </div>
+          <div role="tabpanel" id="panel-rfid" aria-labelledby="tab-rfid" hidden={tab !== "rfid"}>
         <section className="card space-y-4 p-5">
           <div className="flex items-center gap-3"><CreditCard size={26}/><h2 className="text-xl font-extrabold">RFID 확인</h2>
             <Help text="설정한 직렬 포트에서 실제 태그를 읽습니다. EPC와 읽은 횟수를 표시하며 생산 수량에는 반영하지 않습니다."/></div>
@@ -185,11 +226,11 @@ export default function Equipment() {
           </div> : <p className="text-lg font-bold">읽은 태그 없음</p>)}
         </section>
       </div>
-      <OcrLiveTest bench={bench} locked={locked} checkOcr={checkOcr} ocr={ocr} ocrBusy={ocrBusy}/>
-      <details className="card p-5">
-        <summary className="cursor-pointer text-xl font-bold">상세 장비 정보</summary>
-        <div className="mt-5"><EquipmentDetails action={async fn => { try { await fn(); } catch(e) { reportError(e); } }} role="operator"/></div>
-      </details>
+          <div role="tabpanel" id="panel-details" aria-labelledby="tab-details" hidden={tab !== "details"} className="card p-5">
+            <EquipmentDetails action={async fn => { try { await fn(); } catch(e) { reportError(e); } }} role="operator"/>
+          </div>
+        </div>
+      </div>
     </div>
   </div>;
 }

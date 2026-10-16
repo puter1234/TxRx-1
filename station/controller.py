@@ -9,7 +9,7 @@ import threading
 import time
 import uuid
 
-from .schema import Brand, Recipe, Command, Adjustment, StationConfig
+from .schema import Brand, Recipe, Command, Adjustment, StationConfig, WorkPreset, FlowSettings
 from .rules import validate_recipe, judge
 from .storage import Store, dump, utc
 
@@ -27,6 +27,7 @@ class Controller:
         self.revision = 0
         self.busy = False
         self.last_result = None
+        self.tracking = None
         self.stop_fault = None
         self.boot_id = str(uuid.uuid4())
         self.last_client = time.monotonic()
@@ -59,7 +60,7 @@ class Controller:
                 "FINISHED",
                 "ABORTED",
             ):
-                self.session.update(phase="ABORTED", fault="PROCESS_RESTART")
+                self.session.update(phase="ABORTED", fault="PROCESS_RESTART", finished_at=utc())
                 store.session(self.session, c)
                 store.event("PROCESS_RESTART", {"session_id": self.session["id"]}, c)
 
@@ -96,6 +97,7 @@ class Controller:
                 "observed_at": utc(),
                 "busy": self.busy,
                 "last_result": copy.deepcopy(self.last_result),
+                "tracking": copy.deepcopy(self.tracking),
                 "stop_fault": self.stop_fault,
                 "io": self.io.snapshot(),
             }
@@ -121,19 +123,22 @@ class Controller:
         return blockers
 
     def hardware_blockers(self):
-        reasons = (
-            self.config.commissioning.blockers()
-            + self.io.blockers()
-            + self.runtime_blockers()
-        )
-        if (
-            self.session
-            and self.session["recipe"].get("kind", "condition") != "simple"
-            and not {"ocr", "rfid"} <= set(self.session["recipe"]["channels"])
-        ):
-            reasons.append(
-                "실물 운전은 OCR과 RFID 대조가 모두 필요합니다. 바코드만 선택 항목입니다."
-            )
+        recipe = (self.session or {}).get("recipe", {})
+        if recipe.get("flow"):
+            required = ("feedback_timeout_ms", "signed_by", "evidence_reference",
+                        "physical_permit_observed", "power_cycle_off_verified",
+                        "process_kill_off_verified", "os_hang_off_verified", "stop_chain_verified")
+            reasons = [k for k in required if not getattr(self.config.commissioning, k)]
+            if self.config.speed_line is None:
+                reasons.append("DO4 GPIO 핀을 지정하세요.")
+            reasons += self.io.blockers() + self.runtime_blockers()
+            raw = self.io.snapshot().get("di_raw")
+            if self.session["phase"] in ("READY", "PAUSED") and raw and any(v == 0 for v in raw[:2]):
+                reasons.append("DI1과 DI2 앞의 제품을 정리하세요.")
+            if self.session.get("active_product"):
+                reasons.append("이송 중이던 제품의 조치를 완료하세요.")
+        else:
+            reasons = self.config.commissioning.blockers() + self.io.blockers() + self.runtime_blockers()
         return reasons
 
     def check_disk(self):
@@ -147,11 +152,31 @@ class Controller:
 
     def changed(self, kind, body=None, c=None):
         self.revision += 1
+        body = dict(body or {})
+        if self.session:
+            body.setdefault("session_id", self.session["id"])
+            body.setdefault("phase", self.session["phase"])
+            if self.session["phase"] in ("DONE", "FINISHED", "ABORTED"):
+                self.session.setdefault("finished_at", utc())
         if self.session:
             self.store.session(self.session, c)
         self.store.event(kind, body or {}, c)
 
+    def resolve_recipe(self, recipe):
+        if not recipe.preset_id:
+            return recipe
+        raw = self.store.get("work_presets", {}).get(recipe.preset_id)
+        if not raw:
+            raise Conflict("작업 프리셋이 없습니다.")
+        preset = WorkPreset.model_validate(raw)
+        if not preset.enabled or preset.revision != recipe.preset_revision:
+            raise Conflict("작업 설정이 변경되었습니다. 다시 선택하세요.")
+        return Recipe.model_validate({**recipe.model_dump(), "kind": preset.kind,
+            "brand_id": preset.brand_id, "channels": preset.channels,
+            "flow": preset.flow.model_dump(), "work_name": preset.name})
+
     def new_session(self, recipe: Recipe, actor="local-operator"):
+        recipe = self.resolve_recipe(recipe)
         with self.lock:
             if (
                 self.busy
@@ -164,7 +189,7 @@ class Controller:
                 raise Conflict("현재 작업을 종료한 후 새 작업을 만드세요.")
             self.stop_outputs()
             self.check_disk()
-            if recipe.kind == "simple":
+            if recipe.brand_id == "__simple__":
                 brand = Brand(id="simple-count", name="단순 계수")
             else:
                 brand = Brand.model_validate(self.store.brand(recipe.brand_id))
@@ -189,6 +214,7 @@ class Controller:
                     "save_pass_photos", self.config.mode != "HARDWARE"
                 ),
             }
+            self.io.require_rfid = "rfid" in recipe.channels
             self.session["software_version"] = "0.3.0"
             self.session["created_by"] = actor
             self.last_result = None
@@ -287,7 +313,12 @@ class Controller:
                         raise Conflict("현장 확인 필요: " + ", ".join(blockers))
                     raw = self.io.snapshot().get("di_raw")
                     cfg = self.config.commissioning
-                    if not counted and (
+                    if s["recipe"].get("flow"):
+                        if s["active_product"]:
+                            raise Conflict("이송 중인 제품의 조치를 먼저 완료하세요.")
+                        self._motor_on(generation)
+                        s["phase"] = "FEEDING"
+                    elif not counted and (
                         s["active_product"]
                         or (
                             raw and raw[cfg.product_sensor - 1] == cfg.sensor_active_raw
@@ -336,7 +367,7 @@ class Controller:
                 else:
                     self.departed()
             elif cmd.action == "discard":
-                if s["phase"] != "HOLD" or self.busy or len(cmd.reason) < 3:
+                if s["phase"] not in ("HOLD", "FAULT", "PAUSED") or self.busy or len(cmd.reason) < 3:
                     raise Conflict("불합격 제품 제거 및 조치 내용을 먼저 확인하세요.")
                 self.stop_outputs()
                 if self.stop_fault or self.io.snapshot().get("km2_on") is True:
@@ -391,9 +422,9 @@ class Controller:
             self.session.update(active_product=None, phase="DONE" if done else "READY")
             self.changed("PRODUCT_DEPARTED")
 
-    def begin(self, product_id: str, physical=False, actor="physical-cycle"):
-        # Capture/OCR occurs only after this OFF, feedback confirmation, and settle gate.
-        self.stop_outputs()
+    def begin(self, product_id: str, physical=False, actor="physical-cycle", moving=False):
+        if not moving:
+            self.stop_outputs()
         with self.lock:
             s = self.session
             if (
@@ -424,7 +455,7 @@ class Controller:
                 raise Conflict("이미 계수한 제품입니다.")
             self.check_disk()
             self.busy = True
-            s.update(phase="STOPPING", active_product=product_id)
+            s.update(phase="FEEDING" if moving else "STOPPING", active_product=product_id)
             inspection = {
                 "id": str(uuid.uuid4()),
                 "session_id": s["id"],
@@ -481,9 +512,10 @@ class Controller:
 
     def complete(
         self, inspection, epoch, observations, failures=None, evidence=None,
-        evidence_writer=None,
+        evidence_writer=None, moving=False,
     ):
-        self.stop_outputs()
+        if not moving:
+            self.stop_outputs()
         with self.lock:
             s = self.session
             failures = list(failures or [])
@@ -535,8 +567,17 @@ class Controller:
                             )
                             s["passed"] += 1
                             s["count"] += 1
-                            s.update(phase="PASSED", fault=None)
+                            if moving:
+                                done = s["recipe"].get("target_count") is not None and s["count"] >= s["recipe"]["target_count"]
+                                waiting_camera = s["phase"] == "CAMERA_WAIT"
+                                s.update(phase="DONE" if done else "CAMERA_WAIT" if waiting_camera else "FEEDING",
+                                         fault="CAMERA_STALE" if waiting_camera and not done else None, active_product=None)
+                                if done:
+                                    self.stop_outputs()
+                            else:
+                                s.update(phase="PASSED", fault=None)
                         else:
+                            self.stop_outputs()
                             s["failed"] += 1
                             s.update(phase="HOLD", fault=failures[0]["code"])
                         self.changed(
@@ -550,6 +591,7 @@ class Controller:
                         )
                 self.last_result = inspection
             except Exception:
+                self.stop_outputs()
                 if before:
                     self.session = before
                     self.session.update(phase="FAULT", fault="DATABASE_WRITE_FAILED")
@@ -615,6 +657,7 @@ class Controller:
                     "INSPECTING",
                     "STOPPING",
                     "RETRY_PENDING",
+                    "CAMERA_WAIT",
                     "FINISHED",
                 )
             ):

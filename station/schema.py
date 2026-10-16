@@ -115,13 +115,84 @@ class Brand(Model):
         return self
 
 
+class FlowSettings(Model):
+    low_speed_ms: int = Field(default=500, ge=0, le=60000)
+    capture_delay_ms: int = Field(default=100, ge=0, le=60000)
+    capture_count: int = Field(default=1, ge=1, le=30)
+    capture_interval_ms: int = Field(default=100, ge=0, le=10000)
+    rfid_delay_ms: int = Field(default=100, ge=0, le=60000)
+    result_timeout_ms: int = Field(default=5000, ge=100, le=120000)
+    departure_timeout_ms: int = Field(default=10000, ge=100, le=120000)
+    reconnect_interval_ms: int = Field(default=2000, ge=100, le=60000)
+    di1_debounce_ms: int = Field(default=20, ge=0, le=1000)
+    di2_debounce_ms: int = Field(default=20, ge=0, le=1000)
+    counter: Literal["sensor", "cvzone", "yolo"] = "sensor"
+    model_path: str = Field(default="", max_length=1000)
+    confidence: float = Field(default=0.5, gt=0, le=1)
+    classes: list[int] = Field(default_factory=list, max_length=100)
+    image_size: int = Field(default=640, ge=32, le=2048)
+    threshold: int = Field(default=127, ge=0, le=255)
+    invert: bool = False
+    min_area: int = Field(default=100, ge=1, le=10000000)
+    roi: tuple[float, float, float, float] = (0, 0, 1, 1)
+    axis: Literal["x", "y"] = "y"
+    direction: Literal[1, -1] = 1
+    line: float = Field(default=0.5, gt=0, lt=1)
+    hysteresis: float = Field(default=0.02, ge=0, le=0.2)
+    match_distance: float = Field(default=0.15, gt=0, le=1)
+    track_lost_ms: int = Field(default=500, ge=10, le=10000)
+
+    @model_validator(mode="after")
+    def coherent(self):
+        x, y, w, h = self.roi
+        if min(x, y) < 0 or min(w, h) <= 0 or x + w > 1 or y + h > 1:
+            raise ValueError("검출 영역은 영상 안의 0~1 좌표로 지정하세요.")
+        if self.capture_delay_ms + (self.capture_count - 1) * self.capture_interval_ms >= self.result_timeout_ms:
+            raise ValueError("검사 제한 시간은 마지막 촬영 시간보다 길어야 합니다.")
+        if self.rfid_delay_ms >= self.result_timeout_ms:
+            raise ValueError("RFID 실행 시간은 검사 제한 시간보다 짧아야 합니다.")
+        if self.counter == "yolo" and not self.model_path.lower().endswith((".pt", ".onnx")):
+            raise ValueError("YOLO 모델은 로컬 .pt 또는 .onnx 파일을 지정하세요.")
+        if any(c < 0 for c in self.classes):
+            raise ValueError("클래스 번호는 0 이상입니다.")
+        return self
+
+
+class WorkPreset(Model):
+    id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,47}$")
+    name: str = Field(min_length=1, max_length=80)
+    revision: int = Field(default=1, ge=1)
+    enabled: bool = True
+    kind: Literal["simple", "condition", "vision"] = "simple"
+    brand_id: str = "__simple__"
+    channels: list[Literal["ocr", "rfid", "barcode"]] = Field(default_factory=list, max_length=3)
+    flow: FlowSettings = Field(default_factory=FlowSettings)
+
+    @model_validator(mode="after")
+    def coherent(self):
+        if len(self.channels) != len(set(self.channels)):
+            raise ValueError("검사 항목이 중복됩니다.")
+        if self.kind == "simple" and (self.channels or self.flow.counter != "sensor" or self.brand_id != "__simple__"):
+            raise ValueError("단순 계수는 센서만 사용합니다.")
+        if self.kind == "condition" and (not self.channels or self.brand_id == "__simple__"):
+            raise ValueError("조건 검사의 브랜드와 검사 항목을 지정하세요.")
+        if self.kind == "vision" and (self.flow.counter == "sensor" or self.channels):
+            raise ValueError("와펜 계수는 CVZone 또는 YOLO를 사용합니다.")
+        return self
+
+
 class Recipe(Model):
-    kind: Literal["condition", "simple"] = "condition"
+    kind: Literal["condition", "simple", "vision"] = "condition"
     brand_id: str
     brand_revision: int = Field(ge=1)
     targets: dict[str, str] = Field(max_length=30)
     channels: list[Literal["ocr", "rfid", "barcode"]] = Field(max_length=3)
     target_count: int | None = Field(default=None, ge=1, le=1000000)
+    preset_id: str | None = None
+    preset_revision: int | None = None
+    flow: FlowSettings | None = None
+    work_name: str = ""
+    test_run: bool = False
 
     @model_validator(mode="after")
     def channels_unique(self):
@@ -131,6 +202,10 @@ class Recipe(Model):
             self.targets or self.channels or self.brand_id != "__simple__"
         ):
             raise ValueError("단순 계수에는 검사 조건을 지정할 수 없습니다.")
+        if self.kind == "vision" and (self.channels or self.flow is None or self.flow.counter == "sensor"):
+            raise ValueError("와펜 계수 방법을 지정하세요.")
+        if self.kind == "simple" and self.flow and self.flow.counter != "sensor":
+            raise ValueError("단순 계수는 센서만 사용합니다.")
         if len(self.channels) != len(set(self.channels)):
             raise ValueError("중복 검사 항목")
         return self
@@ -212,6 +287,7 @@ class StationConfig(Model):
     gpio_chip: str = "/dev/gpiochip0"
     di_lines: tuple[int, int, int] = (105, 144, 106)
     do_lines: tuple[int, int] = (51, 52)
+    speed_line: int | None = Field(default=None, ge=0, le=1023)
     rfid_port: str = ""
     camera_source: str = ""
     camera_width: int | None = Field(default=None, ge=320, le=8000)
@@ -227,3 +303,11 @@ class StationConfig(Model):
     retention_days: int | None = Field(default=None, ge=1, le=3650)
     commissioning: Commissioning = Field(default_factory=Commissioning)
     automatic_cycle: bool = True
+
+    @model_validator(mode="after")
+    def unique_pins(self):
+        pins = [*self.di_lines, *self.do_lines]
+        pins += [v for v in (self.speed_line, self.permit_line) if v is not None]
+        if len(pins) != len(set(pins)):
+            raise ValueError("입출력 핀을 중복 지정할 수 없습니다.")
+        return self

@@ -4,12 +4,13 @@ import time
 import zipfile
 
 
-def capture_batch(camera, path, count, cancelled, check_disk, progress):
+def capture_batch(camera, path, count, cancelled, check_disk, progress, interval_ms=0):
     import cv2
     records = []
     started = time.monotonic()
     last = camera.read_latest()[1]["seq"]
     baseline = last
+    next_frame_at = started
     try:
         with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_STORED) as archive:
             while len(records) < count:
@@ -17,6 +18,9 @@ def capture_batch(camera, path, count, cancelled, check_disk, progress):
                     raise ValueError("연속 촬영을 중지했습니다.")
                 if time.monotonic() - started > 300:
                     raise ValueError("촬영 제한시간 5분을 초과했습니다. 촬영 장수를 줄여주세요.")
+                if time.monotonic() < next_frame_at:
+                    time.sleep(min(0.01, max(0, next_frame_at - time.monotonic())))
+                    continue
                 status = camera.status()
                 if not status.get("connected"):
                     raise ValueError("카메라 연결이 끊겼습니다.")
@@ -26,6 +30,11 @@ def capture_batch(camera, path, count, cancelled, check_disk, progress):
                 image, meta = camera.read_latest()
                 if meta["seq"] <= last:
                     continue
+                # Do not save a buffered frame from before the requested interval.
+                if interval_ms and meta.get("host_received_ns", 0) < int(next_frame_at * 1e9):
+                    time.sleep(0.002)
+                    continue
+                next_frame_at = time.monotonic() + interval_ms / 1000
                 check_disk()
                 ok, encoded = cv2.imencode(".png", image, [cv2.IMWRITE_PNG_COMPRESSION, 1])
                 if not ok:
@@ -39,7 +48,8 @@ def capture_batch(camera, path, count, cancelled, check_disk, progress):
             result = {"count": count, "elapsed_seconds": round(elapsed, 3),
                       "saved_fps": round(count / max(elapsed, 0.001), 2),
                       "skipped_frames": max(0, last - baseline - count),
-                      "camera": camera.status().get("profile"), "frames": records}
+                      "camera": camera.status().get("profile"), "interval_ms": interval_ms,
+                      "frames": records}
             archive.writestr("capture.json", json.dumps(result, ensure_ascii=False, indent=2))
         return {key: value for key, value in result.items() if key != "frames"}
     except BaseException:

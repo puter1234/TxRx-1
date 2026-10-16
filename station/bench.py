@@ -41,7 +41,7 @@ def output_polarity(config, setup, target):
         return setup.do_on_raw
     # REV 1.1 p13/p15: DO2 -> K2 A2, K2 NO -> LED. Seeed J40:
     # GPIO 1 energizes the load. Defaults apply only to the documented channels.
-    if target in ("motor", "led") and documented_wiring(config):
+    if (target in ("motor", "led") or (target == "speed" and config.speed_line is not None)) and documented_wiring(config):
         return 1
     raise Conflict("출력 ON 값을 확인하세요.")
 
@@ -62,7 +62,7 @@ class BenchGPIO:
         self.gpiod, self.Direction, self.Value = gpiod, Direction, Value
         self.config, self.setup = config, setup
         self.outputs = {}
-        self.motor_requested = self.led_requested = False
+        self.motor_requested = self.led_requested = self.speed_requested = False
         pins = list(config.di_lines)
         if setup.permit_line is not None:
             pins.append(setup.permit_line)
@@ -78,13 +78,15 @@ class BenchGPIO:
             permit = self.inputs.get_value(self.setup.permit_line).value == self.setup.permit_active_raw
         return {"connected": True, "di_raw": raw, "km2_on": raw[2] == 0,
                 "physical_permit": permit, "motor_requested": self.motor_requested,
-                "led_requested": self.led_requested, "led_confirmed": None}
+                "led_requested": self.led_requested, "speed_requested": self.speed_requested, "led_confirmed": None}
 
     def set_output(self, target, on, allowed=lambda: True):
-        if target not in ("motor", "led"):
+        if target not in ("motor", "led", "speed"):
             raise ValueError("출력 채널이 올바르지 않습니다.")
         polarity = output_polarity(self.config, self.setup, target)
-        line = self.config.do_lines[0 if target == "motor" else 1]
+        line = self.config.speed_line if target == "speed" else self.config.do_lines[0 if target == "motor" else 1]
+        if line is None:
+            raise Conflict("DO4 GPIO 핀을 지정하세요.")
         if on and not allowed():
             raise Conflict("정지 요청이 우선합니다.")
         if target not in self.outputs:
@@ -103,10 +105,7 @@ class BenchGPIO:
                 raise Conflict("정지 요청이 우선합니다.")
             raw = polarity if on else 1 - polarity
             self.outputs[target].set_value(line, self.Value.ACTIVE if raw else self.Value.INACTIVE)
-        if target == "motor":
-            self.motor_requested = on
-        else:
-            self.led_requested = on
+        setattr(self, target + "_requested", on)
 
     def stop(self):
         failures = []
@@ -117,7 +116,7 @@ class BenchGPIO:
                 failures.append(str(exc))
         if failures:
             raise RuntimeError(" / ".join(failures))
-        self.motor_requested = self.led_requested = False
+        self.motor_requested = self.led_requested = self.speed_requested = False
 
     def close(self):
         try:
@@ -137,7 +136,10 @@ class BorrowedGPIO:
         return self.io.snapshot()
 
     def set_output(self, target, on, allowed=lambda: True):
-        (self.io.motor if target == "motor" else self.io.light)(on, allowed=allowed)
+        method = {"motor": self.io.motor, "led": self.io.light, "speed": getattr(self.io, "speed", None)}.get(target)
+        if method is None:
+            raise ValueError("지원하지 않는 출력입니다.")
+        method(on, allowed=allowed)
 
     def stop(self):
         self.io.stop()
@@ -175,7 +177,7 @@ class Bench:
         # previously used outputs wait a full interval before being enabled.
         used = store.get("bench_outputs_used", [])
         self.next_output_at = {target: time.monotonic() + (1 if target in used else 0)
-                               for target in ("motor", "led")}
+                               for target in (("motor", "led", "speed") if config.speed_line is not None else ("motor", "led"))}
         self.seen = deque(maxlen=256)
         self.transitions = [0, 0, 0]
         self.changed_at = [None, None, None]
@@ -190,13 +192,13 @@ class Bench:
     @property
     def run(self):
         # Legacy single-output status; simultaneous tests use runs by target.
-        return self.runs.get("motor") or self.runs.get("led")
+        return self.runs.get("motor") or self.runs.get("led") or self.runs.get("speed")
 
     def busy(self):
         return self.io is not None or self.native_busy or self.rfid_busy or self.run is not None or bool(self.error)
 
     def save_setup(self, setup, actor):
-        pins = [*self.config.di_lines, *self.config.do_lines]
+        pins = [*self.config.di_lines, *self.config.do_lines, *([self.config.speed_line] if self.config.speed_line is not None else [])]
         if len(pins) != len(set(pins)) or setup.permit_line in pins:
             raise ValueError("입출력 핀을 중복 지정할 수 없습니다.")
         with self.lock:
@@ -329,12 +331,14 @@ class Bench:
                 raise ValueError("모터 또는 LED를 선택하세요.")
             if time.monotonic() < self.next_output_at[target]:
                 raise Conflict("신호 변경 후 1초 뒤 다시 조작하세요.")
-            blockers = self.led_blockers() if target == "led" else self.output_blockers()
+            blockers = self.led_blockers() if target != "motor" else self.output_blockers()
+            if target == "speed" and self.config.speed_line is None:
+                blockers.append("DO4 GPIO 핀을 지정하세요.")
             if blockers:
                 raise Conflict(" ".join(blockers))
             snap = self.io.snapshot()
             motor_running = "motor" in self.runs
-            if not snap.get("connected") or (target == "motor" and not self.document_motor_test() and snap.get("physical_permit") is not True) or (snap.get("km2_on") is not False and not (target == "led" and motor_running)) or snap.get("fault") or self.stop_wait_until:
+            if not snap.get("connected") or (target == "motor" and not self.document_motor_test() and snap.get("physical_permit") is not True) or (snap.get("km2_on") is not False and not (target != "motor" and motor_running)) or snap.get("fault") or self.stop_wait_until:
                 raise Conflict("운전 허가와 접촉기 정지 상태를 확인하세요.")
             if seconds is not None and not 10 <= seconds <= 60:
                 raise ValueError("켜짐 유지 시간은 10초부터 60초까지입니다.")
@@ -505,7 +509,7 @@ class Bench:
                             "feedback_error": run.get("feedback_error"),
                             "remaining_ms": None if run["deadline"] is None else max(0, round((run["deadline"] - time.monotonic()) * 1000))}
                     for target, run in self.runs.items()}
-            run = runs.get("motor") or runs.get("led")
+            run = runs.get("motor") or runs.get("led") or runs.get("speed")
             raw = self.last.get("di_raw")
             return {"connected": self.io is not None and bool(self.last.get("connected")),
                     "motor_test_max_seconds": 60,
@@ -522,7 +526,7 @@ class Bench:
                                  "active": (raw[i] == self.setup.sensor_active_raw[i]) if raw and self.setup.sensor_active_raw[i] is not None else None,
                                  "changes": self.transitions[i], "changed_at": self.changed_at[i]} for i in range(2)],
                     "events": list(self.events), "output_blockers": self.output_blockers(), "led_blockers": self.led_blockers(),
-                    "pins": {"motor": self.config.do_lines[0], "led": self.config.do_lines[1],
+                    "pins": {"motor": self.config.do_lines[0], "led": self.config.do_lines[1], "speed": self.config.speed_line,
                              "feedback": self.config.di_lines[2], "chip": self.config.gpio_chip},
                     "setup": self.setup.model_dump(), "rfid": self.last_rfid}
 

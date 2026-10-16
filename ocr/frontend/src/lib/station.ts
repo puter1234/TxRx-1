@@ -10,6 +10,10 @@ import { useApp } from "./store";
 
 export const ended = (s: Session | null | undefined) =>
   !s || ["FINISHED", "DONE", "ABORTED"].includes(s.phase);
+// Only a fresh READY job can be adjusted without discarding the job. HOLD,
+// PAUSED and recovery states may still own a product and remain protected.
+export const cameraEditable = (s: Snapshot | null | undefined) =>
+  !s?.busy && (ended(s?.session) || (s?.session?.phase === "READY" && !s.session.active_product));
 export const brandView = (b: StationBrand): Brand => ({
   ...b,
   source: b,
@@ -21,7 +25,11 @@ export const brandView = (b: StationBrand): Brand => ({
   },
 });
 export const configView = (s: Session): SessionConfig => ({
-  mode: s.recipe.kind === "simple" ? "simple" : "condition",
+  mode: s.recipe.kind || "condition",
+  presetId: s.recipe.preset_id,
+  presetRevision: s.recipe.preset_revision,
+  workName: s.recipe.work_name,
+  modelPath: s.recipe.flow?.model_path,
   brandId: s.recipe.brand_id,
   brandName: s.brand.name,
   checks: {
@@ -41,8 +49,8 @@ export const configView = (s: Session): SessionConfig => ({
 });
 export const jobView = (s: Session): Job => ({
   id: s.id,
-  date: new Date(s.created_at).toLocaleDateString("sv-SE"),
-  time: new Date(s.created_at).toLocaleTimeString("ko-KR"),
+  date: new Date(s.created_at).toLocaleDateString("sv-SE", {timeZone: "Asia/Seoul"}),
+  time: new Date(s.created_at).toLocaleTimeString("ko-KR", {timeZone: "Asia/Seoul"}),
   mode: configView(s).mode,
   count: s.count,
   config: configView(s),

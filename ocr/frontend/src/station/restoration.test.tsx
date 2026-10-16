@@ -92,23 +92,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("restored original screens", () => {
-  it("opens the original two-choice main page without a login or account", async () => {
-    const user = userEvent.setup();
-    render(
-      <MemoryRouter>
-        <App />
-      </MemoryRouter>,
-    );
-    expect(
-      screen.getByRole("heading", { name: "계수 방식을 선택하세요" }),
-    ).toBeTruthy();
-    expect(screen.getByRole("button", { name: "단순 계수 시작" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "조건 설정" })).toBeTruthy();
-    expect(screen.queryByLabelText("사용자 ID")).toBeNull();
-    expect(screen.queryByText(/admin/)).toBeNull();
-    await user.click(screen.getByRole("button", { name: "단순 계수 시작" }));
-    expect(screen.getByRole("heading", { name: "단순 계수" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "수량 초기화" })).toBeTruthy();
+  it("opens registered work without worker algorithm controls", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => response([{id: "simple", name: "단순 계수", enabled: true, kind: "simple", brand_id: "__simple__", channels: [], flow: {counter: "sensor"}, revision: 1}])));
+    render(<MemoryRouter><App /></MemoryRouter>);
+    expect(screen.getByRole("heading", {name: "작업 선택"})).toBeTruthy();
+    await screen.findByRole("button", {name: "단순 계수"});
+    expect(screen.getByRole("button", {name: "작업 준비"})).toBeTruthy();
+    expect(screen.queryByLabelText("계수 방법")).toBeNull();
+    expect(screen.queryByLabelText("비밀번호")).toBeNull();
   });
   it("preserves all three setup steps and submits dynamic options with barcode optional", async () => {
     const user = userEvent.setup();
@@ -274,6 +265,8 @@ describe("restored original screens", () => {
   it("keeps inspection evidence and saved target loading in the original history table", async () => {
     const user = userEvent.setup();
     const fetcher = vi.fn(async (path: string) => {
+      if (path === "/api/presets") return response([{id: "hazzys-work", name: "헤지스 작업", revision: 1, enabled: true, kind: "condition", brand_id: "hazzys", channels: ["rfid"], flow: {counter: "sensor"}}]);
+      if (path.startsWith("/api/statistics?")) return response({daily: [], jobs: []});
       if (path === "/api/history?offset=0")
         return response({ sessions: [session] });
       if (path === "/api/history?session_id=s&offset=0")
@@ -320,7 +313,7 @@ describe("restored original screens", () => {
     expect(
       (
         screen.getByRole("button", {
-          name: "검사 화면 열기",
+          name: "작업 준비",
         }) as HTMLButtonElement
       ).disabled,
     ).toBe(true);

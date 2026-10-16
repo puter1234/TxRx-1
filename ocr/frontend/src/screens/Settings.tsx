@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Lock, Delete, KeyRound, Download } from "lucide-react";
 import { api } from "../station/shared";
 import Config from "../station/Config";
+import WorkPresets from "../components/WorkPresets";
 import { useApp } from "../lib/store";
 import { ended, refreshBrands, reportError } from "../lib/station";
 import Help from "../components/Help";
-import DeviceSettings from "../components/DeviceSettings";
 
 export function LoginGate({ onOk }: { onOk: () => void }) {
   const [pw, setPw] = useState(""),
@@ -207,8 +207,8 @@ function GeneralTab() {
         </div>
         <div className="flex items-center gap-3">
           <span className="text-lg font-bold">계수 방식</span>
-          <span className="text-lg font-bold">정지 후 검사</span>
-          <Help text="이동 중 임계선을 지날 때 세던 기존 설정은 적용하지 않습니다. 제품을 멈추고 검사한 뒤 한 제품을 한 번 셉니다. 검출 라이브러리와 장비 실측은 확인이 필요합니다." />
+          <span className="text-lg font-bold">작업 프리셋에서 지정</span>
+          <Help text="작업 설정에서 센서 계수, 조건 검사, 와펜 계수와 실행 시간을 지정합니다." />
         </div>
         <div>
           <strong className="text-lg">저장 위치</strong>
@@ -388,7 +388,7 @@ export default function Settings() {
   const [params] = useSearchParams();
   const nav = useNavigate(),
     [authed, setAuthed] = useState(false),
-    [tab, setTab] = useState(params.get("tab") === "devices" ? "devices" : "general");
+    [tab, setTab] = useState(params.get("tab") || "general");
   const brands = useApp((s) => s.brands),
     snapshot = useApp((s) => s.snapshot);
   useEffect(() => {
@@ -398,6 +398,7 @@ export default function Settings() {
     window.addEventListener("txrx-login-required", expired);
     return () => { alive = false; window.removeEventListener("txrx-login-required", expired); };
   }, []);
+  if (params.get("tab") === "devices") return <Navigate to={"/equipment?tab=" + (window.location.hash === "#io" ? "connections" : "camera")} replace/>;
   const home = async () => {
     nav("/");
   };
@@ -415,7 +416,8 @@ export default function Settings() {
             {[
               { id: "general", label: "일반" },
               { id: "brands", label: "브랜드 관리" },
-              { id: "devices", label: "장비 연결" },
+              { id: "presets", label: "작업 설정" },
+              { id: "devices", label: "장비 테스트" },
               { id: "logs", label: "작업 로그" },
             ].map((t) => (
               <button
@@ -426,7 +428,7 @@ export default function Settings() {
                     ? "bg-brand-600 text-white"
                     : "bg-white text-ink-900")
                 }
-                onClick={() => setTab(t.id)}
+                onClick={() => t.id === "devices" ? nav("/equipment?tab=camera") : setTab(t.id)}
               >
                 {t.label}
               </button>
@@ -439,8 +441,8 @@ export default function Settings() {
           <LoginGate onOk={() => setAuthed(true)} />
         ) : tab === "general" ? (
           <GeneralTab />
-        ) : tab === "devices" ? (
-          <DeviceSettings />
+        ) : tab === "presets" ? (
+          <WorkPresets />
         ) : tab === "brands" ? (
           <Config
             brands={brands.map((b) => b.source)}

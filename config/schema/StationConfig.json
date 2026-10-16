@@ -256,6 +256,20 @@
       "title": "Do Lines",
       "type": "array"
     },
+    "speed_line": {
+      "anyOf": [
+        {
+          "maximum": 1023,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Speed Line"
+    },
     "rfid_port": {
       "default": "",
       "title": "Rfid Port",
@@ -269,7 +283,7 @@
     "camera_width": {
       "anyOf": [
         {
-          "maximum": 3280,
+          "maximum": 8000,
           "minimum": 320,
           "type": "integer"
         },
@@ -283,7 +297,7 @@
     "camera_height": {
       "anyOf": [
         {
-          "maximum": 2464,
+          "maximum": 6000,
           "minimum": 240,
           "type": "integer"
         },

@@ -30,6 +30,30 @@ class CameraProfile(Model):
         return self
 
 
+FIXED_CAMERA_CONTROLS = (
+    (("focus_auto", "focus_automatic_continuous"), "focus_absolute"),
+    (("white_balance_temperature_auto", "white_balance_automatic"), "white_balance_temperature"),
+)
+
+
+def fixed_camera_profile(profile, capabilities):
+    """Pin focus and white balance for both preview and capture, including reconnects.
+
+    Older saved profiles can omit manual values or leave automatic mode enabled.
+    Preserve an explicit manual value, otherwise freeze the current driver value.
+    Unsupported controls are never invented.
+    """
+    controls = dict(profile.controls)
+    actual = {c["name"]: c["value"] for c in capabilities["controls"]}
+    for aliases, manual in FIXED_CAMERA_CONTROLS:
+        for name in aliases:
+            if name in actual:
+                controls[name] = 0
+                if manual in actual:
+                    controls.setdefault(manual, actual[manual])
+    return profile.model_copy(update={"controls": controls})
+
+
 def parse_controls(text):
     result = {}
     current = None
@@ -321,7 +345,9 @@ class CameraManager:
     def apply(self, profile, persist=False, actor="local-operator"):
         with self.lock:
             previous, was_open = self.profile, self.stream is not None
-            original = self.backend.inspect(profile.device).get("current")
+            initial = self.backend.inspect(profile.device)
+            original = initial.get("current")
+            profile = fixed_camera_profile(profile, initial)
             self._close_stream()
             self.error = None
             try:
@@ -380,14 +406,30 @@ class CameraManager:
         with self.lock:
             if not self.stream:
                 raise ValueError("카메라가 연결되지 않았습니다.")
-            return self.stream.read_latest()
+            image, metadata = self.stream.read_latest()
+            return image, {**metadata, "camera_settings_revision": self.revision,
+                           "camera_profile": self.profile}
+
+    def verify_fixed_controls(self):
+        """Check actual driver controls before a test capture; never silently correct drift."""
+        with self.lock:
+            if not self.profile:
+                return
+            info = self.inspect(self.profile["device"])
+            actual = {c["name"]: c["value"] for c in info["controls"]}
+            expected = self.profile["controls"]
+            for aliases, manual in FIXED_CAMERA_CONTROLS:
+                for name in (*aliases, manual):
+                    if name in expected and actual.get(name) != expected[name]:
+                        raise Conflict("카메라 초점 또는 화이트밸런스가 적용값과 다릅니다. 실제 설정을 다시 읽고 적용하세요.")
 
     def after(self, minimum_ns, timeout):
-        stream = self.stream
-        if not stream:
-            raise RuntimeError("카메라가 연결되지 않았습니다.")
-        image, metadata = stream.after(minimum_ns, timeout)
-        return image, {**metadata, "camera_settings_revision": self.revision, "camera_profile": self.profile}
+        with self.lock:
+            stream = self.stream
+            if not stream:
+                raise RuntimeError("카메라가 연결되지 않았습니다.")
+            image, metadata = stream.after(minimum_ns, timeout)
+            return image, {**metadata, "camera_settings_revision": self.revision, "camera_profile": self.profile}
 
     def _close_stream(self):
         stream, self.stream = self.stream, None
