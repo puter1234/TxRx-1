@@ -44,17 +44,19 @@ it("saves timings and starts physical OCR without a GPIO-number field", async ()
   fireEvent.change(screen.getByLabelText("저속 유지 (ms)"), { target: { value: "650" } });
   fireEvent.change(screen.getByLabelText("촬영 지연 (ms)"), { target: { value: "150" } });
   fireEvent.change(screen.getByLabelText("OCR 촬영 간격 (ms)"), { target: { value: "90" } });
+  fireEvent.change(screen.getByLabelText("바코드 위치 검출"), { target: { value: "opencv" } });
   fireEvent.click(screen.getByRole("button", { name: "설정 저장" }));
   await screen.findByText("설정을 저장했습니다.");
   view.unmount();
   render(<SensorPipelineTest bench={bench} locked={false}/>);
   await waitFor(() => expect(screen.getByLabelText("저속 유지 (ms)")).toHaveProperty("value", "650"));
   expect(screen.getByLabelText("촬영 지연 (ms)")).toHaveProperty("value", "150");
+  expect(screen.getByLabelText("바코드 위치 검출")).toHaveProperty("value", "opencv");
   expect(screen.queryByLabelText(/GPIO/)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "시험 시작" }));
   await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/bench/pipeline/start", expect.objectContaining({
     conveyor_sync: true, low_speed_ms: 650, capture_delay_ms: 150, capture_interval_ms: 90,
-    frame_count: 3, sensor_channel: 1, active_raw: 0,
+    frame_count: 3, sensor_channel: 1, active_raw: 0, locator: "opencv",
   })));
   expect(bench.adoptRuns).toHaveBeenCalled();
   await screen.findByText("시험 중");
@@ -83,12 +85,17 @@ it("shows the captured original, supports full-size inspection and downloads the
     missed_frames: 0, capture_error: null, matched_text: "AB12", frames: [{
       seq: 42, after_trigger_ms: 100, state: "passed", image_available: true, crop_count: 1,
       result: { error: null, ms_barcode: 1, ms_ocr: 2, ms_total: 3,
+        barcode_diagnostics: { locator: "stripes", source_width: 1920, source_height: 1080,
+          regions: [{ quad: [[100, 200], [500, 200], [500, 300], [100, 300]], stage: "stripes" }],
+          stages: [{ stage: "stripes", candidates: 1, detect_ms: 32, preprocess_ms: 8, working_width: 1280, working_height: 720 }] },
         reads: [{ lines: [{ text: "AB12", confidence: .99 }] }] },
     }] }];
   render(<SensorPipelineTest bench={bench} locked={false}/>);
   const image = await screen.findByAltText("센서 감지 후 수집한 프레임");
   const url = "/api/bench/pipeline/frames/job1/42";
   expect(image.getAttribute("src")).toBe(url);
+  expect(screen.getByRole("img", { name: "검출한 바코드 위치" }).getAttribute("viewBox")).toBe("0 0 1920 1080");
+  expect(screen.getByText(/탐색 1280 x 720/)).toBeTruthy();
   expect(screen.getByRole("link", { name: "원본 저장" }).getAttribute("href")).toBe(url + "?original=true");
   fireEvent.click(screen.getByRole("button", { name: "원본 크기" }));
   expect(image.className).toBe("max-w-none");

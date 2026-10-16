@@ -130,7 +130,7 @@ def test_photo_and_ocr_can_run_with_motor_and_led_but_settings_cannot(rig):
     assert pulse(c, "led", None).status_code == 200
     before = {key: run["id"] for key, run in app.state.bench.runs.items()}
     assert c.post("/api/bench/camera/capture", json={}).status_code == 200
-    app.state.vision.test_auto = lambda frame: {"ok": True, "reads": []}
+    app.state.vision.test_auto = lambda frame, **kwargs: {"ok": True, "reads": []}
     assert c.post("/api/bench/ocr/read", json={}).status_code == 200
     assert c.post("/api/bench/camera/inspect", json={"device": "/dev/video0"}).status_code == 409
     assert c.post("/api/bench/camera/disconnect", json={}).status_code == 409

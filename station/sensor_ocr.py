@@ -9,6 +9,7 @@ import re
 import threading
 import time
 import uuid
+from typing import Literal
 
 import psutil
 from pydantic import Field, model_validator
@@ -27,6 +28,7 @@ class SensorOcrSettings(Model):
     sensor_channel: int = Field(default=1, ge=1, le=2)
     active_raw: int = Field(default=0, ge=0, le=1)
     pattern: str = Field(default="", max_length=160)
+    locator: Literal["stripes", "opencv"] = "stripes"
 
     @model_validator(mode="after")
     def valid_pattern(self):
@@ -359,7 +361,8 @@ class SensorOcrTest:
                     continue
                 job, frame = selected
                 crops = []
-                result = self.vision.test_auto(frame["image"], include_previews=False, crop_images=crops)
+                result = self.vision.test_auto(frame["image"], include_previews=False, crop_images=crops,
+                                               locator=self.settings.locator)
                 texts = [line["text"] for read in result["reads"] for line in read["lines"] if line["text"].strip()]
                 matched = next((text for text in texts if self.pattern is None or
                                 self.pattern.fullmatch(re.sub(r"\s+", "", text))), None)

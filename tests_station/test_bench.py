@@ -613,7 +613,8 @@ def test_ocr_reports_missing_runtime_package(rig):
     assert not app.state.bench.native_busy
 
 
-def test_live_ocr_reads_auto_detected_line_without_saving_a_photo(rig, monkeypatch):
+@pytest.mark.parametrize("locator", ["stripes", "opencv"])
+def test_live_ocr_reads_auto_detected_line_without_saving_a_photo(rig, monkeypatch, locator):
     c, app = rig
     profile = app.state.camera.backend.profile.model_dump()
     assert c.post("/api/bench/camera/apply", json={
@@ -639,12 +640,13 @@ def test_live_ocr_reads_auto_detected_line_without_saving_a_photo(rig, monkeypat
                           rotated=None, _rotated_quad=None,
                           quad=np.array([[100, 200], [300, 200], [300, 250], [100, 250]]))
     def read_tag(image, **kwargs):
+        assert kwargs["locator"] == locator and kwargs["decode_values"] is False
         tag.rotated = image
         return [tag]
     monkeypatch.setattr(pipeline.tagreader, "read_tag", read_tag)
     found = []
     monkeypatch.setattr(pipeline, "_ordered_crops", lambda above, *args: (found.append(True) or [above]))
-    response = c.post("/api/bench/ocr/read", json={})
+    response = c.post("/api/bench/ocr/read", json={"locator": locator})
     assert response.status_code == 200, response.text
     result = response.json()
     assert found
@@ -664,7 +666,7 @@ def test_live_ocr_reads_auto_detected_line_without_saving_a_photo(rig, monkeypat
     restored = cv2.imdecode(np.frombuffer(original.content, np.uint8), cv2.IMREAD_COLOR)
     assert np.array_equal(restored, frame)
     assert c.get(result["preview_url"]).headers["content-type"] == "image/jpeg"
-    next_result = c.post("/api/bench/ocr/read", json={})
+    next_result = c.post("/api/bench/ocr/read", json={"locator": locator})
     assert next_result.status_code == 200, next_result.text
     assert c.get(result["original_url"]).status_code == 410
     assert not list((app.state.store.root / "device-tests").glob("*"))

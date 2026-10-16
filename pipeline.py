@@ -92,6 +92,7 @@ def process_task(
     max_lines: int = 6,
     diagnostics: dict | None = None,
     decode_values: bool = True,
+    locator: str = "opencv",
 ) -> TaskResult:
     """사진 한 장을 Task로 처리한다. recognizer가 None이면 바코드만 읽는다."""
     t_start = time.perf_counter()
@@ -100,6 +101,7 @@ def process_task(
     kwargs = {"diagnostics": diagnostics} if diagnostics is not None else {}
     if not decode_values:
         kwargs["decode_values"] = False
+        kwargs["locator"] = locator
     tags = tagreader.read_tag(img, want_crops=False, want_rotated=decode_values, **kwargs)
     if not decode_values:
         aligned = time.perf_counter()

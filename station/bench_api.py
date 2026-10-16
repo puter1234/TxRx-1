@@ -3,6 +3,7 @@ import asyncio
 import threading
 import time
 import uuid
+from typing import Literal
 
 from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse, Response
@@ -34,6 +35,10 @@ class RFIDSetup(Model):
 
 class Device(Model):
     device: str = Field(min_length=1, max_length=240)
+
+
+class OcrRead(Model):
+    locator: Literal["stripes", "opencv"] = "stripes"
 
 
 class CameraApply(Model):
@@ -325,7 +330,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
         return await native(execute, allow_led=True)
 
     @app.post("/api/bench/ocr/read")
-    async def read_ocr(request: Request):
+    async def read_ocr(request: Request, body: OcrRead | None = None):
         permitted(request)
 
         def execute():
@@ -339,7 +344,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
             # Waiting for two more frames adds hundreds of milliseconds at low FPS.
             frame, timing = camera.read_latest()
             capture_ms = (time.perf_counter() - started) * 1000
-            result = app.state.vision.test_auto(frame)
+            result = app.state.vision.test_auto(frame, locator=body.locator if body else "stripes")
             result["timing"] = timing
             result["capture_ms"] = round(capture_ms, 1)
             result["processing_ms"] = round(

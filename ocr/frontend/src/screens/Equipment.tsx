@@ -8,6 +8,7 @@ import Help from "../components/Help";
 import { DeviceSettingsPanels } from "../components/DeviceSettings";
 import { LoginGate } from "./Settings";
 import SensorPipelineTest from "../components/SensorPipelineTest";
+import { BarcodeOverlay, LocatorSelect, LocationSummary, type Locator, type LocationDiagnostics } from "../components/BarcodeLocation";
 import { Equipment as EquipmentDetails } from "../station/StationApp";
 import { BenchHeader, CameraTest, OutputTests, SensorTest, useBench } from "../components/DeviceTests";
 
@@ -22,10 +23,11 @@ type OcrResult = { ok: boolean; mode?: "ocr_only"; reads: { barcode: string | nu
   ms_model_load: number; ms_barcode: number; ms_ocr: number;
   ocr_device?: string; ocr_gpu_name?: string; ocr_batch_size?: number;
   frame_width?: number; frame_height?: number; preview_url?: string; original_url?: string;
-  barcode_diagnostics?: { status: string; decoded: number; prepare_ms: number; align_ms: number;
+  barcode_diagnostics?: LocationDiagnostics & { status: string; decoded: number; prepare_ms: number; align_ms: number;
     stages: { stage: string; candidates: number; attempted: number; decoded: number; detect_ms: number; decode_ms: number }[];
     runtime: { opencv: string; zxing: string; python: string; source: string; report_version: number } } };
 const barcodeStages: Record<string, string> = {
+  stripes: "줄무늬 위치 검출",
   small: "축소본 위치 검출", full: "원본 위치 검출", tiled: "분할 위치 검출", "whole-image": "원본 전체 판독",
 };
 export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy, sharedPreview = false }: {
@@ -36,6 +38,7 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy, sharedPrevi
   const [url, setUrl] = useState("");
   const [result, setResult] = useState<OcrResult | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
+  const [locator, setLocator] = useState<Locator>("stripes");
   useEffect(() => {
     if (!connected || sharedPreview) { setUrl(""); return; }
     let alive = true, current = "", timer: ReturnType<typeof setTimeout>;
@@ -57,7 +60,7 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy, sharedPrevi
 
   const read = async () => {
     setBusy(true); setError(""); setResult(null);
-    try { setResult(await api<OcrResult>("/bench/ocr/read", {})); }
+    try { setResult(await api<OcrResult>("/bench/ocr/read", { locator })); }
     catch (e) { setError(e instanceof Error ? e.message : "OCR 검사 실패"); }
     finally { setBusy(false); await bench.refresh().catch(() => {}); }
   };
@@ -75,6 +78,7 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy, sharedPrevi
         {ocr && <p role="status" className={"text-lg font-bold " + (ocr.ok ? "text-ok" : "text-danger")}>{ocr.detail}</p>}
       </div>
       <div className="space-y-4">
+        <LocatorSelect value={locator} onChange={setLocator} disabled={busy}/>
         <div className="flex flex-wrap gap-3">
           <button className="btn btn-primary flex-1" disabled={!canRead} onClick={read}>{busy ? "검사 중" : "현재 영상 OCR 검사"}</button>
         </div>
@@ -87,10 +91,14 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy, sharedPrevi
           {result.preview_url && <div className="space-y-3">
             <div className="flex items-center gap-2"><h3 className="text-xl font-bold">검사한 사진</h3>
               <Help text="이번 판독에 실제로 사용한 프레임입니다. 화면에서는 작게 표시하며 원본 사진 저장은 같은 프레임의 전체 해상도 PNG를 받습니다. 다음 검사 시 이전 사진은 교체됩니다."/></div>
-            <img src={result.preview_url} alt="이번 검사에 사용한 사진" className="max-h-[520px] w-full rounded-lg bg-ink-900 object-contain"/>
+            <div className="relative">
+              <img src={result.preview_url} alt="이번 검사에 사용한 사진" className="max-h-[520px] w-full rounded-lg bg-ink-900 object-contain"/>
+              <BarcodeOverlay diagnostics={result.barcode_diagnostics}/>
+            </div>
             <p className="text-lg font-bold">{result.frame_width} × {result.frame_height}</p>
             <a className="btn btn-outline" href={result.original_url} download>검사 원본 사진 저장</a>
           </div>}
+          <LocationSummary diagnostics={result.barcode_diagnostics}/>
           {result.reads.map((read, i) => <div key={i} className="space-y-3">
             {result.mode !== "ocr_only" && <p className={"text-lg font-bold " + (read.verdict === "match" || read.verdict === "match_loose" ? "text-ok" : "text-danger")}>
               {read.verdict_label}{read.barcode ? `  바코드 ${read.barcode}` : ""}
@@ -117,7 +125,7 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy, sharedPrevi
                 <td>{row.detect_ms.toFixed(1)} ms</td>{result.mode !== "ocr_only" && <td>{row.decode_ms.toFixed(1)} ms</td>}
               </tr>)}</tbody>
             </table></div>
-            <p className="text-lg font-bold">흑백 변환 {result.barcode_diagnostics.prepare_ms.toFixed(1)} ms, OCR 영역 정렬 {result.barcode_diagnostics.align_ms.toFixed(1)} ms</p>
+            <p className="text-lg font-bold">입력 준비 {result.barcode_diagnostics.prepare_ms.toFixed(1)} ms, OCR 영역 정렬 {result.barcode_diagnostics.align_ms.toFixed(1)} ms</p>
             <p className="text-lg">OpenCV {result.barcode_diagnostics.runtime.opencv}, ZXing {result.barcode_diagnostics.runtime.zxing}</p>
             <button className="btn btn-outline" onClick={() => {
               const blob = new Blob([JSON.stringify(result, null, 2)], { type: "application/json" });

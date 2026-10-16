@@ -3,18 +3,19 @@ import { Play, Square } from "lucide-react";
 import { api } from "../station/shared";
 import Help from "./Help";
 import type { BenchHook, BenchState } from "./DeviceTests";
+import { BarcodeOverlay, LocatorSelect, LocationSummary, type Locator, type LocationDiagnostics } from "./BarcodeLocation";
 
 type Line = { text: string; confidence: number };
 type Frame = {
   seq: number; after_trigger_ms: number; state: string; image_available: boolean; crop_count: number;
   result: null | { error: string | null; ms_barcode: number; ms_ocr: number; ms_total: number;
-    ocr_device?: string; ocr_gpu_name?: string; reads: { lines: Line[] }[] };
+    ocr_device?: string; ocr_gpu_name?: string; reads: { lines: Line[] }[]; barcode_diagnostics?: LocationDiagnostics };
 };
 type Job = { id: string; number: number; state: string; counted: boolean; collecting: boolean;
   frames: Frame[]; missed_frames: number; capture_error: string | null; matched_text: string | null };
 type Settings = { conveyor_sync: boolean; low_speed_ms: number; capture_delay_ms: number;
   capture_interval_ms: number; departure_timeout_ms: number; frame_count: number;
-  sensor_channel: number; active_raw: number; pattern: string };
+  sensor_channel: number; active_raw: number; pattern: string; locator: Locator };
 type State = { active: boolean; busy: boolean; error: string | null; detected: number; count: number;
   passed: number; failed: number; sensor_raw: number | null; await_clear: boolean; jobs: Job[]; settings?: Settings };
 const states: Record<string, string> = {
@@ -32,6 +33,7 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
   const [state, setState] = useState<State | null>(null), [error, setError] = useState("");
   const [selection, setSelection] = useState<{ job: string; seq: number } | null>(null);
   const [actualSize, setActualSize] = useState(false);
+  const [locator, setLocator] = useState<Locator>("stripes");
   useEffect(() => {
     let alive = true, timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
@@ -43,6 +45,7 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
             const s = next.settings;
             setLinked(s.conveyor_sync); setCount(s.frame_count); setChannel(s.sensor_channel);
             setActiveRaw(s.active_raw); setPattern(s.pattern); setLowMs(s.low_speed_ms);
+            setLocator(s.locator ?? "stripes");
             setDelayMs(s.capture_delay_ms); setIntervalMs(s.capture_interval_ms); setDepartureMs(s.departure_timeout_ms);
           }
         }
@@ -59,7 +62,7 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
   const manualOutputs = linked && !running && Object.keys(bench.state?.runs || {}).length > 0;
   const settings: Settings = { conveyor_sync: linked, low_speed_ms: lowMs, capture_delay_ms: delayMs,
     capture_interval_ms: intervalMs, departure_timeout_ms: departureMs, frame_count: count,
-    sensor_channel: linked ? 1 : channel, active_raw: linked ? 0 : signal, pattern };
+    sensor_channel: linked ? 1 : channel, active_raw: linked ? 0 : signal, pattern, locator };
   const valid = Number.isInteger(count) && count >= 1 && count <= 100 && (!linked || (
     [lowMs, delayMs, intervalMs, departureMs].every(Number.isInteger) && lowMs >= 0 && lowMs <= 60000 &&
     delayMs >= 0 && delayMs <= 60000 && intervalMs >= 0 && intervalMs <= 10000 &&
@@ -85,6 +88,7 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
         <option value="conveyor">컨베이어 연동</option><option value="sensor">센서 촬영</option>
       </select>
     </label>
+    <LocatorSelect value={locator} onChange={setLocator} disabled={running}/>
     {linked && <div className="space-y-3">
       <p className="text-lg">DI1에서 저속과 LED 켜기, DI2에서 LED 끄기와 계수</p>
       <div className="grid grid-cols-2 gap-3">
@@ -164,13 +168,17 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
               <a className="btn btn-sm btn-outline" href={`${frameUrl}?original=true`} download>원본 저장</a>
             </div>
             <div className="max-h-[600px] overflow-auto rounded-xl">
-              <img src={frameUrl} alt="센서 감지 후 수집한 프레임" className={actualSize ? "max-w-none" : "max-h-[600px] w-full object-contain"}/>
+              <div className={actualSize ? "relative w-max" : "relative"}>
+                <img src={frameUrl} alt="센서 감지 후 수집한 프레임" className={actualSize ? "max-w-none" : "max-h-[600px] w-full object-contain"}/>
+                <BarcodeOverlay diagnostics={frame.result?.barcode_diagnostics}/>
+              </div>
             </div>
           </>
             : <p className="text-lg font-bold">사진이 메모리에서 정리되었습니다</p>}
           {frame.state === "skipped" && <p className="text-lg font-bold">앞 프레임에서 성공하여 OCR 생략</p>}
           {frame.result?.error && <p className="text-lg font-bold text-danger">{frame.result.error}</p>}
           {frame.result && <p className="text-lg font-bold">위치 검출과 정렬 {frame.result.ms_barcode.toFixed(1)} ms, OCR {frame.result.ms_ocr.toFixed(1)} ms</p>}
+          <LocationSummary diagnostics={frame.result?.barcode_diagnostics}/>
           {lines.map((line, index) => <div key={index} className="space-y-2 rounded-xl border border-line p-3">
             {frame.image_available && index < frame.crop_count && <div className="max-h-56 overflow-auto">
               <img src={`${frameUrl}?crop=${index}`} alt="OCR에 입력한 글자" className={actualSize ? "max-w-none" : "max-h-56 max-w-full"}/>

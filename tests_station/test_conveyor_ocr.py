@@ -95,6 +95,7 @@ def trial(tmp_path, monkeypatch):
         load_error = None
 
         def __init__(self):
+            self.locators = []
             self.release = threading.Event()
             self.release.set()
             self.entered = threading.Event()
@@ -107,6 +108,7 @@ def trial(tmp_path, monkeypatch):
             return {"busy": False, "local_assets_present": True, "loaded": True, "error": None}
 
         def test_auto(self, image, *, crop_images, **kwargs):
+            self.locators.append(kwargs.get("locator"))
             self.entered.set()
             assert self.release.wait(3)
             crop_images.append(image[:10].copy())
@@ -182,6 +184,7 @@ def test_settings_reach_gpio_capture_ocr_and_di2_count(trial):
     job = t.state()["jobs"][0]
     assert job["matched_text"] == "AB12" and job["counted"]
     assert job["frames"][0]["result"]["reads"][0]["lines"][0]["text"] == "AB12"
+    assert t.vision.locators == ["stripes"]
     image = t.client.get(f'/api/bench/pipeline/frames/{job["id"]}/{frames[0]["seq"]}')
     assert image.status_code == 200 and image.headers["content-type"] == "image/png"
     assert t.client.get("/api/history").json()["inspections"] == []
@@ -295,3 +298,11 @@ def test_sensor_images_preserve_full_resolution_and_pixels(trial):
     finally:
         with t.app.state.sensor_ocr.lock:
             t.app.state.sensor_ocr.jobs.clear()
+
+
+def test_sensor_trial_can_compare_existing_locator(trial):
+    trial.start(frame_count=1, capture_delay_ms=0, locator="opencv")
+    trial.sensor(1, 0)
+    wait_for(lambda: trial.state()["passed"] == 1)
+    assert trial.vision.locators == ["opencv"]
+    assert trial.app.state.store.get("sensor_ocr_settings")["locator"] == "opencv"
