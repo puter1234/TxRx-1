@@ -86,7 +86,7 @@ class BenchGPIO:
         polarity = output_polarity(self.config, self.setup, target)
         line = self.config.speed_line if target == "speed" else self.config.do_lines[0 if target == "motor" else 1]
         if line is None:
-            raise Conflict("DO4 GPIO 핀을 지정하세요.")
+            raise Conflict("이 장비의 DO4 연결 정보가 없습니다.")
         if on and not allowed():
             raise Conflict("정지 요청이 우선합니다.")
         if target not in self.outputs:
@@ -183,6 +183,7 @@ class Bench:
         self.changed_at = [None, None, None]
         self.events = deque(maxlen=50)
         self.input_listeners = []
+        self.tick_listeners = []
         self.stop_listeners = []
         self.last_rfid = None
         self.closed = threading.Event()
@@ -318,9 +319,25 @@ class Bench:
     def led_off(self):
         return self.output_off("led")
 
-    def pulse(self, target, seconds, generation, request_id, issued_at):
-        serial = self.stop_serial
+    def sequence_output(self, target, on, serial):
+        """Sensor-driven LED/speed changes under the motor run's heartbeat."""
         with self.lock:
+            if target not in ("led", "speed"):
+                raise ValueError("센서 연동 출력이 올바르지 않습니다.")
+            if (not self.io or "motor" not in self.runs or self.cancel.is_set()
+                    or serial != self.stop_serial):
+                raise Conflict("시험이 정지되었습니다.")
+            self.io.set_output(target, on, allowed=lambda: serial == self.stop_serial and not self.cancel.is_set())
+            self.last.update({target + "_requested": on})
+            # Manual switches retain their one-second interval. The configured
+            # sensor timings must not pass through that manual-switch throttle.
+            self.next_output_at[target] = time.monotonic() + 1
+
+    def pulse(self, target, seconds, generation, request_id, issued_at, expected_serial=None):
+        serial = self.stop_serial if expected_serial is None else expected_serial
+        with self.lock:
+            if serial != self.stop_serial:
+                raise Conflict("정지 요청 이후에는 다시 실행하세요.")
             if request_id in self.seen:
                 return self.status()
             if generation != self.generation or abs(time.time() - issued_at) > 3:
@@ -333,7 +350,7 @@ class Bench:
                 raise Conflict("신호 변경 후 1초 뒤 다시 조작하세요.")
             blockers = self.led_blockers() if target != "motor" else self.output_blockers()
             if target == "speed" and self.config.speed_line is None:
-                blockers.append("DO4 GPIO 핀을 지정하세요.")
+                blockers.append("이 장비의 DO4 연결 정보가 없습니다.")
             if blockers:
                 raise Conflict(" ".join(blockers))
             snap = self.io.snapshot()
@@ -492,6 +509,8 @@ class Bench:
                 elif run["deadline"] is not None and now >= run["deadline"]:
                     self.output_off(run["target"])
                     return
+            for listener in self.tick_listeners:
+                listener(time.monotonic_ns())
 
     def _watch(self):
         while not self.closed.wait(0.01):

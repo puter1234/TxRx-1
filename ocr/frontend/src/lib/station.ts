@@ -10,6 +10,8 @@ import { useApp } from "./store";
 
 export const ended = (s: Session | null | undefined) =>
   !s || ["FINISHED", "DONE", "ABORTED"].includes(s.phase);
+export const runPath = (kind?: string) =>
+  kind === "simple" ? "/simple" : kind === "vision" ? "/vision" : "/condition/run";
 // Only a fresh READY job can be adjusted without discarding the job. HOLD,
 // PAUSED and recovery states may still own a product and remain protected.
 export const cameraEditable = (s: Snapshot | null | undefined) =>
@@ -30,6 +32,7 @@ export const configView = (s: Session): SessionConfig => ({
   presetRevision: s.recipe.preset_revision,
   workName: s.recipe.work_name,
   modelPath: s.recipe.flow?.model_path,
+  testRun: s.recipe.test_run,
   brandId: s.recipe.brand_id,
   brandName: s.brand.name,
   checks: {
@@ -233,7 +236,22 @@ export async function startSession(config: SessionConfig) {
   if (active.has("create")) return;
   if (!ended(useApp.getState().snapshot?.session))
     throw new Error("진행 중인 작업을 먼저 종료하세요.");
-  let recipe: Recipe;
+  let recipe: Recipe | undefined;
+  let path = "/sessions";
+  let body: unknown;
+  if (config.presetId) {
+    if (!config.presetRevision) throw new Error("작업 설정을 다시 선택하세요.");
+    const brand = useApp.getState().brands.find((b) => b.id === config.brandId)?.source;
+    path = `/presets/${encodeURIComponent(config.presetId)}/start`;
+    body = {
+      preset_revision: config.presetRevision,
+      brand_revision: brand?.revision || 1,
+      targets: config.targets || {},
+      target_count: config.countMode === "target" ? config.target || null : null,
+      test_run: config.testRun || false,
+    };
+  } else {
+  if (config.mode === "vision") throw new Error("와펜 계수 작업을 선택하세요.");
   if (config.mode === "simple") {
     recipe = {
       kind: "simple",
@@ -268,10 +286,12 @@ export async function startSession(config: SessionConfig) {
         config.countMode === "target" ? config.target || null : null,
     };
   }
+  body = recipe;
+  }
   active.add("create");
   useApp.getState().setPending([...active]);
   try {
-    acceptSnapshot(await request<Snapshot>("/sessions", recipe));
+    acceptSnapshot(await request<Snapshot>(path, body));
   } catch (error) {
     // Creation may have committed before a connection was lost. Read it back
     // before allowing the next attempt; the server also rejects an active job.

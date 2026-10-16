@@ -121,11 +121,17 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
     def pipeline_state():
         return sensor_ocr.status()
 
+    @app.put("/api/bench/pipeline/settings")
+    async def pipeline_settings(body: SensorOcrSettings, request: Request):
+        permitted(request)
+        return await native(lambda: sensor_ocr.save_settings(body))
+
     @app.post("/api/bench/pipeline/start")
     async def start_pipeline(body: SensorOcrSettings, request: Request):
         permitted(request)
         def execute():
             app.state.vision.load()
+            sensor_ocr.save_settings(body)
             sensor_ocr.start(body)
             return {**bench.status(), "sensor_ocr": sensor_ocr.status(details=False)}
         return await native(execute, allow_outputs=True)
@@ -256,6 +262,8 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
     @app.post("/api/bench/speed/off")
     def speed_off(request: Request):
         permitted(request)
+        if sensor_ocr.busy():
+            return bench.stop("저속 수동 선택으로 연동 시험 중지")
         return bench.output_off("speed")
 
     @app.post("/api/bench/heartbeat")

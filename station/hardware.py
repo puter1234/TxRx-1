@@ -205,7 +205,7 @@ class GpioIO:
             line = self.config.speed_line
             if line is None:
                 if high:
-                    raise RuntimeError("DO4 GPIO 핀을 지정하세요.")
+                    raise RuntimeError("이 장비의 DO4 연결 정보가 없습니다.")
                 return
             if high and (self.fault or (allowed is not None and not allowed())):
                 raise RuntimeError("STOP_REQUEST_HAS_PRIORITY")

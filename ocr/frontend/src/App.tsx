@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import { connectWS } from "./lib/ws";
 import { useApp } from "./lib/store";
 import TopBar from "./components/TopBar";
-import Home from "./screens/Work";
+import Home from "./screens/Home";
 import SimpleCount from "./screens/SimpleCount";
 import ConditionWizard from "./screens/ConditionWizard";
 import ConditionRun from "./screens/ConditionRun";
@@ -22,6 +22,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/simple" element={<SimpleCount />} />
+          <Route path="/vision" element={<SimpleCount mode="vision" />} />
           <Route path="/condition/setup" element={<ConditionWizard />} />
           <Route path="/condition/run" element={<ConditionRun />} />
           <Route path="/equipment" element={<Equipment />} />

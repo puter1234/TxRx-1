@@ -120,12 +120,15 @@ describe("restored original screens", () => {
       await waitFor(() => expect(useApp.getState().pending).toHaveLength(0));
     }
   });
-  it("opens registered work without worker algorithm controls", async () => {
+  it("preserves the original home choices and simple count controls", async () => {
+    const user = userEvent.setup();
     vi.stubGlobal("fetch", vi.fn(async () => response([{id: "simple", name: "단순 계수", enabled: true, kind: "simple", brand_id: "__simple__", channels: [], flow: {counter: "sensor"}, revision: 1}])));
     render(<MemoryRouter><App /></MemoryRouter>);
-    expect(screen.getByRole("heading", {name: "작업 선택"})).toBeTruthy();
-    await screen.findByRole("button", {name: "단순 계수"});
-    expect(screen.getByRole("button", {name: "작업 준비"})).toBeTruthy();
+    expect(screen.getByRole("heading", {name: "계수 방식을 선택하세요"})).toBeTruthy();
+    expect(screen.getByRole("button", {name: "조건 설정"})).toBeTruthy();
+    await user.click(screen.getByRole("button", {name: "단순 계수 시작"}));
+    expect(screen.getByRole("button", {name: "수량 초기화"})).toBeTruthy();
+    expect(screen.getByRole("button", {name: "계수 시작"})).toBeTruthy();
     expect(screen.queryByLabelText("계수 방법")).toBeNull();
     expect(screen.queryByLabelText("비밀번호")).toBeNull();
   });
@@ -341,7 +344,7 @@ describe("restored original screens", () => {
     expect(
       (
         screen.getByRole("button", {
-          name: "작업 준비",
+          name: "검사 화면 열기",
         }) as HTMLButtonElement
       ).disabled,
     ).toBe(true);

@@ -61,22 +61,11 @@ export default function WorkPresets() {
     [draft, setDraft] = useState<Preset | null>(retainedDraft);
   const [busy, setBusy] = useState(false),
     [message, setMessage] = useState("");
-  const [wiring, setWiring] = useState<{
-    active: number | null;
-    saved: number | null;
-  }>({ active: null, saved: null });
-  const [pin, setPin] = useState("");
   useEffect(() => {
     api<Preset[]>("/presets")
       .then((r) => {
         setRows(r);
         setDraft((d) => d || r[0] || fresh());
-      })
-      .catch(reportError);
-    api("/speed-wiring")
-      .then((r) => {
-        setWiring(r);
-        setPin(r.saved === null ? "" : String(r.saved));
       })
       .catch(reportError);
   }, []);
@@ -425,52 +414,6 @@ export default function WorkPresets() {
             </div>
           </section>
         )}
-        <details className="card p-5">
-          <summary className="cursor-pointer text-lg font-bold">
-            DO4 연결 설정
-          </summary>
-          <p className="mt-3">
-            NC 접점 개방은 고속입니다. GPIO 핀 변경은 서버를 다시 시작하면
-            적용됩니다.
-          </p>
-          <div className="mt-3 flex items-center gap-3">
-            <label>
-              DO4 GPIO
-              <input
-                className="field"
-                type="number"
-                min={0}
-                value={pin}
-                onChange={(e) => setPin(e.target.value)}
-              />
-            </label>
-            <button
-              className="btn btn-outline"
-              disabled={!pin || busy}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  setWiring(
-                    await api(
-                      "/speed-wiring",
-                      { speed_line: Number(pin) },
-                      "PUT",
-                    ),
-                  );
-                } catch (e) {
-                  reportError(e);
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              핀 저장
-            </button>
-            <p>
-              현재 {wiring.active ?? "미설정"}, 저장 {wiring.saved ?? "미설정"}
-            </p>
-          </div>
-        </details>
         <footer className="sticky bottom-0 flex items-center gap-3 border-t border-line bg-white p-4">
           <p role="status" className="mr-auto font-bold">
             {dirty
@@ -494,7 +437,7 @@ export default function WorkPresets() {
           <button
             className="btn btn-outline"
             disabled={dirty || busy || !draft.enabled}
-            onClick={() => nav("/?preset=" + draft.id + "&test=1")}
+            onClick={() => nav((draft.kind === "condition" ? "/condition/setup" : draft.kind === "vision" ? "/vision" : "/simple") + "?preset=" + encodeURIComponent(draft.id) + "&test=1")}
           >
             이 설정으로 시험
           </button>

@@ -505,7 +505,9 @@ def test_simultaneous_outputs_both_stop_on_emergency_or_connection_loss(rig, cau
             b.runs[cause.split("_")[0]]["last_heartbeat"] -= 2
             b._tick()
     assert not b.io.motor and not b.io.led and not b.runs
-    assert all(0 < value <= 1000 for value in b.status()["cooldown_ms"].values())
+    cooldown = b.status()["cooldown_ms"]
+    assert all(0 < cooldown[target] <= 1000 for target in ("motor", "led"))
+    assert cooldown["speed"] == 0  # DO4 was not used in this test.
 
 
 def test_timed_output_completion_does_not_stop_other_output(rig):

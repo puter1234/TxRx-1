@@ -64,6 +64,19 @@ const mount = () => render(<MemoryRouter initialEntries={["/equipment"]}><Routes
   <Route path="/equipment" element={<Equipment/>}/><Route path="/" element={<p>작업 선택</p>}/>
 </Routes></MemoryRouter>);
 
+it("clears a transient connection error when device status is available", async () => {
+  const normal = mocks.api.getMockImplementation()!;
+  let first = true;
+  mocks.api.mockImplementation(async (path: string, body: any) => {
+    if (path === "/bench" && first) { first = false; throw new Error("로그인이 필요합니다."); }
+    return normal(path, body);
+  });
+  mount();
+  await screen.findByText("로그인이 필요합니다.");
+  await waitFor(() => expect(screen.queryByText("로그인이 필요합니다.")).toBeNull());
+  expect(screen.getByText("입력 연결됨")).toBeTruthy();
+});
+
 it("keeps adjustment drafts, sensor conditions and output ownership across tabs; stops on workspace exit", async () => {
   mount();
   const focus = await screen.findByLabelText("초점");

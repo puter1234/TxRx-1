@@ -42,6 +42,7 @@ export interface SessionConfig {
   presetRevision?: number;
   workName?: string;
   modelPath?: string;
+  testRun?: boolean;
   brandId?: string;
   brandName?: string;
   checks?: Checks;

@@ -287,7 +287,10 @@ class StationConfig(Model):
     gpio_chip: str = "/dev/gpiochip0"
     di_lines: tuple[int, int, int] = (105, 144, 106)
     do_lines: tuple[int, int] = (51, 52)
-    speed_line: int | None = Field(default=None, ge=0, le=1023)
+    speed_line: int | None = Field(
+        default=None, ge=0, le=1023,
+        description="미지정 시 J4012 JetPack 6 기본 배선의 DO4(PH.07, offset 50)를 사용합니다.",
+    )
     rfid_port: str = ""
     camera_source: str = ""
     camera_width: int | None = Field(default=None, ge=320, le=8000)
@@ -306,6 +309,12 @@ class StationConfig(Model):
 
     @model_validator(mode="after")
     def unique_pins(self):
+        # Seeed J40/J30: DO4 is PH.07, gpiochip0 offset 50 on JetPack 6.
+        # Resolve old null/omitted values only for the documented board wiring.
+        # Explicit overrides remain valid for installations with custom wiring.
+        if (self.speed_line is None and self.gpio_chip == "/dev/gpiochip0"
+                and self.di_lines == (105, 144, 106) and self.do_lines == (51, 52)):
+            self.speed_line = 50
         pins = [*self.di_lines, *self.do_lines]
         pins += [v for v in (self.speed_line, self.permit_line) if v is not None]
         if len(pins) != len(set(pins)):

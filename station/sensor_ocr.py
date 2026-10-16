@@ -18,6 +18,11 @@ from .schema import Model
 
 
 class SensorOcrSettings(Model):
+    conveyor_sync: bool = False
+    low_speed_ms: int = Field(default=500, ge=0, le=60000)
+    capture_delay_ms: int = Field(default=100, ge=0, le=60000)
+    capture_interval_ms: int = Field(default=100, ge=0, le=10000)
+    departure_timeout_ms: int = Field(default=10000, ge=100, le=120000)
     frame_count: int = Field(default=3, ge=1, le=100)
     sensor_channel: int = Field(default=1, ge=1, le=2)
     active_raw: int = Field(default=0, ge=0, le=1)
@@ -25,6 +30,12 @@ class SensorOcrSettings(Model):
 
     @model_validator(mode="after")
     def valid_pattern(self):
+        if self.conveyor_sync:
+            if self.sensor_channel != 1 or self.active_raw != 0:
+                raise ValueError("컨베이어 연동은 DI1의 입력 0에서 시작합니다.")
+            last_capture = self.capture_delay_ms + (self.frame_count - 1) * self.capture_interval_ms
+            if last_capture >= self.departure_timeout_ms:
+                raise ValueError("마지막 촬영은 DI2 도착 제한 시간보다 빨라야 합니다.")
         # Only fixed-length character classes/literals are accepted. No nested
         # quantifiers, lookarounds, or unbounded expressions in the OCR worker.
         if self.pattern:
@@ -47,6 +58,9 @@ class SensorOcrTest:
         self.active = False
         self.error = None
         self.settings = SensorOcrSettings()
+        if hasattr(bench, "store"):
+            self.settings = SensorOcrSettings.model_validate(
+                bench.store.get("sensor_ocr_settings", {"conveyor_sync": True}))
         self.jobs = []
         self.detected = self.count = self.passed = self.failed = 0
         self.bytes_used = self.budget = 0
@@ -56,13 +70,27 @@ class SensorOcrTest:
         self.capture_thread = self.ocr_thread = None
         self.latest_seq = 0
         self.run_id = ""
+        self.raw_inputs = None
+        self.speed_deadline_ns = None
+        self.output_serial = None
         bench.input_listeners.append(self.edge)
         bench.stop_listeners.append(self.cancel_run)
+        if hasattr(bench, "tick_listeners"):
+            bench.tick_listeners.append(self.control_tick)
+
+    def save_settings(self, settings):
+        with self.bench.lock:
+            if self.busy():
+                raise Conflict("시험을 정지한 뒤 설정을 저장하세요.")
+            self.bench.store.put("sensor_ocr_settings", settings.model_dump())
+            self.settings = settings
+            return settings.model_dump()
 
     def busy(self):
         return self.active or any(t and t.is_alive() for t in (self.capture_thread, self.ocr_thread))
 
     def start(self, settings):
+        serial = getattr(self.bench, "stop_serial", None)
         if hasattr(self.camera, "verify_fixed_controls"):
             self.camera.verify_fixed_controls()
         status = self.camera.status()
@@ -83,15 +111,28 @@ class SensorOcrTest:
                 raise Conflict("시험 시작이 취소되었습니다.")
             if not self.bench.io:
                 raise Conflict("센서 입력 연결을 먼저 시작하세요.")
+            raw = self.bench.io.snapshot().get("di_raw")
+            if not raw or len(raw) < 2:
+                raise Conflict("센서 입력값을 읽을 수 없습니다.")
+            if settings.conveyor_sync:
+                if self.bench.config.speed_line is None:
+                    raise Conflict("이 장비의 DO4 연결 정보가 없습니다.")
+                if raw[:2] != [1, 1]:
+                    raise Conflict("DI1과 DI2 앞의 제품을 정리한 뒤 시작하세요.")
+                if self.bench.runs:
+                    raise Conflict("수동 출력 시험을 정지한 뒤 연동 시험을 시작하세요.")
             try:
-                for target in ("motor", "led"):
+                for target in (("motor",) if settings.conveyor_sync else ("motor", "led")):
                     if target not in self.bench.runs:
-                        self.bench.pulse(target, None, self.bench.generation, str(uuid.uuid4()), time.time())
-                raw = self.bench.io.snapshot().get("di_raw")
-                if not raw or len(raw) < settings.sensor_channel:
-                    raise Conflict("센서 입력값을 읽을 수 없습니다.")
+                        self.bench.pulse(target, None, self.bench.generation, str(uuid.uuid4()), time.time(), expected_serial=serial)
                 with self.lock:
                     self.settings = settings
+                    self.raw_inputs = list(raw)
+                    self.speed_deadline_ns = None
+                    self.output_serial = serial
+                    if settings.conveyor_sync:
+                        self.bench.sequence_output("led", False, self.output_serial)
+                        self.bench.sequence_output("speed", True, self.output_serial)
                     self.pattern = re.compile(settings.pattern) if settings.pattern else None
                     self.jobs = []
                     self.bytes_used, self.budget = 0, budget
@@ -117,6 +158,11 @@ class SensorOcrTest:
 
     def edge(self, channel, raw, observed_ns):
         # Called from the existing input watchdog. Never copy images or run OCR here.
+        if self.settings.conveyor_sync:
+            with self.bench.lock:
+                with self.lock:
+                    self._conveyor_edge(channel, raw, observed_ns)
+            return
         with self.lock:
             if not self.active or channel != self.settings.sensor_channel:
                 return
@@ -145,10 +191,59 @@ class SensorOcrTest:
             self.physical = job
             self.wake.set()
 
+    def _conveyor_edge(self, channel, raw, observed_ns):
+        if not self.active or channel not in (1, 2):
+            return
+        previous = self.raw_inputs[channel - 1]
+        self.raw_inputs[channel - 1] = raw
+        self.sensor_raw = self.raw_inputs[0]
+        if raw != 0 or previous == 0:
+            return
+        if channel == 2:
+            self.bench.sequence_output("led", False, self.output_serial)
+            if self.physical is None:
+                self._fail("DI1 감지 없이 DI2가 감지됐습니다.")
+                return
+            job = self.physical
+            job.update(counted=True, released_ns=observed_ns)
+            self.count += 1
+            self.physical = None
+            if job["collecting"]:
+                job["capture_error"] = "촬영이 끝나기 전에 DI2에 도착했습니다. 촬영 지연이나 장수를 줄이세요."
+                self._fail(job["capture_error"])
+            return
+        self.bench.sequence_output("led", True, self.output_serial)
+        self.bench.sequence_output("speed", False, self.output_serial)
+        self.speed_deadline_ns = observed_ns + self.settings.low_speed_ms * 1_000_000
+        if self.physical is not None:
+            self._fail("이전 제품이 DI2를 통과하기 전에 다음 제품이 감지됐습니다.")
+            return
+        self.detected += 1
+        job = {"id": str(uuid.uuid4()), "number": self.detected,
+               "trigger_ns": observed_ns, "released_ns": None, "counted": False,
+               "collecting": True, "state": "waiting", "frames": [],
+               "baseline_seq": self.latest_seq, "missed_frames": 0,
+               "capture_error": None, "matched_text": None}
+        self.jobs.append(job)
+        self.physical = job
+        self.wake.set()
+
+    def control_tick(self, now_ns):
+        # Called by Bench under its I/O lock, independent of capture and OCR.
+        with self.lock:
+            if not self.active or not self.settings.conveyor_sync:
+                return
+            if self.speed_deadline_ns is not None and now_ns >= self.speed_deadline_ns:
+                self.bench.sequence_output("speed", True, self.output_serial)
+                self.speed_deadline_ns = None
+            if self.physical and now_ns - self.physical["trigger_ns"] >= self.settings.departure_timeout_ms * 1_000_000:
+                self._fail("설정한 시간 안에 DI2가 감지되지 않았습니다.")
+
     def cancel_run(self, reason="시험 중지"):
         with self.lock:
             self.active = False
             self.cancel.set()
+            self.speed_deadline_ns = None
             for job in self.jobs:
                 job["collecting"] = False
                 if job["state"] in ("waiting", "reading"):
@@ -188,26 +283,32 @@ class SensorOcrTest:
                     job = next((j for j in self.jobs if j["collecting"]), None)
                     if job is None:
                         continue
-                    limit = max(2.0, 2 * self.settings.frame_count / self.fps + 1)
+                    delay_ms = (self.settings.capture_delay_ms + len(job["frames"]) * self.settings.capture_interval_ms
+                                if self.settings.conveyor_sync else 0)
+                    due_ns = job["trigger_ns"] + delay_ms * 1_000_000
+                    last_delay_ms = (self.settings.capture_delay_ms + (self.settings.frame_count - 1) * self.settings.capture_interval_ms
+                                     if self.settings.conveyor_sync else 0)
+                    limit = last_delay_ms / 1000 + max(2.0, 2 * self.settings.frame_count / self.fps + 1)
                     if (time.monotonic_ns() - job["trigger_ns"]) / 1e9 > limit:
                         job["collecting"] = False
                         job["capture_error"] = "새 프레임 수집 시간 초과"
                         self.wake.set()
                         continue
-                    if self.latest_seq <= last_delivered:
+                    if self.latest_seq <= last_delivered or time.monotonic_ns() < due_ns:
                         continue
                 image, meta = self.camera.read_latest()
                 seq, received = int(meta["seq"]), int(meta["host_received_ns"])
                 # A newer sequence is mandatory even on hosts whose monotonic
                 # clock gives two receipts the same timestamp.
-                if seq <= max(last_delivered, job["baseline_seq"]) or received < job["trigger_ns"]:
+                if seq <= max(last_delivered, job["baseline_seq"]) or received < due_ns:
                     continue
                 with self.lock:
                     if not self.active or not job["collecting"]:
                         continue
                     self._make_space(image.nbytes)
                     previous = job["frames"][-1]["seq"] if job["frames"] else job["baseline_seq"]
-                    job["missed_frames"] += max(0, seq - previous - 1)
+                    if not self.settings.conveyor_sync:
+                        job["missed_frames"] += max(0, seq - previous - 1)
                     job["frames"].append({"seq": seq, "received_ns": received,
                         "camera_settings_revision": meta.get("camera_settings_revision"),
                         "camera_profile": meta.get("camera_profile"),
@@ -226,6 +327,7 @@ class SensorOcrTest:
         try:
             while not self.cancel.is_set():
                 selected = None
+                failed_job = False
                 with self.lock:
                     for job in self.jobs:
                         if job["state"] not in ("waiting", "reading"):
@@ -238,6 +340,7 @@ class SensorOcrTest:
                         if not job["collecting"]:
                             job["state"] = "failed"
                             self.failed += 1
+                            failed_job = True
                     # Bound result history as well as image memory.
                     while len(self.jobs) > 20 and self.jobs[0] is not self.physical:
                         first = self.jobs[0]
@@ -247,6 +350,9 @@ class SensorOcrTest:
                             if f["image"] is not None:
                                 self.bytes_used -= f["image"].nbytes
                         self.jobs.pop(0)
+                if failed_job and self.settings.conveyor_sync:
+                    self._fail("OCR로 문자를 확인하지 못했습니다. 촬영 사진과 설정을 확인하세요.")
+                    return
                 if selected is None:
                     self.wake.wait(0.05)
                     self.wake.clear()
@@ -279,7 +385,8 @@ class SensorOcrTest:
                       "detected": self.detected, "count": self.count, "passed": self.passed,
                       "failed": self.failed, "sensor_raw": self.sensor_raw,
                       "await_clear": self.await_clear, "memory_bytes": self.bytes_used,
-                      "memory_limit_bytes": self.budget}
+                      "memory_limit_bytes": self.budget,
+                      "di_raw": self.raw_inputs}
             if details:
                 result["jobs"] = [{k: v for k, v in job.items() if k not in ("frames", "baseline_seq")} |
                     {"frames": [{k: v for k, v in frame.items() if k not in ("image", "crops")} |

@@ -114,7 +114,26 @@ export default function History() {
 
   const loadJob = (job: Job) => {
     const cfg = job.config;
-    nav("/", {state: {presetId: cfg?.presetId, targets: cfg?.targets || {}, target: cfg?.target || null}});
+    if (job.mode === "condition" && cfg) {
+      setW({
+        step: 3,
+        presetId: cfg.presetId || "",
+        testRun: cfg.testRun || false,
+        brandId: cfg.brandId ?? null,
+        checks: cfg.checks ?? { rfid: false, ocr: false, barcode_tag: false, barcode_poly: false },
+        countMode: cfg.countMode ?? "target",
+        target: cfg.target ?? 40,
+        sku: cfg.item?.sku ?? "",
+        color: cfg.item?.color ?? "",
+        size: cfg.item?.size ?? "",
+        targets: cfg.targets || { style: cfg.item?.sku || "", color: cfg.item?.color || "", size: cfg.item?.size || "" },
+      });
+      nav("/condition/setup");
+    } else {
+      nav(job.mode === "vision" ? "/vision" : "/simple", {
+        state: { presetId: cfg?.presetId, targets: cfg?.targets || {}, target: cfg?.target || null },
+      });
+    }
   };
 
   return (

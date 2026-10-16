@@ -145,7 +145,7 @@ class Controller:
                         "process_kill_off_verified", "os_hang_off_verified", "stop_chain_verified")
             reasons = [k for k in required if not getattr(self.config.commissioning, k)]
             if self.config.speed_line is None:
-                reasons.append("DO4 GPIO 핀을 지정하세요.")
+                reasons.append("이 장비의 DO4 연결 정보가 없습니다.")
             reasons += self.io.blockers() + self.runtime_blockers()
             raw = self.io.snapshot().get("di_raw")
             if self.session["phase"] in ("READY", "PAUSED") and raw and any(v == 0 for v in raw[:2]):

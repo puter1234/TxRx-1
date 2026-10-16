@@ -29,17 +29,18 @@ export function stopTests() {
 export function useBench() {
   const [state, setState] = useState<BenchState | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
+  const [connectionError, setConnectionError] = useState("");
   const mounted = useRef(true), ownedRuns = useRef(new Set<string>()), pending = useRef(false), outputPending = useRef(false);
   const refresh = useCallback(async () => {
     const next = await api<BenchState>("/bench");
-    if (mounted.current) setState(next);
+    if (mounted.current) { setState(next); setConnectionError(""); }
     return next;
   }, []);
   useEffect(() => {
     mounted.current = true;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
-      try { await refresh(); } catch (e) { if (mounted.current) setError((e as Error).message); }
+      try { await refresh(); } catch (e) { if (mounted.current) setConnectionError((e as Error).message); }
       if (mounted.current) timer = setTimeout(poll, 500);
     };
     void poll();
@@ -111,7 +112,7 @@ export function useBench() {
       return false;
     }
   };
-  return { state, busy, error, action, pulse, stop, refresh, adoptRuns, leave };
+  return { state, busy, error: error || connectionError, action, pulse, stop, refresh, adoptRuns, leave };
 }
 export type BenchHook = ReturnType<typeof useBench>;
 
@@ -150,7 +151,7 @@ export function CameraView({ connected, tracking, flow }: { connected: boolean; 
 export function OutputTests({ bench, ledOnly = false, compact = false }: { bench: BenchHook; ledOnly?: boolean; compact?: boolean }) {
   const nav = useNavigate();
   const state = bench.state, session = useApp(s => s.snapshot?.session);
-  const locked = !ended(session) || bench.busy || !!state?.native_busy;
+  const locked = !ended(session) || bench.busy || !!state?.native_busy || !!state?.sensor_ocr?.busy;
   const canOutput = !!state && !state.runs.motor && !bench.busy;
   const canLed = !!state && !state.runs.led && !bench.busy;
   const [requestedTarget, setRequestedTarget] = useState<"motor" | "led" | "speed" | null>(null);
@@ -168,7 +169,7 @@ export function OutputTests({ bench, ledOnly = false, compact = false }: { bench
           <span className="font-extrabold">{target === "motor" ? "모터" : target === "led" ? "LED" : "속도"}</span>
           <button className={"btn btn-sm " + (!on ? "btn-primary" : "btn-outline")} aria-pressed={!on} disabled={locked || wait > 0 || (target === "speed" && state?.pins.speed == null)}
             onClick={() => bench.action(() => api(`/bench/${target}/off`, {}))}>{target === "speed" ? "저속" : "끄기"}</button>
-          <button className={"btn btn-sm " + (on ? "btn-primary" : "btn-outline")} aria-pressed={on} disabled={bench.busy || !state || !!state.runs[target] || wait > 0 || (target === "speed" && state?.pins.speed == null)}
+          <button className={"btn btn-sm " + (on ? "btn-primary" : "btn-outline")} aria-pressed={on} disabled={locked || !state || !!state.runs[target] || wait > 0 || (target === "speed" && state?.pins.speed == null)}
             onClick={() => bench.pulse(target)}>{target === "speed" ? "고속" : "켜기"}</button>
         </div>;
       })}
