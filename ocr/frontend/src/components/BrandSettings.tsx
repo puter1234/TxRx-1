@@ -50,11 +50,11 @@ export default function BrandSettings({
     return (
       <div className="settings-compact space-y-4">
         <div className="flex items-center gap-4">
-          <button className="btn btn-outline" onClick={() => setSelected(null)}>
+          <button className="btn btn-quiet" onClick={() => setSelected(null)}>
             <ArrowLeft size={20} />
             브랜드 목록
           </button>
-          <h2 className="text-xl font-semibold">{brand.name}</h2>
+          <h2 className="text-3xl font-bold tracking-tight">{brand.name}</h2>
         </div>
         <div
           className="settings-tabs flex gap-5 border-b border-line"
