@@ -125,9 +125,9 @@ export default function Config({
     }, "파일을 불러왔습니다. 내용을 확인한 후 저장하세요.");
   };
   return (
-    <div className={embedded ? "space-y-5" : "grid gap-5 xl:grid-cols-[250px_1fr]"}>
+    <div className={"settings-compact brand-product-settings " + (embedded ? "space-y-5" : "grid gap-5 xl:grid-cols-[250px_1fr]")}>
       {!embedded && <aside className="card space-y-3 self-start p-5">
-        <h2 className="text-xl font-extrabold">브랜드 설정</h2>
+        <h2 className="text-base font-semibold">브랜드 설정</h2>
         {brands.map((b) => (
           <button
             className={
@@ -172,9 +172,9 @@ export default function Config({
           </p>
         )}
         <fieldset disabled={role !== "admin"} className="space-y-5">
-          <div className="card space-y-5 p-6">
+          <div className="card space-y-4 p-5">
             <div className="flex flex-wrap justify-between gap-3">
-              <h2 className="text-2xl font-extrabold">
+              <h2 className="text-lg font-semibold">
                 상품 조건
               </h2>
             </div>
@@ -187,14 +187,13 @@ export default function Config({
                 />
               </Field>
             </div>
-            <h3 className="text-lg font-extrabold">품번, 색상, 사이즈</h3>
-            <div className="grid gap-4 lg:grid-cols-3">
+            <div className="grid gap-6 lg:grid-cols-3">
             {draft.options.map((o, i) => (
-              <div className="min-w-0 self-start rounded-xl border border-line p-4" key={o.key}>
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <strong className="text-xl">{o.label}</strong>
+              <div className="min-w-0 self-start" key={o.key}>
+                <div className="mb-1 flex items-center justify-between gap-3 border-b border-line pb-1">
+                  <strong className="text-base font-medium">{o.label}</strong>
                   <button
-                    className="btn btn-outline btn-sm"
+                    className="btn btn-quiet btn-sm"
                     onClick={() =>
                       setDraft({
                         ...draft,
@@ -205,18 +204,17 @@ export default function Config({
                       })
                     }
                   >
-                    <Trash2 size={17} />
                     옵션 삭제
                   </button>
                 </div>
                 <OptionValues option={o} onChange={patch => option(i, patch)}/>
                 <details className="mt-3">
-                  <summary className="cursor-pointer text-sm font-bold">표시 설정</summary>
+                  <summary className="cursor-pointer text-sm font-normal text-ink-500">표시 설정</summary>
                   <Field label="표시 이름"><input className="field" value={o.label} onChange={e => option(i, {label: e.target.value})}/></Field>
-                <label className="mt-4 flex items-center gap-3 text-lg font-bold">
+                <label className="mt-3 flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
-                    className="h-6 w-6 accent-brand-600"
+                    className="h-5 w-5 accent-brand-600"
                     checked={isColorOption(o)}
                     onChange={(e) =>
                       option(i, {
@@ -259,8 +257,8 @@ export default function Config({
               </button>
             </div>
           </div>
-          <div className="card space-y-5 p-6">
-            <h3 className="text-xl font-extrabold">RFID와 바코드 기준</h3>
+          <div className="card space-y-4 p-5">
+            <h3 className="text-base font-semibold">RFID와 바코드 기준</h3>
             <Field label="RFID 해독 방식">
               <select
                 className="field"
@@ -327,7 +325,7 @@ export default function Config({
                 기준표 양식
               </button>
             </div>
-            <p className="text-lg font-bold">
+            <p className="text-sm text-ink-500">
               RFID {Object.keys(draft.decoder.records).length}건, 가격택 {Object.keys(draft.barcode_records).length}건, 폴리백 {Object.keys(draft.barcode_poly_records || {}).length}건
             </p>
             <Field label="메모">

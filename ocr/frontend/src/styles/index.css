@@ -67,6 +67,40 @@
     background: #fff; border: 2px solid var(--color-line); border-radius: .8rem; outline: none;
   }
   .field:focus { border-color: var(--color-brand-500); }
+
+  .settings-compact .btn {
+    min-height: 44px; padding: 0 .85rem; border-width: 1px;
+    border-radius: 6px; font-size: 15px; font-weight: 500;
+  }
+  .settings-compact .btn svg { width: 16px; height: 16px; stroke-width: 1.75; }
+  .settings-compact .btn-quiet { background: transparent; color: var(--color-ink-500); }
+  .settings-compact .btn-quiet:hover { background: var(--color-panel); color: var(--color-ink-900); }
+  .settings-compact .field {
+    min-height: 44px; padding-inline: .75rem; border-width: 1px;
+    border-radius: 6px; font-size: 15px; font-weight: 400;
+  }
+  .settings-compact .card { border-radius: 8px; }
+  .brand-product-settings label > span { font-size: 14px; font-weight: 500; }
+  .settings-tab {
+    display: inline-flex; align-items: center; min-height: 44px; padding: 0 .35rem;
+    border-bottom: 2px solid transparent; font-size: 15px; font-weight: 400;
+    color: var(--color-ink-500); cursor: pointer;
+  }
+  .settings-tab[aria-selected="true"], .settings-tab[aria-current="page"] {
+    border-bottom-color: var(--color-brand-600); color: var(--color-brand-700); font-weight: 500;
+  }
+  .settings-tab:hover { color: var(--color-brand-700); }
+  .value-action {
+    display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center;
+    width: 40px; height: 40px; border-radius: 4px; color: var(--color-ink-500); cursor: pointer;
+  }
+  .value-action:hover { background: var(--color-panel); }
+  .value-color-button {
+    width: 32px; height: 32px; border: 1px solid var(--color-line); border-radius: 4px; cursor: pointer;
+  }
+  .settings-compact button:focus-visible {
+    outline: 2px solid var(--color-brand-500); outline-offset: 2px;
+  }
 }
 
 @keyframes belt-move {

@@ -27,20 +27,20 @@ export default function OptionValues({ option, onChange }: {
     setEditing(null); setError("");
   };
   return <div className="space-y-3" role="group" aria-label={`${option.label} 목록`}>
-    <ul className="max-h-72 space-y-2 overflow-y-auto">
-      {option.values.map(code => <li key={code} className="flex items-center gap-2 rounded-lg border border-line bg-white p-2">
+    <ul className="max-h-64 divide-y divide-line overflow-y-auto">
+      {option.values.map(code => <li key={code} className="flex min-h-11 items-center gap-1 py-1">
         {editing === code ? <>
           <input autoFocus aria-label={`${option.label} ${code} 수정값`} className="field min-w-0 flex-1" value={replacement} maxLength={100}
             onChange={e => {setReplacement(e.target.value); setError("");}}
             onKeyDown={e => {if (e.nativeEvent.isComposing) return; if (e.key === "Enter") {e.preventDefault(); commit(code);} if (e.key === "Escape") {setEditing(null); setError("");}}}/>
-          <button type="button" className="btn btn-primary btn-sm" aria-label={`${option.label} ${code} 수정 완료`} onClick={() => commit(code)}><Check size={20}/></button>
-          <button type="button" className="btn btn-outline btn-sm" aria-label="수정 취소" onClick={() => {setEditing(null); setError("");}}><X size={20}/></button>
+          <button type="button" className="value-action text-brand-700" aria-label={`${option.label} ${code} 수정 완료`} onClick={() => commit(code)}><Check size={18}/></button>
+          <button type="button" className="value-action" aria-label="수정 취소" onClick={() => {setEditing(null); setError("");}}><X size={18}/></button>
         </> : <>
-          <span className="min-w-0 flex-1 break-all px-2 text-xl font-bold">{code}</span>
+          <span className="min-w-0 flex-1 break-all text-[15px] tabular-nums">{code}</span>
           {isColorOption(option) && <ColorAssignments option={option} onlyCode={code} onChange={colors => onChange({colors})}/>}
-          <button type="button" className="btn btn-outline btn-sm" aria-label={`${option.label} ${code} 수정`} onClick={() => {setEditing(code); setReplacement(code); setError("");}}><Pencil size={18}/></button>
-          <button type="button" className="btn btn-outline btn-sm text-danger" aria-label={`${option.label} ${code} 삭제`}
-            onClick={() => {onChange({values: option.values.filter(v => v !== code)}); setError("");}}><Trash2 size={18}/></button>
+          <button type="button" className="value-action" title="수정" aria-label={`${option.label} ${code} 수정`} onClick={() => {setEditing(code); setReplacement(code); setError("");}}><Pencil size={16}/></button>
+          <button type="button" className="value-action hover:text-danger" title="삭제" aria-label={`${option.label} ${code} 삭제`}
+            onClick={() => {onChange({values: option.values.filter(v => v !== code)}); setError("");}}><Trash2 size={16}/></button>
         </>}
       </li>)}
     </ul>
@@ -48,8 +48,8 @@ export default function OptionValues({ option, onChange }: {
       <input className="field min-w-0 flex-1" aria-label={`${option.label} 추가값`} placeholder={`${option.label} 입력`} value={value} maxLength={100}
         onChange={e => {setValue(e.target.value); setError("");}}
         onKeyDown={e => {if (e.key === "Enter" && !e.nativeEvent.isComposing) {e.preventDefault(); commit(null);}}}/>
-      <button type="button" className="btn btn-primary" aria-label={`${option.label} 값 추가`} disabled={!value.trim() || editing !== null} onClick={() => commit(null)}><Plus size={20}/>추가</button>
+      <button type="button" className="btn btn-outline" aria-label={`${option.label} 값 추가`} disabled={!value.trim() || editing !== null} onClick={() => commit(null)}><Plus size={16}/>추가</button>
     </div>
-    {error && <p role="alert" className="font-bold text-danger">{error}</p>}
+    {error && <p role="alert" className="text-sm text-danger">{error}</p>}
   </div>;
 }

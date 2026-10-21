@@ -404,15 +404,15 @@ export default function Settings() {
   };
   return (
     <div className="flex h-full flex-col">
-      <div className="flex shrink-0 items-center gap-4 px-6 pt-5">
+      <div className="settings-compact flex shrink-0 flex-wrap items-center gap-3 px-6 pt-4">
         <button className="btn btn-outline btn-sm" onClick={home}>
           <ArrowLeft size={20} />
           처음 화면
         </button>
-        <h1 className="text-2xl font-extrabold">환경 설정</h1>
+        <h1 className="text-xl font-semibold">환경 설정</h1>
         {authed && <button className="btn btn-outline btn-sm" onClick={async () => { try { await api("/auth/logout", {}); setAuthed(false); } catch(e) { reportError(e); } }}>설정 잠금</button>}
         {authed && (
-          <div className="ml-6 flex gap-2">
+          <div className="ml-3 flex flex-wrap gap-4">
             {[
               { id: "general", label: "일반" },
               { id: "brands", label: "브랜드 관리" },
@@ -422,12 +422,8 @@ export default function Settings() {
             ].map((t) => (
               <button
                 key={t.id}
-                className={
-                  "rounded-xl px-5 py-3 text-lg font-extrabold " +
-                  (tab === t.id
-                    ? "bg-brand-600 text-white"
-                    : "bg-white text-ink-900")
-                }
+                className="settings-tab"
+                aria-current={tab === t.id ? "page" : undefined}
                 onClick={() => t.id === "devices" ? nav("/equipment?tab=camera") : setTab(t.id)}
               >
                 {t.label}

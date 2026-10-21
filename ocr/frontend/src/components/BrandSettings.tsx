@@ -48,16 +48,16 @@ export default function BrandSettings({
   };
   if (brand)
     return (
-      <div className="space-y-5">
+      <div className="settings-compact space-y-4">
         <div className="flex items-center gap-4">
           <button className="btn btn-outline" onClick={() => setSelected(null)}>
             <ArrowLeft size={20} />
             브랜드 목록
           </button>
-          <h2 className="text-2xl font-extrabold">{brand.name}</h2>
+          <h2 className="text-xl font-semibold">{brand.name}</h2>
         </div>
         <div
-          className="flex gap-3"
+          className="settings-tabs flex gap-5 border-b border-line"
           role="tablist"
           aria-label="브랜드 상세 설정"
         >
@@ -69,7 +69,7 @@ export default function BrandSettings({
               key={id}
               role="tab"
               aria-selected={tab === id}
-              className={"btn " + (tab === id ? "btn-primary" : "btn-outline")}
+              className="settings-tab"
               onClick={() => setTab(id)}
             >
               {label}
@@ -93,24 +93,24 @@ export default function BrandSettings({
       </div>
     );
   return (
-    <div className="max-w-6xl space-y-5">
-      <h2 className="text-2xl font-extrabold">브랜드 설정</h2>
+    <div className="settings-compact max-w-6xl space-y-4">
+      <h2 className="text-xl font-semibold">브랜드 설정</h2>
       {locked && (
         <p role="alert" className="rounded-xl bg-warn-bg p-4 font-bold">
           작업 종료 후 설정을 변경하세요.
         </p>
       )}
       <div className="card overflow-x-auto">
-        <table className="w-full text-lg">
+        <table className="w-full text-[15px]">
           <thead className="border-b border-line bg-panel text-left">
             <tr>
-              <th className="p-4">브랜드</th>
+              <th className="px-4 py-3 font-medium">브랜드</th>
               {checks.map(([key, label]) => (
-                <th className="p-4 text-center" key={key}>
+                <th className="px-4 py-3 text-center font-medium" key={key}>
                   {label}
                 </th>
               ))}
-              <th className="p-4">
+              <th className="px-4 py-3 font-medium">
                 <span className="sr-only">관리</span>
               </th>
             </tr>
@@ -118,13 +118,13 @@ export default function BrandSettings({
           <tbody>
             {brands.map((b) => (
               <tr key={b.id} className="border-b border-line last:border-0">
-                <th className="p-4 text-left">{b.name}</th>
+                <th className="px-4 py-3 text-left font-medium">{b.name}</th>
                 {checks.map(([key, label]) => (
-                  <td className="p-4 text-center" key={key}>
+                  <td className="px-4 py-3 text-center font-medium" key={key}>
                     <input
                       type="checkbox"
                       aria-label={`${b.name} ${label}`}
-                      className="h-7 w-7 cursor-pointer accent-brand-600"
+                      className="h-5 w-5 cursor-pointer accent-brand-600"
                       checked={brandView(b).caps[key]}
                       disabled={locked || busy}
                       onChange={(e) => {
@@ -142,7 +142,7 @@ export default function BrandSettings({
                     />
                   </td>
                 ))}
-                <td className="p-4">
+                <td className="px-4 py-3 font-medium">
                   <div className="flex justify-end gap-2">
                     <button
                       className="btn btn-outline"
