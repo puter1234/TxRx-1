@@ -285,14 +285,18 @@ class GpioIO:
     def inventory(self, window_ms, cancel):
         return self._inventory(window_ms, cancel, once=False)
 
+    def inventory_bench(self, window_ms, cancel):
+        return self._inventory(window_ms, cancel, once=False, bench=True)
+
     def inventory_once(self, timeout_ms, cancel):
         return self._inventory(timeout_ms, cancel, once=True)
 
-    def _inventory(self, timeout_ms, cancel, *, once):
+    def _inventory(self, timeout_ms, cancel, *, once, bench=False):
         if not self.reader:
             raise RuntimeError("RFID 포트 없음")
         try:
-            read = self.reader.inventory_once if once else self.reader.inventory
+            read = (self.reader.inventory_bench if bench else
+                    self.reader.inventory_once if once else self.reader.inventory)
             return read(timeout_ms, cancel)
         except InventoryCancelled:
             # A clean STOP during camera recovery does not undo reader setup.

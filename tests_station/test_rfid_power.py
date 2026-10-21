@@ -20,8 +20,8 @@ def test_initialization_sends_and_verifies_selected_power(wire, power):
     reader, port, _ = wire
     expected = 2600 if power is None else power
     payload = expected.to_bytes(2, "big")
-    port.chunks = [frame(0x08, b"\x06", 1), frame(0x07, b"\x00", 1),
-                   frame(0x08, b"\x06", 1), frame(0xB6, b"\x00", 1), frame(0xB7, payload, 1)]
+    port.chunks = [frame(0x08, b"\x06", 1), frame(0xAD, b"\x00", 1),
+                   frame(0xB6, b"\x00", 1), frame(0xB7, payload, 1)]
     reader.initialize(*([] if power is None else [power]))
     assert reader.initialized and reader.power == expected
     assert port.writes[-2:] == [frame(0xB6, payload), frame(0xB7)]

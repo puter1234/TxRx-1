@@ -29,7 +29,7 @@ class Heartbeat(Model):
 
 class RFIDSetup(Model):
     rfid_port: str = Field(default="", max_length=200)
-    rfid_window_ms: int = Field(default=500, ge=100, le=10000)
+    rfid_window_ms: int = Field(default=5000, ge=100, le=10000)
     rfid_power: int = Field(default=2600, ge=0, le=2600)
     rfid_protocol_confirmed: bool = False
 

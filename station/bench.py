@@ -23,7 +23,7 @@ class BenchSetup(Model):
     output_wiring_confirmed: bool = False
     stop_circuit_confirmed: bool = False
     rfid_port: str = Field(default="", max_length=200)
-    rfid_window_ms: int = Field(default=500, ge=100, le=10000)
+    rfid_window_ms: int = Field(default=5000, ge=100, le=10000)
     rfid_power: int = Field(default=2600, ge=0, le=2600)
     rfid_protocol_confirmed: bool = False
 
@@ -160,10 +160,25 @@ class Bench:
             feedback_timeout_ms=config.commissioning.feedback_timeout_ms,
             sensor_active_raw=[config.commissioning.sensor_active_raw] * 2,
             rfid_port=config.rfid_port,
-            rfid_window_ms=config.rfid_window_ms or 500,
+            rfid_window_ms=config.rfid_window_ms or 5000,
             rfid_power=config.rfid_power,
         )
-        self.setup = BenchSetup.model_validate({**defaults.model_dump(), **store.get("bench_setup", {})})
+        saved_setup = store.get("bench_setup", {})
+        self.setup = BenchSetup.model_validate({**defaults.model_dump(), **saved_setup})
+        if not store.get("rfid_bench_pico_timing", False):
+            # Upgrade the previous 500 ms default once. Other saved timeouts
+            # stay intact, and a later explicit choice of 500 ms stays intact.
+            migrated_setup = None
+            if self.setup.rfid_window_ms == 500:
+                self.setup = self.setup.model_copy(update={"rfid_window_ms": 5000})
+                migrated_setup = {**saved_setup, "rfid_window_ms": 5000}
+            import json
+            with store.transaction() as c:
+                if migrated_setup is not None:
+                    c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)",
+                              ("bench_setup", json.dumps(migrated_setup)))
+                c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)",
+                          ("rfid_bench_pico_timing", "true"))
         self.gpio_factory = gpio_factory
         self.lock = threading.RLock()
         self.stop_lock = threading.Lock()
@@ -599,14 +614,16 @@ class Bench:
                 if s.rfid_port != self.config.rfid_port:
                     raise Conflict("생산 설정과 RFID 포트가 다릅니다.")
                 if not prod.get("rfid_ready"):
-                    raise Conflict("RFID 초기화를 확인하세요.")
-                tags = self.production_io.inventory(s.rfid_window_ms, self.cancel)
+                    self.production_io.apply_rfid_power(s.rfid_power)
+                    if not self.production_io.snapshot().get("rfid_ready"):
+                        raise Conflict("RFID 초기화를 확인하세요.")
+                tags = self.production_io.inventory_bench(s.rfid_window_ms, self.cancel)
             else:
                 reader = Reader(s.rfid_port)
                 reader.initialize(s.rfid_power)
                 if self.cancel.is_set():
                     raise Conflict("RFID 시험을 중지했습니다.")
-                tags = reader.inventory(s.rfid_window_ms, self.cancel)
+                tags = reader.inventory_bench(s.rfid_window_ms, self.cancel)
             if self.cancel.is_set():
                 raise Conflict("RFID 시험을 중지했습니다.")
             result = {"ok": len(tags) == 1, "tags": tags, "time": time.time(),

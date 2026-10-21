@@ -573,7 +573,7 @@ def test_rfid_inventory_runs_with_outputs_and_does_not_lock_switches(rig, monkey
     class Reader:
         def __init__(self, port): assert port == "/dev/ttyUSB0"
         def initialize(self, power): assert power == 2100
-        def inventory(self, window, cancel):
+        def inventory_bench(self, window, cancel):
             entered.set()
             assert release.wait(3)
             return [{"epc": "AABB", "count": 1}]

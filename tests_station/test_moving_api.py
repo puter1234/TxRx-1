@@ -54,6 +54,7 @@ def line(tmp_path, monkeypatch, brand):
         def initialize(self, power=2600): self.power = power; self.initialized = True
         def set_power(self, power): self.power = power
         def inventory(self, *args): return [{"epc": EPC}, {"epc": EPC}]
+        def inventory_bench(self, *args): return self.inventory(*args)
         def inventory_once(self, *args): return self.inventory(*args)
         def close(self): self.port.is_open = False
     monkeypatch.setattr("station.hardware.Reader", Reader)

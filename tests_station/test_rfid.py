@@ -139,7 +139,7 @@ def test_single_round_preserves_distinct_tags_in_received_chunk(wire):
     assert len(reader.inventory_once(100)) == 2
 
 
-@pytest.mark.parametrize("read_method", ["inventory_once", "inventory"])
+@pytest.mark.parametrize("read_method", ["inventory_once", "inventory", "inventory_bench"])
 @pytest.mark.parametrize("corrupt", [False, True])
 def test_inventory_does_not_hide_reader_or_checksum_errors(wire, corrupt, read_method):
     reader, port, _ = wire
@@ -153,7 +153,7 @@ def test_inventory_does_not_hide_reader_or_checksum_errors(wire, corrupt, read_m
     assert port.writes[-1] == frame(0x28)
 
 
-@pytest.mark.parametrize("read_method,rounds", [("inventory_once", 1), ("inventory", 100)])
+@pytest.mark.parametrize("read_method,rounds", [("inventory_once", 1), ("inventory", 100), ("inventory_bench", 5)])
 @pytest.mark.parametrize("before_start", [False, True])
 def test_inventory_cancellation_stops_without_accepting_a_late_tag(wire, before_start, read_method, rounds):
     reader, port, _ = wire
@@ -166,3 +166,69 @@ def test_inventory_cancellation_stops_without_accepting_a_late_tag(wire, before_
     with pytest.raises(InventoryCancelled):
         getattr(reader, read_method)(100, cancel)
     assert port.writes == ([] if before_start else [frame(0x27, b"\x22" + rounds.to_bytes(2, "big")), frame(0x28)])
+
+
+@pytest.mark.parametrize("initial_region", [b"\x06", b"\x03"])
+def test_initialization_matches_pico_hopping_and_region_sequence(wire, initial_region):
+    reader, port, _ = wire
+    port.chunks = [frame(0x08, initial_region, 1)]
+    expected = [frame(0x08)]
+    if initial_region != b"\x06":
+        port.chunks += [frame(0x07, b"\x00", 1), frame(0x08, b"\x06", 1)]
+        expected += [frame(0x07, b"\x06"), frame(0x08)]
+    port.chunks += [frame(0xAD, b"\x00", 1), frame(0xB6, b"\x00", 1),
+                    frame(0xB7, b"\x07\xd0", 1)]
+    reader.initialize(2000)
+    # Literal bytes from the supplied Pico command builder.
+    expected += [bytes.fromhex("BB00AD0001FFAD7E"),
+                 bytes.fromhex("BB00B6000207D08F7E"), frame(0xB7)]
+    assert port.writes == expected
+    assert reader.initialized and reader.power == 2000
+
+
+@pytest.mark.parametrize("reply", [frame(0xAD, b"\x01", 1), frame(0xFF, b"\x17", 1), b""])
+def test_failed_hopping_setup_never_marks_reader_ready(wire, reply):
+    reader, port, _ = wire
+    port.chunks = [frame(0x08, b"\x06", 1), reply]
+    with pytest.raises(OSError):
+        reader.initialize()
+    assert not reader.initialized and reader.last_error
+    assert port.writes == [frame(0x08), frame(0xAD, b"\xff")]
+
+
+def test_bench_waits_for_late_first_tag_and_then_for_idle_gap(wire):
+    reader, port, clock = wire
+    other = "1234567890ABCDEF1234567890ABCDEF"
+    port.chunks = [b""] * 39 + [notice()] + [b""] * 19 + [notice(other)]
+    result = reader.inventory_bench(5000)
+    assert {r["epc"] for r in result} == {"1D44D280281B70D75A8DF0000E114D7A", other}
+    assert 11.70 <= clock[0] <= 11.74
+    assert port.writes == [bytes.fromhex("BB00270003220005517E"), frame(0x28)]
+
+
+def test_bench_missing_tag_is_distinct_from_missing_reader_response(wire):
+    reader, port, clock = wire
+    port.chunks = [frame(0xFF, b"\x15", 1)]
+    assert reader.inventory_bench(5000) == []
+    assert reader.initialized and 10.52 <= clock[0] <= 10.56
+    start = clock[0]
+    with pytest.raises(TimeoutError, match="RFID 응답이 없습니다"):
+        reader.inventory_bench(5000)
+    assert 5 <= clock[0] - start <= 5.04
+    assert port.writes[-1] == frame(0x28)
+
+
+@pytest.mark.parametrize("window_ms", [100, 5000])
+def test_bench_continuous_notices_still_obey_total_time_limit(wire, window_ms):
+    reader, port, clock = wire
+    port.on_read = lambda: port.chunks.append(notice())
+    assert len(reader.inventory_bench(window_ms)) == 1
+    assert window_ms / 1000 <= clock[0] - 10 <= window_ms / 1000 + .04
+    assert port.writes[-1] == frame(0x28)
+
+
+def test_bench_keeps_tags_received_before_and_after_miss(wire):
+    reader, port, _ = wire
+    port.chunks = [notice(), frame(0xFF, b"\x15", 1), notice()]
+    result = reader.inventory_bench(5000)
+    assert len(result) == 1 and result[0]["count"] == 2

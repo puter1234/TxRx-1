@@ -37,7 +37,7 @@ def detect_products(frame_bgr):
 
 문서에서 고정한 inventory 0x27 및 tag notice 0x22를 사용한다. 나머지 BB/7E 프레임, checksum, PC/EPC 길이, region GET/SET 0x08/0x07, power 0xB6/0xB7, stop 0x28은 현재 구현의 **장비 대조가 필요한 프로토콜 가정**이다. 제공 리더의 정식 명령서와 실제 응답 캡처로 대조하고 필요한 어댑터 수정 후 `rfid_protocol_verified`를 승인한다. 모의 프레임 테스트를 실기 검증으로 간주하지 않는다.
 
-초기화는 region 0x06 SET 후 GET 일치, 저장된 출력값(기본 2600, 26dBm) SET 후 GET 일치를 요구한다. 해당 수치의 실제 지원 여부와 출력은 리더 명령서로 대조한다. RFID는 정지 상태의 제한 시간창에서 EPC별 횟수, 최대/중앙 RSSI와 최초/최종 수신 시간을 기록한다. 복수 EPC를 가장 강한 한 개로 임의 선택하지 않고 HOLD한다. 지원 지역과 출력 사용 조건은 현장 장비 설정 담당자가 확인한다.
+초기화는 region GET이 0x06인지 확인하고 다르면 SET 후 GET 일치를 요구한다. 자동 주파수 호핑 0xAD/0xFF의 성공 응답과 저장된 출력값(기본 2600, 26dBm)의 SET 후 GET 일치를 확인한다. 호핑 설정은 2026-10-21 사용자가 제공한 Pico 코드와 대조해 추가한 내용이며, 원본 인수인계 문서에 기재됐다고 확인한 항목은 아니다. RFID 시험은 [RFID_BENCH.md](RFID_BENCH.md), 이동 중 생산의 시도 횟수와 간격은 [RFID_RETRIES.md](RFID_RETRIES.md)를 따른다. EPC별 횟수, 최대/중앙 RSSI와 최초/최종 수신 시간을 기록한다. 복수 EPC를 가장 강한 한 개로 임의 선택하지 않고 HOLD한다. 지원 지역과 출력 사용 조건은 현장 장비 설정 담당자가 확인한다.
 
 ## 실측 후 채울 설정
 
