@@ -416,6 +416,13 @@
       "default": true,
       "title": "Automatic Cycle",
       "type": "boolean"
+    },
+    "rfid_power": {
+      "default": 2600,
+      "maximum": 2600,
+      "minimum": 0,
+      "title": "Rfid Power",
+      "type": "integer"
     }
   },
   "title": "StationConfig",

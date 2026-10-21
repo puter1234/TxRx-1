@@ -71,6 +71,9 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
     saved_speed = store.get("speed_line")
     if saved_speed is not None:
         config = StationConfig.model_validate({**config.model_dump(), "speed_line": saved_speed})
+    saved_rfid_power = store.get("bench_setup", {}).get("rfid_power")
+    if saved_rfid_power is not None:
+        config = StationConfig.model_validate({**config.model_dump(), "rfid_power": saved_rfid_power})
     camera = camera or CameraManager(config, store)
     detector = None
     hardware_errors = []

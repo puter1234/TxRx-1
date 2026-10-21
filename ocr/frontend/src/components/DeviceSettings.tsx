@@ -74,7 +74,7 @@ export function DeviceSettingsPanels({ bench, tab = "all" }: { bench: BenchHook;
     catch (e) { setPortsError((e as Error).message); }
     finally { setPortsBusy(false); }
   };
-  useEffect(() => { if (!setup && bench.state) setSetup(bench.state.setup); }, [bench.state, setup]);
+  useEffect(() => { if (!setup && bench.state) setSetup({ rfid_power: 2600, ...bench.state.setup }); }, [bench.state, setup]);
   const find = async () => {
     const result = await api("/bench/camera/devices");
     setDevices(result.devices || []); setDiscovery(result.error || "");
@@ -203,10 +203,12 @@ export function DeviceSettingsPanels({ bench, tab = "all" }: { bench: BenchHook;
           {ports.map(p => <option key={p.device} value={p.device}>{p.name} ({p.device})</option>)}
         </select></label>
         <label className="text-lg font-bold">읽기 시간 (ms)<input className="field mt-2" type="number" min="100" max="10000" value={setup.rfid_window_ms} onChange={e => field("rfid_window_ms", Number(e.target.value))}/></label>
+        <label className="text-lg font-bold">RFID 출력<input className="field mt-2" type="number" min="0" max="2600" step="1" value={setup.rfid_power} onChange={e => field("rfid_power", e.target.value === "" ? "" : Number(e.target.value))}/></label>
         <label className="flex items-center gap-3 text-lg font-bold"><input className="h-6 w-6" type="checkbox" checked={setup.rfid_protocol_confirmed} onChange={e => field("rfid_protocol_confirmed", e.target.checked)}/>RFID 명령 규격 확인<Help text="YRM1006 리더의 제공 명령서와 현재 구현을 대조한 뒤 선택합니다. 읽기 시험은 지역과 출력 초기화 명령을 포함합니다."/></label>
       </fieldset>
       <button className="btn btn-primary" disabled={disabled || !!bench.state?.rfid_busy} onClick={() => bench.action(async () => {
-        await api("/bench/rfid/setup", { rfid_port: setup.rfid_port, rfid_window_ms: setup.rfid_window_ms, rfid_protocol_confirmed: setup.rfid_protocol_confirmed }, "PUT");
+        if (!Number.isInteger(setup.rfid_power) || setup.rfid_power < 0 || setup.rfid_power > 2600) throw new Error("RFID 출력은 0~2600의 정수로 입력하세요.");
+        await api("/bench/rfid/setup", { rfid_port: setup.rfid_port, rfid_window_ms: setup.rfid_window_ms, rfid_power: setup.rfid_power, rfid_protocol_confirmed: setup.rfid_protocol_confirmed }, "PUT");
         setMessage("연결 설정을 저장했습니다");
       })}>RFID 설정 저장</button>
       {message === "연결 설정을 저장했습니다" && <p role="status" className="text-lg font-bold">{message}</p>}

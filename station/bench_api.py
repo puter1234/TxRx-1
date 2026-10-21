@@ -30,6 +30,7 @@ class Heartbeat(Model):
 class RFIDSetup(Model):
     rfid_port: str = Field(default="", max_length=200)
     rfid_window_ms: int = Field(default=500, ge=100, le=10000)
+    rfid_power: int = Field(default=2600, ge=0, le=2600)
     rfid_protocol_confirmed: bool = False
 
 
@@ -227,7 +228,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
     @app.put("/api/bench/rfid/setup")
     async def rfid_setup(body: RFIDSetup, request: Request):
         actor = permitted(request, ("admin",))
-        return await native(lambda: bench.save_rfid_setup(body.model_dump(), actor), allow_outputs=True)
+        return await native(lambda: bench.save_rfid_setup(body.model_dump(exclude_unset=True), actor), allow_outputs=True)
 
     @app.post("/api/bench/io/disconnect")
     async def disconnect(request: Request):

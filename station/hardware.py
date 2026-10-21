@@ -73,7 +73,7 @@ class GpioIO:
                 try:
                     self.reader = Reader(config.rfid_port)
                     if config.commissioning.rfid_protocol_verified:
-                        self.reader.initialize()
+                        self.reader.initialize(config.rfid_power)
                 except Exception as exc:
                     # A disconnected optional reader does not take GPIO offline.
                     # RFID jobs still require rfid_ready and can reconnect on reset.
@@ -239,7 +239,7 @@ class GpioIO:
                 self.reader = Reader(self.config.rfid_port)
                 if not self.config.commissioning.rfid_protocol_verified:
                     raise RuntimeError("RFID 프로토콜 실기 검증이 필요합니다.")
-                self.reader.initialize()
+                self.reader.initialize(self.config.rfid_power)
                 self.rfid_error = None
             self.fault = None
 
@@ -273,6 +273,14 @@ class GpioIO:
             + ([] if s.get("physical_permit") else ["물리 START 허가 확인 필요"])
             + ([restart_message(s["motor_restart_ms"])] if s["motor_restart_ms"] else [])
         )
+
+    def apply_rfid_power(self, power):
+        if self.reader and self.config.commissioning.rfid_protocol_verified:
+            if self.reader.initialized:
+                self.reader.set_power(power)
+            else:
+                self.reader.initialize(power)
+            self.rfid_error = None
 
     def inventory(self, window_ms, cancel):
         return self._inventory(window_ms, cancel, once=False)

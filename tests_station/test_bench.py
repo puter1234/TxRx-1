@@ -572,14 +572,14 @@ def test_rfid_inventory_runs_with_outputs_and_does_not_lock_switches(rig, monkey
     entered, release = threading.Event(), threading.Event()
     class Reader:
         def __init__(self, port): assert port == "/dev/ttyUSB0"
-        def initialize(self): pass
+        def initialize(self, power): assert power == 2100
         def inventory(self, window, cancel):
             entered.set()
             assert release.wait(3)
             return [{"epc": "AABB", "count": 1}]
         def close(self): pass
     monkeypatch.setattr("station.rfid.Reader", Reader)
-    assert c.put("/api/bench/rfid/setup", json={"rfid_port": "/dev/ttyUSB0", "rfid_protocol_confirmed": True}).status_code == 200
+    assert c.put("/api/bench/rfid/setup", json={"rfid_port": "/dev/ttyUSB0", "rfid_protocol_confirmed": True, "rfid_power": 2100}).status_code == 200
     c.post("/api/bench/io/connect", json={})
     b = app.state.bench
     assert pulse(c, "led", None).status_code == 200

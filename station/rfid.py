@@ -121,17 +121,37 @@ class Reader:
                     return m.payload
         raise TimeoutError(f"RFID response timeout: {command:02X}")
 
-    def initialize(self):
+    def _set_power(self, power):
+        if not isinstance(power, int) or not 0 <= power <= 2600:
+            raise ValueError("RFID 출력은 0~2600의 정수로 입력하세요.")
+        payload = power.to_bytes(2, "big")
+        if self._response(0xB6, payload) != b"\x00":
+            raise IOError("RFID power SET rejected")
+        if self._response(0xB7) != payload:
+            raise IOError("RFID power GET mismatch")
+        self.power = power
+        self.last_error = None
+
+    def set_power(self, power):
         with self.lock:
+            if not self.initialized:
+                raise RuntimeError("RFID initialization required")
+            try:
+                self._set_power(power)
+            except Exception as exc:
+                self.initialized = False
+                self.last_error = str(exc)
+                raise
+
+    def initialize(self, power=2600):
+        with self.lock:
+            self.initialized = False
             self._response(0x08)
             if self._response(0x07, b"\x06") != b"\x00":
                 raise IOError("RFID region SET rejected")
             if self._response(0x08) != b"\x06":
                 raise IOError("RFID region GET mismatch")
-            if self._response(0xB6, (2600).to_bytes(2, "big")) != b"\x00":
-                raise IOError("RFID power SET rejected")
-            if self._response(0xB7) != (2600).to_bytes(2, "big"):
-                raise IOError("RFID power GET mismatch")
+            self._set_power(power)
             self.initialized = True
 
     def inventory_once(self, timeout_ms: int, cancel: threading.Event | None = None):

@@ -320,6 +320,7 @@ class StationConfig(Model):
         description="미지정 시 J4012 JetPack 6 기본 배선의 DO4(PH.07, offset 50)를 사용합니다.",
     )
     rfid_port: str = ""
+    rfid_power: int = Field(default=2600, ge=0, le=2600)
     camera_source: str = ""
     camera_width: int | None = Field(default=None, ge=320, le=8000)
     camera_height: int | None = Field(default=None, ge=240, le=6000)

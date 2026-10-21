@@ -24,6 +24,7 @@ class BenchSetup(Model):
     stop_circuit_confirmed: bool = False
     rfid_port: str = Field(default="", max_length=200)
     rfid_window_ms: int = Field(default=500, ge=100, le=10000)
+    rfid_power: int = Field(default=2600, ge=0, le=2600)
     rfid_protocol_confirmed: bool = False
 
     @model_validator(mode="after")
@@ -160,8 +161,9 @@ class Bench:
             sensor_active_raw=[config.commissioning.sensor_active_raw] * 2,
             rfid_port=config.rfid_port,
             rfid_window_ms=config.rfid_window_ms or 500,
+            rfid_power=config.rfid_power,
         )
-        self.setup = BenchSetup.model_validate(store.get("bench_setup", defaults.model_dump()))
+        self.setup = BenchSetup.model_validate({**defaults.model_dump(), **store.get("bench_setup", {})})
         self.gpio_factory = gpio_factory
         self.lock = threading.RLock()
         self.stop_lock = threading.Lock()
@@ -207,22 +209,41 @@ class Bench:
         with self.lock:
             if self.io or self.run:
                 raise Conflict("입력 연결을 종료한 후 저장하세요.")
-            with self.store.transaction() as c:
-                import json
-                c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", ("bench_setup", json.dumps(setup.model_dump())))
-                self.store.event("BENCH_SETUP_SAVED", {"actor": actor, "setup": setup.model_dump()}, c)
-            self.setup = setup
-            return self.status()
+            if "rfid_power" not in setup.model_fields_set:
+                setup = setup.model_copy(update={"rfid_power": self.setup.rfid_power})
+        self._save_setup(setup, "BENCH_SETUP_SAVED", actor, setup.model_dump())
+        return self.status()
 
     def save_rfid_setup(self, fields, actor):
         with self.lock:
             updated = BenchSetup.model_validate({**self.setup.model_dump(), **fields})
-            with self.store.transaction() as c:
-                import json
-                c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", ("bench_setup", json.dumps(updated.model_dump())))
-                self.store.event("BENCH_RFID_SETUP_SAVED", {"actor": actor, "setup": fields}, c)
-            self.setup = updated
-            return self.status()
+        self._save_setup(updated, "BENCH_RFID_SETUP_SAVED", actor, fields)
+        return self.status()
+
+    def _save_setup(self, setup, event, actor, fields):
+        import json
+
+        previous = self.config.rfid_power
+        changed = setup.rfid_power != previous
+        apply_power = getattr(self.production_io, "apply_rfid_power", None)
+        # The route holds the RFID operation reservation. Do not hold the bench
+        # output lock while waiting for serial replies: STOP must remain usable.
+        if changed and apply_power:
+            apply_power(setup.rfid_power)
+        try:
+            with self.lock:
+                with self.store.transaction() as c:
+                    c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", ("bench_setup", json.dumps(setup.model_dump())))
+                    self.store.event(event, {"actor": actor, "setup": fields}, c)
+                self.config.rfid_power = setup.rfid_power
+                self.setup = setup
+        except Exception:
+            if changed and apply_power:
+                try:
+                    apply_power(previous)
+                except Exception:
+                    pass  # The reader stays unready if its rollback is rejected.
+            raise
 
     def connect(self):
         with self.lock:
@@ -582,7 +603,7 @@ class Bench:
                 tags = self.production_io.inventory(s.rfid_window_ms, self.cancel)
             else:
                 reader = Reader(s.rfid_port)
-                reader.initialize()
+                reader.initialize(s.rfid_power)
                 if self.cancel.is_set():
                     raise Conflict("RFID 시험을 중지했습니다.")
                 tags = reader.inventory(s.rfid_window_ms, self.cancel)

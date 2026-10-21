@@ -51,7 +51,8 @@ def line(tmp_path, monkeypatch, brand):
             self.port = SimpleNamespace(is_open=True)
             self.initialized = False
             self.last_error = None
-        def initialize(self): self.initialized = True
+        def initialize(self, power=2600): self.power = power; self.initialized = True
+        def set_power(self, power): self.power = power
         def inventory(self, *args): return [{"epc": EPC}, {"epc": EPC}]
         def inventory_once(self, *args): return self.inventory(*args)
         def close(self): self.port.is_open = False

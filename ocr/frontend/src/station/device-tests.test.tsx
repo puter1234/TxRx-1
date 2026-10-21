@@ -61,9 +61,13 @@ it("finds and saves RFID ports independently of camera errors and connected GPIO
   const select = screen.getByLabelText("직렬 포트") as HTMLSelectElement;
   expect(select.closest("fieldset")?.disabled).toBe(false);
   fireEvent.change(select, { target: { value: "/dev/ttyUSB0" } });
+  const power = screen.getByRole("spinbutton", { name: "RFID 출력" });
+  expect(power).toHaveProperty("value", "2600");
+  expect(power).toHaveProperty("max", "2600");
+  fireEvent.change(power, { target: { value: "2000" } });
   fireEvent.click(screen.getByRole("button", { name: "RFID 설정 저장" }));
   await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/bench/rfid/setup", {
-    rfid_port: "/dev/ttyUSB0", rfid_window_ms: 500, rfid_protocol_confirmed: true,
+    rfid_port: "/dev/ttyUSB0", rfid_window_ms: 500, rfid_power: 2000, rfid_protocol_confirmed: true,
   }, "PUT"));
 });
 
