@@ -80,7 +80,6 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy, sharedPrevi
       </div>
       <div className="space-y-4">
         <LocatorSelect value={locator} onChange={setLocator} disabled={busy}/>
-        {locator === "yolo26" && <p>48MP 촬영 원본에서 글자를 추출합니다. 카메라 해상도는 8000 x 6000으로 설정하세요.</p>}
         <div className="flex flex-wrap gap-3">
           <button className="btn btn-primary flex-1" disabled={!canRead} onClick={read}>{busy ? "검사 중" : "현재 영상 OCR 검사"}</button>
         </div>
@@ -113,13 +112,13 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy, sharedPrevi
             </div>)}
           </div>)}
           {!result.error && result.reads.every(read => !read.lines.length) && <p className="text-xl font-bold">글자를 찾지 못했습니다</p>}
+          {result.barcode_diagnostics && <details className="space-y-3">
+            <summary className="cursor-pointer text-lg font-bold">판독 상세</summary>
           <p className="text-lg font-bold">프레임 복사 {result.capture_ms.toFixed(1)} ms</p>
           <p className="text-lg font-bold">모델 준비 {result.ms_model_load.toFixed(1)} ms, {result.mode === "ocr_only" ? "위치 검출과 정렬" : "바코드 처리"} {result.ms_barcode.toFixed(1)} ms, OCR {result.ms_ocr.toFixed(1)} ms</p>
           {result.ocr_device && <p className="text-lg font-bold">
             {result.ocr_device.startsWith("cuda") ? `OCR GPU 사용: ${result.ocr_gpu_name || result.ocr_device}` : "OCR CPU 사용 중"}
           </p>}
-          {result.barcode_diagnostics && <details className="space-y-3">
-            <summary className="cursor-pointer text-lg font-bold">판독 상세</summary>
             <div className="overflow-x-auto"><table className="w-full text-left text-lg">
               <thead><tr><th>단계</th><th>위치 후보</th>{result.mode !== "ocr_only" && <th>읽은 값</th>}<th>위치 검출</th>{result.mode !== "ocr_only" && <th>값 판독</th>}</tr></thead>
               <tbody>{result.barcode_diagnostics.stages.map((row, i) => <tr key={i}>

@@ -138,7 +138,7 @@ export function CameraView({ connected, tracking, flow }: { connected: boolean; 
     void next();
     return () => { alive = false; abort.abort(); clearTimeout(timer); if (current) URL.revokeObjectURL(current); };
   }, [connected]);
-  return <div><div className="relative flex h-48 items-center justify-center overflow-hidden rounded-xl bg-ink-900">
+  return <div><div className="relative flex h-80 items-center justify-center overflow-hidden rounded-xl bg-ink-900">
     {connected && url && !failed ? <img src={url} alt="카메라 시험 영상" className="h-full w-full object-contain" />
       : <p className="p-8 text-2xl font-bold text-white">{failed ? "영상 연결 끊김" : "카메라 미연결"}</p>}
     {tracking && flow && connected && url && !failed && <svg aria-label="검출 위치와 계수선" className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${tracking.width} ${tracking.height}`} preserveAspectRatio="xMidYMid meet">
@@ -254,11 +254,11 @@ export function CameraTest({ bench }: { bench: BenchHook }) {
       {method === "single" && <button className="btn btn-primary ml-auto" disabled={busy || locked || !s?.camera?.connected}
         onClick={() => bench.action(async () => { setCapture(await api("/bench/camera/capture", {})); setZoom(false); })}>사진 촬영</button>}
     </div>
-    <div className={capture ? "grid grid-cols-2 gap-3" : ""}>
+    <div className={capture ? "grid gap-3" : ""}>
       <div className="min-w-0"><h3 className="mb-2 font-bold">실시간 영상</h3><CameraView connected={s?.camera?.connected === true}/></div>
       {capture && <div className="min-w-0 space-y-2">
         <h3 className="font-bold">촬영한 사진</h3>
-        <div className="h-48 overflow-auto rounded-xl bg-ink-900">
+        <div className="h-80 overflow-auto rounded-xl bg-ink-900">
           <img src={capture.url} alt="카메라 시험 촬영 결과" className={zoom ? "max-w-none" : "h-full w-full object-contain"}
             style={zoom ? { width: capture.width, height: capture.height, maxWidth: "none" } : undefined}/>
         </div>

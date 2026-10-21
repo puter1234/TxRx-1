@@ -493,13 +493,14 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
     @app.post("/api/sessions")
     def new_session(recipe: Recipe, request: Request):
         actor = permitted(request)
-        if config.mode == "HARDWARE" and not recipe.preset_id:
+        if recipe.flow and not recipe.preset_id:
             permitted(request, ("admin",))
+        if config.mode == "HARDWARE" and not recipe.preset_id:
+            if not (recipe.default_flow and recipe.flow is None and recipe.kind in ("simple", "condition")):
+                permitted(request, ("admin",))
             from .schema import FlowSettings
             recipe.flow = recipe.flow or FlowSettings()
         if recipe.test_run:
-            permitted(request, ("admin",))
-        if recipe.flow and not recipe.preset_id:
             permitted(request, ("admin",))
         return prepare_session(controller, vision, hardware_monitor, recipe, actor)
 

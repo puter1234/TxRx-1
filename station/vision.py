@@ -186,7 +186,7 @@ class Vision:
                     observations["ocr"] = fields
                     detail["ocr_serial"] = line["text"]
                     from ocr.normalize import normalize_strict
-                    if "barcode" in recipe.channels and linked_barcode and (
+                    if "barcode" in recipe.channels and len(recipe.barcode_targets) == 1 and linked_barcode and (
                         normalize_strict(linked_barcode) != normalize_strict(line["text"])
                     ):
                         failures.append({"code": "BARCODE_OCR_MISMATCH"})
@@ -204,24 +204,33 @@ class Vision:
                 if task is None and self.locator == "yolo26":
                     import pipeline
                     task = pipeline.process_task(bgr, None, locator=self.locator, decode_values=True)
-                codes = sorted({t.text for t in tagreader.read_tag(bgr) if t.text}) if task is None else sorted({r.barcode for r in task.reads if r.barcode})
+                codes = [t.text for t in tagreader.read_tag(bgr) if t.text] if task is None else [r.barcode for r in task.reads if r.barcode]
+                # Separate registered tables identify label types. Keep duplicate
+                # values from distinct labels so two requested labels require two reads.
                 detail["barcodes"] = codes
-                if len(codes) != 1:
+                if len(codes) != len(recipe.barcode_targets):
                     failures.append(
                         {
                             "code": (
-                                "BARCODE_MISSING" if not codes else "MULTIPLE_BARCODES"
+                                "BARCODE_MISSING" if len(codes) < len(recipe.barcode_targets) else "MULTIPLE_BARCODES"
                             )
                         }
                     )
                 else:
-                    fields = brand.barcode_records.get(codes[0])
-                    if fields is None:
-                        failures.append(
-                            {"code": "BARCODE_UNREGISTERED", "actual": codes[0]}
-                        )
+                    from itertools import permutations
+                    tables = [brand.barcode_records if target == "tag" else brand.barcode_poly_records
+                              for target in recipe.barcode_targets]
+                    matches = [[table.get(code) for table, code in zip(tables, order)]
+                               for order in permutations(codes)]
+                    matches = [rows for rows in matches if all(row is not None for row in rows)]
+                    if not matches:
+                        failures.append({"code": "BARCODE_UNREGISTERED", "actual": ", ".join(codes)})
                     else:
-                        observations["barcode"] = fields
+                        fields = matches[0][0]
+                        if any(row != fields for rows in matches for row in rows):
+                            failures.append({"code": "BARCODE_LABEL_MISMATCH"})
+                        else:
+                            observations["barcode"] = fields
             return {
                 "observations": observations,
                 "details": detail,

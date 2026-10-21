@@ -3,7 +3,8 @@ from datetime import date
 from fastapi import Request
 from fastapi.responses import Response
 from pydantic import Field
-from .schema import Model, WorkPreset, Recipe
+from .schema import Model, WorkPreset, Recipe, FlowSettings
+from typing import Literal
 from .controller import Conflict
 from .storage import dump
 from .statistics import report, csv_bytes
@@ -24,6 +25,8 @@ class WorkStart(Model):
     targets: dict[str, str] = Field(default_factory=dict, max_length=30)
     target_count: int | None = Field(default=None, ge=1, le=1000000)
     test_run: bool = False
+    channels: list[Literal["ocr", "rfid", "barcode"]] | None = None
+    barcode_targets: list[Literal["tag", "poly"]] | None = None
 
 
 def prepare_session(controller, vision, monitor, recipe, actor):
@@ -34,6 +37,8 @@ def prepare_session(controller, vision, monitor, recipe, actor):
         if controller.busy or controller.external_busy():
             raise Conflict("진행 중인 장비 시험을 종료하세요.")
         recipe = controller.resolve_recipe(recipe)
+        if controller.config.mode == "HARDWARE" and recipe.default_flow and recipe.flow is None:
+            recipe = recipe.model_copy(update={"flow": FlowSettings()})
         if "ocr" in recipe.channels:
             vision.load()
         if set(recipe.channels) & {"ocr", "barcode"} and hasattr(vision, "prepare_locator"):
@@ -99,7 +104,9 @@ def install_work_api(app, controller, permitted, vision, monitor):
         if preset.revision != body.preset_revision or not preset.enabled:
             raise Conflict("작업 설정이 변경되었습니다. 다시 선택하세요.")
         recipe = Recipe(kind=preset.kind, brand_id=preset.brand_id, brand_revision=body.brand_revision,
-                        channels=preset.channels, targets=body.targets, target_count=body.target_count,
+                        channels=preset.channels if body.channels is None else body.channels,
+                        barcode_targets=preset.barcode_targets if body.barcode_targets is None else body.barcode_targets,
+                        targets=body.targets, target_count=body.target_count,
                         preset_id=preset.id, preset_revision=preset.revision, flow=preset.flow,
                         work_name=preset.name, test_run=body.test_run)
         return prepare_session(controller, vision, monitor, recipe, actor)

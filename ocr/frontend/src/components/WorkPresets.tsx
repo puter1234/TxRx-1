@@ -12,6 +12,7 @@ export type Preset = {
   kind: "simple" | "condition" | "vision";
   brand_id: string;
   channels: string[];
+  barcode_targets?: ("tag" | "poly")[];
   flow: Record<string, any>;
 };
 export const defaults = {
@@ -43,7 +44,7 @@ export const defaults = {
 };
 const fresh = (): Preset => ({
   id: "work-" + Date.now().toString(36),
-  name: "새 작업",
+  name: "단순 계수",
   revision: 1,
   enabled: true,
   kind: "simple",
@@ -52,25 +53,93 @@ const fresh = (): Preset => ({
   flow: { ...defaults },
 });
 
-let retainedDraft: Preset | null = null;
+const retainedDrafts = new Map<string, Preset>();
 
-export default function WorkPresets() {
+export default function WorkPresets({ brandId }: { brandId?: string }) {
+  const [kind, setKind] = useState<"simple" | "vision">("simple");
+  if (brandId)
+    return <PresetEditor key={brandId} brandId={brandId} kind="condition" />;
+  return (
+    <div className="space-y-5">
+      <div className="flex gap-3" role="tablist" aria-label="계수 설정">
+        {(
+          [
+            ["simple", "단순 계수"],
+            ["vision", "와펜 계수"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            role="tab"
+            aria-selected={kind === id}
+            className={"btn " + (kind === id ? "btn-primary" : "btn-outline")}
+            onClick={() => setKind(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div hidden={kind !== "simple"}>
+        <PresetEditor kind="simple" />
+      </div>
+      <div hidden={kind !== "vision"}>
+        <PresetEditor kind="vision" />
+      </div>
+    </div>
+  );
+}
+
+function PresetEditor({
+  brandId,
+  kind,
+}: {
+  brandId?: string;
+  kind: Preset["kind"];
+}) {
+  const cacheKey = brandId || kind;
+  const initial = (): Preset => ({
+    ...fresh(),
+    kind,
+    name:
+      kind === "simple"
+        ? "단순 계수"
+        : kind === "vision"
+          ? "와펜 계수"
+          : "기본 설정",
+    brand_id: brandId || "__simple__",
+    channels: kind === "condition" ? ["ocr"] : [],
+    flow: { ...defaults, counter: kind === "vision" ? "cvzone" : "sensor" },
+  });
   const nav = useNavigate();
   const brands = useApp((s) => s.brands);
   const [rows, setRows] = useState<Preset[]>([]),
-    [draft, setDraft] = useState<Preset | null>(retainedDraft);
+    [draft, setDraft] = useState<Preset | null>(
+      retainedDrafts.get(cacheKey) || null,
+    );
   const [busy, setBusy] = useState(false),
     [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(true),
+    [loadError, setLoadError] = useState(""),
+    [attempt, setAttempt] = useState(0);
   useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    setLoadError("");
     api<Preset[]>("/presets")
       .then((r) => {
-        setRows(r);
-        setDraft((d) => d || r[0] || fresh());
+        if (!alive) return;
+        const rows = r.filter(
+          (p) => p.kind === kind && (!brandId || p.brand_id === brandId),
+        );
+        setRows(rows);
+        setDraft((d) => d || rows[0] || initial());
       })
-      .catch(reportError);
-  }, []);
+      .catch((e) => { if (alive) setLoadError(e.message); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [attempt]);
   useEffect(() => {
-    retainedDraft = draft;
+    if (draft) retainedDrafts.set(cacheKey, draft);
   }, [draft]);
   const changed = (next: Partial<Preset>) => {
     setMessage("");
@@ -85,7 +154,22 @@ export default function WorkPresets() {
     setBusy(true);
     try {
       const result = await api<Preset>("/presets", {
-        preset: draft,
+        preset: brandId
+          ? {
+              ...draft,
+              channels: Object.entries(
+                brands.find((b) => b.id === brandId)?.caps || {},
+              )
+                .filter(([, v]) => v)
+                .map(([k]) => (k.startsWith("barcode_") ? "barcode" : k))
+                .filter((v, i, a) => a.indexOf(v) === i),
+              barcode_targets: [
+                brands.find((b) => b.id === brandId)?.caps.barcode_tag && "tag",
+                brands.find((b) => b.id === brandId)?.caps.barcode_poly &&
+                  "poly",
+              ].filter(Boolean),
+            }
+          : draft,
         expected_revision: original ? draft.revision : null,
       });
       setRows((r) => [...r.filter((x) => x.id !== result.id), result]);
@@ -112,150 +196,58 @@ export default function WorkPresets() {
       />
     </label>
   );
-  if (!draft) return <p>작업 설정을 불러오는 중입니다.</p>;
+  if (loadError) return <div role="alert" className="space-y-3"><p>{loadError}</p><button className="btn btn-outline" onClick={() => setAttempt(v => v + 1)}>다시 불러오기</button></div>;
+  if (loading || !draft) return <p role="status">설정 불러오는 중</p>;
   return (
-    <div className="grid grid-cols-[230px_1fr] gap-5">
-      <aside className="space-y-3">
-        <h2 className="text-xl font-bold">작업 프리셋</h2>
-        {rows.map((r) => (
-          <button
-            key={r.id}
-            className={
-              "btn w-full " +
-              (r.id === draft.id ? "btn-primary" : "btn-outline")
-            }
-            disabled={dirty && r.id !== draft.id}
-            onClick={() => {
-              setDraft(r);
-              setMessage("");
-            }}
-          >
-            {r.name}
-            {!r.enabled && " (사용 안 함)"}
-          </button>
-        ))}
-        <button
-          className="btn btn-outline w-full"
-          disabled={dirty}
-          onClick={() => setDraft(fresh())}
-        >
-          새 작업
-        </button>
-        <button
-          className="btn btn-outline w-full"
-          disabled={dirty}
-          onClick={() =>
-            setDraft({
-              ...draft,
-              id: fresh().id,
-              name: draft.name + " 복사",
-              revision: 1,
-            })
-          }
-        >
-          복사
-        </button>
-        <button
-          className="btn btn-outline w-full"
-          onClick={() => nav("/equipment?tab=camera")}
-        >
-          카메라 테스트
-        </button>
-      </aside>
-      <div className="space-y-5">
-        <div className="card grid grid-cols-2 gap-4 p-5">
-          <label className="font-bold">
-            작업 이름
-            <input
-              className="field mt-1"
-              value={draft.name}
-              onChange={(e) => changed({ name: e.target.value })}
-            />
-          </label>
-          <label className="font-bold">
-            기능
+    <div className="max-w-5xl space-y-5">
+      <div className="flex items-center justify-between gap-4">
+        {!brandId && (
+          <h2 className="text-xl font-bold">
+            {kind === "simple" ? "단순 계수 설정" : "와펜 계수 설정"}
+          </h2>
+        )}
+        {rows.length > 1 && (
+          <label className="flex items-center gap-3 font-bold">
+            저장된 설정
             <select
-              aria-label="기능"
-              className="field mt-1"
-              value={draft.kind}
+              aria-label="저장된 설정"
+              className="field !w-64"
+              value={original ? draft.id : ""}
+              disabled={busy}
               onChange={(e) => {
-                const kind = e.target.value as Preset["kind"];
-                changed({
-                  kind,
-                  channels: kind === "condition" ? ["ocr", "rfid"] : [],
-                  brand_id: kind === "simple" ? "__simple__" : draft.brand_id,
-                  flow: {
-                    ...draft.flow,
-                    counter: kind === "vision" ? "cvzone" : "sensor",
-                  },
-                });
+                if (dirty && !window.confirm("저장하지 않은 변경을 버릴까요?"))
+                  return;
+                const row = rows.find((r) => r.id === e.target.value);
+                if (row) {
+                  setDraft(row);
+                  setMessage("");
+                }
               }}
             >
-              <option value="simple">단순 계수</option>
-              <option value="condition">조건 검사</option>
-              <option value="vision">와펜 계수</option>
+              {!original && <option value="">작성 중</option>}
+              {rows.map((r, i) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                  {rows.filter((v) => v.name === r.name).length > 1
+                    ? ` (${i + 1})`
+                    : ""}
+                  {!r.enabled ? " (사용 안 함)" : ""}
+                </option>
+              ))}
             </select>
           </label>
-          {draft.kind !== "simple" && (
-            <label className="font-bold">
-              브랜드
-              <select
-                aria-label="브랜드"
-                className="field mt-1"
-                value={draft.brand_id}
-                onChange={(e) => changed({ brand_id: e.target.value })}
-              >
-                <option value="__simple__">브랜드 없음</option>
-                {brands.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          <label className="flex items-center gap-3 font-bold">
-            <input
-              type="checkbox"
-              checked={draft.enabled}
-              onChange={(e) => changed({ enabled: e.target.checked })}
-            />
-            작업자 화면에 표시
-          </label>
-          {draft.kind === "condition" && (
-            <fieldset className="col-span-2 flex gap-5">
-              <legend className="mb-2 font-bold">검사 항목</legend>
-              {[
-                ["ocr", "OCR"],
-                ["rfid", "RFID"],
-                ["barcode", "바코드"],
-              ].map(([id, label]) => (
-                <label key={id} className="flex gap-2">
-                  <input
-                    type="checkbox"
-                    checked={draft.channels.includes(id)}
-                    onChange={(e) =>
-                      changed({
-                        channels: e.target.checked
-                          ? [...draft.channels, id]
-                          : draft.channels.filter((c) => c !== id),
-                      })
-                    }
-                  />
-                  {label}
-                </label>
-              ))}
-            </fieldset>
-          )}
-        </div>
+        )}
+      </div>
+      <div className="space-y-5">
         <section className="card space-y-4 p-5">
           <h2 className="text-xl font-bold">DI1 감지 후 실행 시간</h2>
-          <p>LED는 DI1에서 켜지고 DI2에서 꺼집니다.</p>
           <div className="grid grid-cols-3 gap-4">
             {number("low_speed_ms", "저속 유지 (ms)")}
             {draft.kind !== "simple" &&
               number("capture_delay_ms", "첫 촬영 (ms)")}
-            {draft.channels.includes("rfid") &&
+            {(brandId
+              ? brands.find((b) => b.id === brandId)?.caps.rfid
+              : draft.channels.includes("rfid")) &&
               number("rfid_delay_ms", "RFID 확인 (ms)")}
           </div>
           {draft.kind !== "simple" && (
@@ -281,14 +273,6 @@ export default function WorkPresets() {
                 </>
               )}
             </div>
-          )}
-          {draft.flow.capture_count > 1 && (
-            <p>
-              마지막 촬영은 DI1 감지 후{" "}
-              {Number(draft.flow.capture_delay_ms) +
-                (draft.flow.capture_count - 1) * draft.flow.capture_interval_ms}
-              ms입니다. 모든 촬영 결과가 일치해야 합니다.
-            </p>
           )}
         </section>
         <section className="card space-y-4 p-5">
@@ -414,22 +398,92 @@ export default function WorkPresets() {
             </div>
           </section>
         )}
+        <details className="card p-5" open={!draft.name}>
+          <summary className="cursor-pointer font-bold">설정 관리</summary>
+          <div className="mt-4 grid grid-cols-2 gap-4">
+            <label className="font-bold">
+              설정 이름
+              <input
+                className="field mt-1"
+                placeholder="설정 이름 입력"
+                value={draft.name}
+                onChange={(e) => changed({ name: e.target.value })}
+              />
+            </label>
+            {!brandId && draft.kind !== "simple" && (
+              <label className="font-bold">
+                브랜드
+                <select
+                  aria-label="브랜드"
+                  className="field mt-1"
+                  value={draft.brand_id}
+                  onChange={(e) => changed({ brand_id: e.target.value })}
+                >
+                  <option value="__simple__">브랜드 없음</option>
+                  {brands.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <label className="flex items-center gap-3 font-bold">
+              <input
+                type="checkbox"
+                checked={draft.enabled}
+                onChange={(e) => changed({ enabled: e.target.checked })}
+              />
+              작업자 화면에 표시
+            </label>
+            <div className="col-span-2 flex gap-3">
+              <button
+                className="btn btn-outline"
+                disabled={busy}
+                onClick={() => {
+                  if (
+                    dirty &&
+                    !window.confirm("저장하지 않은 변경을 버릴까요?")
+                  )
+                    return;
+                  setDraft({ ...initial(), name: "" });
+                  setMessage("");
+                }}
+              >
+                설정 추가
+              </button>
+              <button
+                className="btn btn-outline"
+                disabled={dirty || busy || !original}
+                onClick={() => {
+                  setDraft({
+                    ...draft,
+                    id: fresh().id,
+                    name: draft.name + " 복사",
+                    revision: 1,
+                  });
+                  setMessage("");
+                }}
+              >
+                현재 설정 복사
+              </button>
+            </div>
+          </div>
+        </details>
         <footer className="sticky bottom-0 flex items-center gap-3 border-t border-line bg-white p-4">
           <p role="status" className="mr-auto font-bold">
-            {dirty
-              ? "저장하지 않은 변경이 있습니다."
-              : message || "저장된 설정입니다."}
+            {dirty ? "변경됨" : message || "저장됨"}
           </p>
           <button
             className="btn btn-outline"
             disabled={!dirty || busy}
-            onClick={() => setDraft(original || rows[0] || fresh())}
+            onClick={() => setDraft(original || rows[0] || initial())}
           >
             변경 취소
           </button>
           <button
             className="btn btn-primary"
-            disabled={!dirty || busy}
+            disabled={!dirty || busy || !draft.name.trim()}
             onClick={save}
           >
             저장
@@ -437,9 +491,20 @@ export default function WorkPresets() {
           <button
             className="btn btn-outline"
             disabled={dirty || busy || !draft.enabled}
-            onClick={() => nav((draft.kind === "condition" ? "/condition/setup" : draft.kind === "vision" ? "/vision" : "/simple") + "?preset=" + encodeURIComponent(draft.id) + "&test=1")}
+            onClick={() =>
+              nav(
+                (draft.kind === "condition"
+                  ? "/condition/setup"
+                  : draft.kind === "vision"
+                    ? "/vision"
+                    : "/simple") +
+                  "?preset=" +
+                  encodeURIComponent(draft.id) +
+                  "&test=1",
+              )
+            }
           >
-            이 설정으로 시험
+            이 설정으로 테스트
           </button>
         </footer>
       </div>

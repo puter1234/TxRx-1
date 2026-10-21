@@ -16,7 +16,7 @@ export async function api<T = any>(
     if (path === "/api/brands" && body === undefined)
       return (await refreshBrands()) as T;
     if (path === "/api/session/start") {
-      await startSession(body);
+      await startSession(body, true);
       return { ok: true } as T;
     }
     if (path.startsWith("/api/jobs")) {

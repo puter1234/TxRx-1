@@ -89,7 +89,6 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
       </select>
     </label>
     <LocatorSelect value={locator} onChange={setLocator} disabled={running}/>
-    {locator === "yolo26" && <p>48MP 원본에서 촬영합니다. 12MP 축소본으로 위치를 찾고 글자는 같은 48MP 원본에서 추출합니다.</p>}
     {linked && <div className="space-y-3">
       <p className="text-lg">DI1에서 저속과 LED 켜기, DI2에서 LED 끄기와 계수</p>
       <div className="grid grid-cols-2 gap-3">

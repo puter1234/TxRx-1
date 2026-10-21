@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Plus, Trash2, Save, Upload, Download } from "lucide-react";
 import Help from "../components/Help";
 import ColorAssignments from "../components/ColorAssignments";
@@ -16,24 +16,36 @@ const empty = (): Brand => ({
   barcode_records: {},
   note: "",
 });
+const brandDrafts = new Map<string, Brand>();
 export default function Config({
   brands,
   action,
   refresh,
   locked,
   role = "admin",
+  initialBrand,
+  embedded = false,
 }: {
   role?: string;
   brands: Brand[];
   action: Action;
   refresh: () => Promise<void>;
   locked: boolean;
+  initialBrand?: Brand;
+  embedded?: boolean;
 }) {
-  const [draft, setDraft] = useState<Brand>(empty()),
-    [existing, setExisting] = useState(false),
+  const [draft, setDraft] = useState<Brand>(() => {
+    const cached = initialBrand && brandDrafts.get(initialBrand.id);
+    return initialBrand ? structuredClone(cached?.revision === initialBrand.revision ? cached : initialBrand) : empty();
+  }),
+    [existing, setExisting] = useState(!!initialBrand),
     [key, setKey] = useState("option_" + uuid().slice(0, 8)),
     [label, setLabel] = useState(""),
-    [reason, setReason] = useState("");
+    [reason, setReason] = useState(embedded ? "브랜드 상품 설정 변경" : "");
+  useEffect(() => {
+    if (embedded) brandDrafts.set(draft.id, draft);
+  }, [draft, embedded]);
+  const optionKey = ({"품번": "style", "색상": "color", "사이즈": "size", style: "style", color: "color", size: "size"} as Record<string, string>)[label.trim()] || key;
   const option = (index: number, patch: Partial<Option>) =>
     setDraft({
       ...draft,
@@ -51,7 +63,7 @@ export default function Config({
     });
   const importFile = (
     file: File | undefined,
-    kind: "brand" | "rfid" | "barcode",
+    kind: "brand" | "rfid" | "barcode" | "barcode_poly",
   ) => {
     if (!file) return;
     action(async () => {
@@ -108,13 +120,13 @@ export default function Config({
         options,
         ...(kind === "rfid"
           ? { decoder: { kind: "lookup" as const, records } }
-          : { barcode_records: records }),
+          : kind === "barcode_poly" ? { barcode_poly_records: records } : { barcode_records: records }),
       });
     }, "파일을 불러왔습니다. 내용을 확인한 후 저장하세요.");
   };
   return (
-    <div className="grid gap-5 xl:grid-cols-[250px_1fr]">
-      <aside className="card space-y-3 self-start p-5">
+    <div className={embedded ? "space-y-5" : "grid gap-5 xl:grid-cols-[250px_1fr]"}>
+      {!embedded && <aside className="card space-y-3 self-start p-5">
         <h2 className="text-xl font-extrabold">브랜드 설정</h2>
         {brands.map((b) => (
           <button
@@ -152,7 +164,7 @@ export default function Config({
             onChange={(e) => importFile(e.target.files?.[0], "brand")}
           />
         </label>
-      </aside>
+      </aside>}
       <div className="space-y-5">
         {locked && (
           <p role="alert" className="rounded-xl bg-warn-bg p-4 font-bold">
@@ -163,7 +175,7 @@ export default function Config({
           <div className="card space-y-5 p-6">
             <div className="flex flex-wrap justify-between gap-3">
               <h2 className="text-2xl font-extrabold">
-                목표 옵션과 브랜드 규칙
+                상품 조건
               </h2>
             </div>
             <div className="grid gap-4 md:grid-cols-2">
@@ -175,7 +187,7 @@ export default function Config({
                 />
               </Field>
             </div>
-            <h3 className="text-lg font-extrabold">선택 가능한 옵션</h3>
+            <h3 className="text-lg font-extrabold">품번, 색상, 사이즈</h3>
             <div className="flex justify-end">
               <Help text="사이즈나 색상의 선택값을 쉼표 또는 줄바꿈으로 나눠 입력합니다. 계수할 때는 등록한 값 중 하나를 선택합니다." />
             </div>
@@ -252,12 +264,12 @@ export default function Config({
                 disabled={
                   !/^[a-z][a-z0-9_]{0,31}$/.test(key) ||
                   !label ||
-                  draft.options.some((o) => o.key === key)
+                  draft.options.some((o) => o.key === optionKey)
                 }
                 onClick={() => {
                   setDraft({
                     ...draft,
-                    options: [...draft.options, { key, label, values: [""] }],
+                    options: [...draft.options, { key: optionKey, label: label.trim(), values: [""] }],
                   });
                   setKey("option_" + uuid().slice(0, 8));
                   setLabel("");
@@ -305,13 +317,19 @@ export default function Config({
               </label>
               <label className="btn btn-outline cursor-pointer">
                 <Upload size={18} />
-                바코드 기준표 가져오기
+                가격택 기준표 가져오기
                 <input
                   className="hidden"
                   type="file"
                   accept=".json"
                   onChange={(e) => importFile(e.target.files?.[0], "barcode")}
                 />
+              </label>
+              <label className="btn btn-outline cursor-pointer">
+                <Upload size={18} />
+                폴리백 기준표 가져오기
+                <input className="hidden" type="file" accept=".json"
+                  onChange={(e) => importFile(e.target.files?.[0], "barcode_poly")} />
               </label>
               <button
                 className="btn btn-outline"
@@ -331,8 +349,7 @@ export default function Config({
               </button>
             </div>
             <p className="text-lg font-bold">
-              RFID 기준 {Object.keys(draft.decoder.records).length}건, 바코드
-              기준 {Object.keys(draft.barcode_records).length}건
+              RFID {Object.keys(draft.decoder.records).length}건, 가격택 {Object.keys(draft.barcode_records).length}건, 폴리백 {Object.keys(draft.barcode_poly_records || {}).length}건
             </p>
             <Field label="메모">
               <textarea
@@ -343,13 +360,13 @@ export default function Config({
             </Field>
           </div>
         </fieldset>
-        <Field label="설정 변경 사유">
+        {!embedded && <Field label="설정 변경 사유">
           <input
             className="field"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
           />
-        </Field>
+        </Field>}
         <div className="flex flex-wrap gap-3">
           <button
             className="btn btn-primary"

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Lock, Delete, KeyRound, Download } from "lucide-react";
 import { api } from "../station/shared";
-import Config from "../station/Config";
+import BrandSettings from "../components/BrandSettings";
 import WorkPresets from "../components/WorkPresets";
 import { useApp } from "../lib/store";
 import { ended, refreshBrands, reportError } from "../lib/station";
@@ -207,8 +207,8 @@ function GeneralTab() {
         </div>
         <div className="flex items-center gap-3">
           <span className="text-lg font-bold">계수 방식</span>
-          <span className="text-lg font-bold">작업 프리셋에서 지정</span>
-          <Help text="작업 설정에서 센서 계수, 조건 검사, 와펜 계수와 실행 시간을 지정합니다." />
+          <span className="text-lg font-bold">관리자 설정</span>
+          <Help text="브랜드별 검사 설정은 브랜드 설정에서, 단순 계수와 와펜 계수는 계수 설정에서 변경합니다." />
         </div>
         <div>
           <strong className="text-lg">저장 위치</strong>
@@ -416,7 +416,7 @@ export default function Settings() {
             {[
               { id: "general", label: "일반" },
               { id: "brands", label: "브랜드 관리" },
-              { id: "presets", label: "작업 설정" },
+              { id: "presets", label: "계수 설정" },
               { id: "devices", label: "장비 테스트" },
               { id: "logs", label: "작업 로그" },
             ].map((t) => (
@@ -444,15 +444,8 @@ export default function Settings() {
         ) : tab === "presets" ? (
           <WorkPresets />
         ) : tab === "brands" ? (
-          <Config
+          <BrandSettings
             brands={brands.map((b) => b.source)}
-            action={async (fn) => {
-              try {
-                await fn();
-              } catch (e) {
-                reportError(e);
-              }
-            }}
             refresh={async () => {
               await refreshBrands();
             }}

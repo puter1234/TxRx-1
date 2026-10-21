@@ -63,7 +63,7 @@ export default function SimpleCount({ mode = "simple" }: { mode?: "simple" | "vi
   const brands = useApp((s) => s.brands);
   const preset = presets.rows.find((p) => p.id === selected);
   const brand = brands.find((b) => b.id === preset?.brand_id)?.source;
-  const testRun = params.get("test") === "1";
+  const testRun = params.get("test") === "1" || restored?.testRun === true;
   useEffect(() => {
     if (!selected && presets.rows.length) setSelected(presets.rows[0].id);
   }, [presets.rows, selected]);
@@ -75,8 +75,8 @@ export default function SimpleCount({ mode = "simple" }: { mode?: "simple" | "vi
     session?.status === "running",
   );
   const active = !ended(activeSession);
-  const usePreset = snapshot?.mode === "HARDWARE" || mode === "vision" || testRun || !!params.get("preset");
-  const createReady = (!usePreset || !!preset) && (!target || (Number.isInteger(Number(target)) && Number(target) >= 1 && Number(target) <= 1000000))
+  const usePreset = !!preset;
+  const createReady = !presets.loading && !presets.error && (!selected || !!preset) && (mode !== "vision" || !!preset) && (!target || (Number.isInteger(Number(target)) && Number(target) >= 1 && Number(target) <= 1000000))
     && (!brand || brand.options.every((o) => o.values.includes(targets[o.key])));
   if (active && activeSession?.recipe.kind !== mode)
     return (
@@ -111,15 +111,16 @@ export default function SimpleCount({ mode = "simple" }: { mode?: "simple" | "vi
         <div className="flex min-h-0 flex-col gap-5 overflow-y-auto">
           {!active && (
             <section className="card space-y-3 p-5">
-              {usePreset && <>
+              {presets.error && <p role="alert">{presets.error} <button className="btn btn-outline btn-sm" onClick={presets.retry}>다시 불러오기</button></p>}
+              {(mode === "vision" || presets.rows.length > 1 || (!!selected && !preset)) && <>
                 <label className="block text-lg font-bold">작업 설정
                   <select className="field mt-2" value={selected} onChange={(e) => { setSelected(e.target.value); setTargets({}); }} disabled={presets.loading}>
                     <option value="">작업 선택</option>
                     {presets.rows.map((p) => <option value={p.id} key={p.id}>{p.name}</option>)}
                   </select>
                 </label>
-                {presets.error && <p role="alert">{presets.error} <button className="btn btn-outline btn-sm" onClick={presets.retry}>다시 불러오기</button></p>}
-                {!presets.loading && !presets.error && !preset && <p>등록된 작업을 선택하세요. 작업 등록은 환경 설정의 작업 설정에서 할 수 있습니다.</p>}
+
+                {!presets.loading && !presets.error && !preset && <p>작업을 선택하세요.</p>}
                 {mode === "vision" && preset && <p className="break-all">모델: {preset.flow.counter === "cvzone" ? "CVZone" : preset.flow.model_path}</p>}
               </>}
               {brand?.options.map((option) => <OptionButtons key={option.key} option={option} value={targets[option.key] || ""} onChange={(value) => setTargets((old) => ({...old, [option.key]: value}))}/>)}

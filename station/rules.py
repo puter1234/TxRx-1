@@ -60,6 +60,11 @@ def validate_recipe(recipe: Recipe, brand: Brand, require_regions: bool = True):
         raise RuleError("모든 옵션의 목표값을 하나씩 선택하세요.")
     if any(k not in choices or v not in choices[k] for k, v in recipe.targets.items()):
         raise RuleError("등록되지 않은 목표 옵션입니다.")
+    if brand.caps:
+        for channel in recipe.channels:
+            keys = ["barcode_" + item for item in recipe.barcode_targets] if channel == "barcode" else [channel]
+            if any(not getattr(brand.caps, key) for key in keys):
+                raise RuleError("브랜드에서 사용하지 않는 검사 항목입니다.")
     if "rfid" in recipe.channels:
         if brand.decoder.kind == "none":
             raise RuleError("이 메이커의 RFID 규칙을 먼저 등록하세요.")
@@ -73,8 +78,11 @@ def validate_recipe(recipe: Recipe, brand: Brand, require_regions: bool = True):
             raise RuleError("헤지스 규칙에서 확인된 필드는 품번·색상·사이즈입니다.")
     # OCR finds printed lines automatically. Legacy region coordinates are not
     # a prerequisite and must not silently replace the established pipeline.
-    if "barcode" in recipe.channels and not brand.barcode_records:
-        raise RuleError("바코드 기준표를 먼저 등록하세요.")
+    if "barcode" in recipe.channels:
+        for source in recipe.barcode_targets:
+            records = brand.barcode_records if source == "tag" else brand.barcode_poly_records
+            if not records:
+                raise RuleError(("가격택" if source == "tag" else "폴리백") + " 바코드 기준표를 등록하세요.")
 
 
 def judge(recipe: Recipe, observations: dict[str, dict[str, str]]) -> list[dict]:

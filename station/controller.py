@@ -84,6 +84,7 @@ class Controller:
                             **brand,
                             "decoder": {**brand["decoder"], "records": {}},
                             "barcode_records": {},
+                            "barcode_poly_records": {},
                         },
                     }
                 )
@@ -187,7 +188,8 @@ class Controller:
         if not preset.enabled or preset.revision != recipe.preset_revision:
             raise Conflict("작업 설정이 변경되었습니다. 다시 선택하세요.")
         return Recipe.model_validate({**recipe.model_dump(), "kind": preset.kind,
-            "brand_id": preset.brand_id, "channels": preset.channels,
+            "brand_id": preset.brand_id,
+            "channels": recipe.channels if preset.kind == "condition" else preset.channels,
             "flow": preset.flow.model_dump(), "work_name": preset.name})
 
     def new_session(self, recipe: Recipe, actor="local-operator"):

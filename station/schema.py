@@ -58,16 +58,25 @@ class Decoder(Model):
     records: dict[str, dict[str, str]] = Field(default_factory=dict, max_length=100000)
 
 
+class BrandCaps(Model):
+    rfid: bool = False
+    ocr: bool = True
+    barcode_tag: bool = False
+    barcode_poly: bool = False
+
+
 class Brand(Model):
     id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,47}$")
     name: str = Field(min_length=1, max_length=60)
     revision: int = Field(default=1, ge=1)
+    caps: BrandCaps | None = None
     options: list[Option] = Field(default_factory=list, max_length=30)
     decoder: Decoder = Field(default_factory=Decoder)
     ocr_regions: list[Region] = Field(default_factory=list, max_length=30)
     barcode_records: dict[str, dict[str, str]] = Field(
         default_factory=dict, max_length=100000
     )
+    barcode_poly_records: dict[str, dict[str, str]] = Field(default_factory=dict, max_length=100000)
     note: str = Field(default="", max_length=3000)
 
     @model_validator(mode="after")
@@ -98,6 +107,8 @@ class Brand(Model):
             self.decoder.records = clean
         for record in list(self.decoder.records.values()) + list(
             self.barcode_records.values()
+        ) + list(
+            self.barcode_poly_records.values()
         ):
             import re
 
@@ -166,12 +177,15 @@ class WorkPreset(Model):
     kind: Literal["simple", "condition", "vision"] = "simple"
     brand_id: str = "__simple__"
     channels: list[Literal["ocr", "rfid", "barcode"]] = Field(default_factory=list, max_length=3)
+    barcode_targets: list[Literal["tag", "poly"]] = Field(default_factory=lambda: ["tag"], max_length=2)
     flow: FlowSettings = Field(default_factory=FlowSettings)
 
     @model_validator(mode="after")
     def coherent(self):
         if len(self.channels) != len(set(self.channels)):
             raise ValueError("검사 항목이 중복됩니다.")
+        if "barcode" in self.channels and (not self.barcode_targets or len(self.barcode_targets) != len(set(self.barcode_targets))):
+            raise ValueError("바코드 검사 대상을 선택하세요.")
         if self.kind == "simple" and (self.channels or self.flow.counter != "sensor" or self.brand_id != "__simple__"):
             raise ValueError("단순 계수는 센서만 사용합니다.")
         if self.kind == "condition" and (not self.channels or self.brand_id == "__simple__"):
@@ -187,10 +201,12 @@ class Recipe(Model):
     brand_revision: int = Field(ge=1)
     targets: dict[str, str] = Field(max_length=30)
     channels: list[Literal["ocr", "rfid", "barcode"]] = Field(max_length=3)
+    barcode_targets: list[Literal["tag", "poly"]] = Field(default_factory=lambda: ["tag"], max_length=2)
     target_count: int | None = Field(default=None, ge=1, le=1000000)
     preset_id: str | None = None
     preset_revision: int | None = None
     flow: FlowSettings | None = None
+    default_flow: bool = False
     work_name: str = ""
     test_run: bool = False
 
@@ -208,6 +224,8 @@ class Recipe(Model):
             raise ValueError("단순 계수는 센서만 사용합니다.")
         if len(self.channels) != len(set(self.channels)):
             raise ValueError("중복 검사 항목")
+        if "barcode" in self.channels and (not self.barcode_targets or len(set(self.barcode_targets)) != len(self.barcode_targets)):
+            raise ValueError("바코드 검사 대상을 선택하세요.")
         return self
 
 

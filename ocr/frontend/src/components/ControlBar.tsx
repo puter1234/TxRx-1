@@ -41,7 +41,7 @@ export default function ControlBar({ mode, createConfig, createReady = true }: {
   const start = () =>
     run(async () => {
       if (!active && mode !== "condition")
-        await startSession(createConfig || { mode, countMode: "continuous" });
+        await startSession(createConfig || { mode, countMode: "continuous" }, true);
       else await sendCommand("start");
     });
   const open = (kind: typeof dialog, change = 1) => {
@@ -90,12 +90,12 @@ export default function ControlBar({ mode, createConfig, createReady = true }: {
             ? "계수 시작"
             : phase === "PAUSED"
               ? "재개"
-              : "검사 시작"}
+              : mode === "condition" ? "검사 시작" : "계수 시작"}
         </button>
         <button
           className="btn btn-outline"
           onClick={() => run(() => sendCommand("stop"))}
-          disabled={!online || !active || pending.includes("stop")}
+          disabled={!online || (!active && !pending.includes("create")) || pending.includes("stop")}
         >
           <Pause size={22} />
           일시정지
@@ -167,7 +167,7 @@ export default function ControlBar({ mode, createConfig, createReady = true }: {
         <button
           className="btn btn-danger ml-auto"
           onClick={() => run(() => sendCommand("stop"))}
-          disabled={!online || !active || pending.includes("stop")}
+          disabled={!online || (!active && !pending.includes("create")) || pending.includes("stop")}
         >
           <Square size={22} />
           정지

@@ -136,6 +136,8 @@ describe("restored original screens", () => {
     const user = userEvent.setup();
     const fetcher = vi.fn(async (path: string, options?: any) => {
       if (path === "/api/brands") return response([brand]);
+      if (path === "/api/presets") return response([]);
+      if (path === "/api/status") return response({...snapshot, session: {...session, phase: "FEEDING"}});
       if (path === "/api/sessions")
         return response({
           ...snapshot,
@@ -157,7 +159,7 @@ describe("restored original screens", () => {
     await user.click(screen.getByRole("button", { name: "N3" }));
     await user.click(screen.getByRole("button", { name: "095" }));
     const start = screen.getByRole("button", {
-      name: "검사 화면 열기",
+      name: "검사 시작",
     }) as HTMLButtonElement;
     expect(start.disabled).toBe(true);
     await user.click(screen.getByRole("button", { name: "SS" }));
@@ -166,6 +168,7 @@ describe("restored original screens", () => {
       ([path]) => path === "/api/sessions",
     )!;
     expect(JSON.parse(creation[1].body).channels).toEqual(["rfid"]);
+    expect(fetcher.mock.calls.filter(([path]) => path === "/api/commands").map(([,options]) => JSON.parse(options.body).action)).toEqual(["start"]);
     expect(JSON.parse(creation[1].body).targets).toEqual({
       style: "HUTS6C612",
       color: "N3",
@@ -344,7 +347,7 @@ describe("restored original screens", () => {
     expect(
       (
         screen.getByRole("button", {
-          name: "검사 화면 열기",
+          name: "검사 시작",
         }) as HTMLButtonElement
       ).disabled,
     ).toBe(true);

@@ -17,6 +17,7 @@ import Help from "../components/Help";
 import OptionButtons from "../components/OptionButtons";
 import type { Brand, Checks } from "../lib/types";
 import { usePresets } from "../lib/presets";
+import { ended, sendCommand, reportError } from "../lib/station";
 
 const STEPS = ["브랜드 및 검사 항목", "수량 설정", "조건 설정"];
 
@@ -141,20 +142,18 @@ export default function ConditionWizard() {
   const brandPresets = presets.rows.filter((p) => p.brand_id === w.brandId);
   useEffect(() => {
     const id = params.get("preset");
-    if (linked || !id || presets.loading) return;
+    if (linked || !id || presets.loading || !brands.length) return;
     const row = presets.rows.find((p) => p.id === id);
-    setW({ presetId: id, brandId: row?.brand_id || null, testRun: params.get("test") === "1", step: 1, targets: {} });
+    const b = brands.find(item => item.id === row?.brand_id);
+    setW({ presetId: id, brandId: row?.brand_id || null, testRun: params.get("test") === "1", step: 1, targets: {},
+      ...(b ? {checks: {...b.caps}} : {}) });
     setLinked(true);
-  }, [params, presets.rows, presets.loading, linked, setW]);
+  }, [params, presets.rows, presets.loading, linked, brands, setW]);
   useEffect(() => {
     if (!w.presetId && hardware && !params.get("preset")) {
       const row = presets.rows.find((p) => p.brand_id === w.brandId);
       if (row) setW({ presetId: row.id });
     }
-    if (preset) setW({ brandId: preset.brand_id, checks: {
-      ocr: preset.channels.includes("ocr"), rfid: preset.channels.includes("rfid"),
-      barcode_tag: preset.channels.includes("barcode"), barcode_poly: false,
-    }});
   }, [preset, presets.rows, w.presetId, w.brandId, hardware, params, setW]);
 
   useEffect(() => {
@@ -177,15 +176,14 @@ export default function ConditionWizard() {
       brandId: b.id,
       presetId: hardware ? presets.rows.find((p) => p.brand_id === b.id)?.id || "" : "",
       targets: {},
-      checks: { ...b.caps, barcode_tag: false, barcode_poly: false },
+      checks: { ...b.caps },
     });
   };
 
   const toggle = (key: keyof Checks) => {
     if (
       !brand ||
-      !brand.caps[key] ||
-      !!preset
+      !brand.caps[key]
     )
       return;
     setW({ checks: { ...w.checks, [key]: !w.checks[key] } });
@@ -195,7 +193,7 @@ export default function ConditionWizard() {
     !!brand && (brand.caps.barcode_tag || brand.caps.barcode_poly);
   const barcodeChecked = w.checks.barcode_tag || w.checks.barcode_poly;
   const toggleBarcode = () => {
-    if (!brand || !barcodeCapable || preset) return;
+    if (!brand || !barcodeCapable) return;
     if (barcodeChecked)
       setW({
         checks: { ...w.checks, barcode_tag: false, barcode_poly: false },
@@ -216,7 +214,7 @@ export default function ConditionWizard() {
     w.checks.barcode_tag ||
     w.checks.barcode_poly;
   const canNext1 =
-    !!brand && anyCheck && (!hardware || !!preset) && (!w.presetId || !!preset);
+    !!brand && anyCheck && (!w.presetId || !!preset) && !presets.loading && !presets.error;
   const validTargets =
     !!brand?.source.options.length &&
     brand.source.options.every((o) => o.values.includes(w.targets[o.key]));
@@ -253,7 +251,7 @@ export default function ConditionWizard() {
       });
       nav("/condition/run");
     } catch {
-      // The shared API error banner retains the server's reason.
+      if (!ended(useApp.getState().snapshot?.session)) nav("/condition/run");
     } finally {
       setStarting(false);
     }
@@ -262,7 +260,7 @@ export default function ConditionWizard() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center gap-4 px-6 pt-5">
-        <button className="btn btn-outline btn-sm" onClick={() => nav("/")}>
+        <button className="btn btn-outline btn-sm" disabled={starting} onClick={() => nav("/")}>
           <ArrowLeft size={20} /> 처음 화면
         </button>
         <h1 className="text-2xl font-extrabold">조건 계수 설정</h1>
@@ -322,15 +320,13 @@ export default function ConditionWizard() {
             </div>
 
             <div className="card flex flex-col p-6">
-              {brand && (hardware || brandPresets.length > 0 || w.presetId) && <div className="mb-5 space-y-2">
-                <label className="block text-lg font-bold">작업 설정
+              {brand && brandPresets.length > 1 && <div className="mb-5 space-y-2">
+                <label className="block text-lg font-bold">촬영 설정
                   <select className="field mt-2" value={w.presetId} disabled={presets.loading} onChange={(e) => setW({presetId: e.target.value})}>
-                    <option value="">{hardware ? "작업 선택" : "검사 항목 직접 선택"}</option>
+                    <option value="" disabled>촬영 설정 선택</option>
                     {brandPresets.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                 </label>
-                {preset && <p>검사 항목은 저장된 작업 설정을 사용합니다.</p>}
-                {!presets.loading && hardware && !preset && <p>환경 설정의 작업 설정에서 이 브랜드의 작업을 등록하세요.</p>}
               </div>}
               {presets.error && <p role="alert">{presets.error} <button className="btn btn-outline btn-sm" onClick={presets.retry}>다시 불러오기</button></p>}
               <h2 className="text-xl font-extrabold">
@@ -346,26 +342,24 @@ export default function ConditionWizard() {
                     label="RFID 태그 인식"
                     checked={w.checks.rfid}
                     disabled={!brand.caps.rfid}
-                    locked={!!preset}
                     onToggle={() => toggle("rfid")}
                   />
                   <CheckRow
                     label="OCR 문자 인식"
                     checked={w.checks.ocr}
                     disabled={!brand.caps.ocr}
-                    locked={!!preset}
                     onToggle={() => toggle("ocr")}
                   />
                   <CheckRow
                     label="바코드"
                     checked={barcodeChecked}
                     disabled={!barcodeCapable}
-                    locked={!!preset}
                     onToggle={toggleBarcode}
                   />
-                  <div className="flex justify-end">
-                    <Help text="바코드는 선택 항목입니다. 여러 인식 결과가 있어도 제품 하나는 한 번만 계수합니다." />
-                  </div>
+                  {barcodeChecked && <div className="space-y-2 pl-6">
+                    <CheckRow label="가격택 바코드" checked={w.checks.barcode_tag} disabled={!brand.caps.barcode_tag} onToggle={() => toggle("barcode_tag")}/>
+                    <CheckRow label="폴리백 바코드" checked={w.checks.barcode_poly} disabled={!brand.caps.barcode_poly} onToggle={() => toggle("barcode_poly")}/>
+                  </div>}
                 </div>
               )}
             </div>
@@ -541,6 +535,7 @@ export default function ConditionWizard() {
       <div className="flex shrink-0 items-center gap-3 border-t border-line bg-white px-6 py-4">
         <button
           className="btn btn-outline"
+          disabled={starting}
           onClick={() =>
             w.step === 1 ? nav("/") : setW({ step: (w.step - 1) as 1 | 2 | 3 })
           }
@@ -567,6 +562,7 @@ export default function ConditionWizard() {
           </button>
         )}
         <div className="ml-auto" />
+        {starting && <button className="btn btn-danger" onClick={() => { void sendCommand("stop").catch(reportError); }}>정지</button>}
         {w.step < 3 ? (
           <button
             className="btn btn-primary"
@@ -587,7 +583,7 @@ export default function ConditionWizard() {
             disabled={!online || starting || !validTargets || !canNext1 || (w.countMode === "target" && (!Number.isInteger(w.target) || w.target < 1 || w.target > 1000000))}
             onClick={start}
           >
-            <Play size={24} /> 검사 화면 열기
+            <Play size={24} /> 검사 시작
           </button>
         )}
       </div>

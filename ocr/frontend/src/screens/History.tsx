@@ -131,7 +131,7 @@ export default function History() {
       nav("/condition/setup");
     } else {
       nav(job.mode === "vision" ? "/vision" : "/simple", {
-        state: { presetId: cfg?.presetId, targets: cfg?.targets || {}, target: cfg?.target || null },
+        state: { presetId: cfg?.presetId, targets: cfg?.targets || {}, target: cfg?.target || null, testRun: cfg?.testRun || false },
       });
     }
   };
