@@ -128,9 +128,9 @@ class Reader:
                 raise IOError("RFID region SET rejected")
             if self._response(0x08) != b"\x06":
                 raise IOError("RFID region GET mismatch")
-            if self._response(0xB6, (2000).to_bytes(2, "big")) != b"\x00":
+            if self._response(0xB6, (2600).to_bytes(2, "big")) != b"\x00":
                 raise IOError("RFID power SET rejected")
-            if self._response(0xB7) != (2000).to_bytes(2, "big"):
+            if self._response(0xB7) != (2600).to_bytes(2, "big"):
                 raise IOError("RFID power GET mismatch")
             self.initialized = True
 
