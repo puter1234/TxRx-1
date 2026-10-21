@@ -181,9 +181,10 @@ class Reader:
                         raise InventoryCancelled("RFID inventory cancelled")
                     for m in self.parser.feed(data):
                         if m.kind == 1 and m.command == 0xFF:
-                            # YRM inventory-failed (0x15) is a missed attempt.
-                            # Other device/protocol errors must still stop the job.
-                            if first_read and m.payload == b"\x15":
+                            # No tag response or an air CRC failure (0x15) is
+                            # a missed round, including during bench inventory.
+                            # Keep collected tags and wait for later rounds.
+                            if m.payload == b"\x15":
                                 no_tag = True
                                 continue
                             raise IOError("RFID inventory error: " + m.payload.hex())
