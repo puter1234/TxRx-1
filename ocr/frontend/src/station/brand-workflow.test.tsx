@@ -134,8 +134,8 @@ it("keeps product edits while opening the same brand's timing settings and saves
     </MemoryRouter>,
   );
   await user.click(screen.getByRole("button", { name: "브랜드 A 상세 설정" }));
-  await user.clear(screen.getByLabelText("사이즈 선택값"));
-  await user.type(screen.getByLabelText("사이즈 선택값"), "090, 095, 100");
+  await user.type(screen.getByLabelText("사이즈 추가값"), "090");
+  await user.click(screen.getByRole("button", {name: "사이즈 값 추가"}));
   await user.click(screen.getByRole("tab", { name: "촬영과 센서" }));
   const delay = await screen.findByLabelText("첫 촬영 (ms)");
   await user.clear(delay);
@@ -150,10 +150,7 @@ it("keeps product edits while opening the same brand's timing settings and saves
   expect(saved.channels).toEqual(["rfid", "ocr", "barcode"]);
   expect(saved.barcode_targets).toEqual(["tag", "poly"]);
   await user.click(screen.getByRole("tab", { name: "상품 조건" }));
-  expect(screen.getByLabelText("사이즈 선택값")).toHaveProperty(
-    "value",
-    "090, 095, 100",
-  );
+  expect(screen.getByRole("button", {name: "사이즈 090 삭제"})).toBeTruthy();
   expect(screen.queryByText("설정 변경 사유")).toBeNull();
 });
 
@@ -296,7 +293,8 @@ it("uses the existing RFID field names when adding product options in Korean", a
   for (const [label, value] of [["품번", "HUTS6C612"], ["색상", "N3"], ["사이즈", "095"]]) {
     await user.type(screen.getByLabelText("새 옵션 이름"), label);
     await user.click(screen.getByRole("button", {name: "옵션 추가"}));
-    await user.type(screen.getByLabelText(`${label} 선택값`), value);
+    await user.type(screen.getByLabelText(`${label} 추가값`), value);
+    await user.click(screen.getByRole("button", {name: `${label} 값 추가`}));
   }
   await user.click(screen.getByRole("button", {name: "설정 저장"}));
   expect(saved?.options.map(o => o.key)).toEqual(["style", "color", "size"]);

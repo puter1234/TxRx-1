@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Plus, Trash2, Save, Upload, Download } from "lucide-react";
 import Help from "../components/Help";
-import ColorAssignments from "../components/ColorAssignments";
+import OptionValues from "../components/OptionValues";
 import { isColorOption } from "../lib/optionColors";
 import { api, Field, Badge, download, uuid } from "./shared";
 import type { Action, Brand, Fields, Option } from "./shared";
@@ -188,11 +188,9 @@ export default function Config({
               </Field>
             </div>
             <h3 className="text-lg font-extrabold">품번, 색상, 사이즈</h3>
-            <div className="flex justify-end">
-              <Help text="사이즈나 색상의 선택값을 쉼표 또는 줄바꿈으로 나눠 입력합니다. 계수할 때는 등록한 값 중 하나를 선택합니다." />
-            </div>
+            <div className="grid gap-4 lg:grid-cols-3">
             {draft.options.map((o, i) => (
-              <div className="rounded-xl border border-line p-4" key={o.key}>
+              <div className="min-w-0 self-start rounded-xl border border-line p-4" key={o.key}>
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <strong className="text-xl">{o.label}</strong>
                   <button
@@ -211,25 +209,10 @@ export default function Config({
                     옵션 삭제
                   </button>
                 </div>
-                <Field label="표시 이름">
-                  <input
-                    className="field"
-                    value={o.label}
-                    onChange={(e) => option(i, { label: e.target.value })}
-                  />
-                </Field>
-                <textarea
-                  aria-label={`${o.label} 선택값`}
-                  className="field mt-3 min-h-24 py-3"
-                  value={o.values.join(", ")}
-                  onChange={(e) =>
-                    option(i, {
-                      values: e.target.value
-                        .split(/[,\n]/)
-                        .map((v) => v.trim()),
-                    })
-                  }
-                />
+                <OptionValues option={o} onChange={patch => option(i, patch)}/>
+                <details className="mt-3">
+                  <summary className="cursor-pointer text-sm font-bold">표시 설정</summary>
+                  <Field label="표시 이름"><input className="field" value={o.label} onChange={e => option(i, {label: e.target.value})}/></Field>
                 <label className="mt-4 flex items-center gap-3 text-lg font-bold">
                   <input
                     type="checkbox"
@@ -243,14 +226,10 @@ export default function Config({
                   />
                   색상 버튼 사용
                 </label>
-                {isColorOption(o) && (
-                  <ColorAssignments
-                    option={o}
-                    onChange={(colors) => option(i, { colors })}
-                  />
-                )}
+                </details>
               </div>
             ))}
+            </div>
             <div className="flex flex-wrap gap-3">
               <input
                 aria-label="새 옵션 이름"
@@ -269,7 +248,7 @@ export default function Config({
                 onClick={() => {
                   setDraft({
                     ...draft,
-                    options: [...draft.options, { key: optionKey, label: label.trim(), values: [""] }],
+                    options: [...draft.options, { key: optionKey, label: label.trim(), values: [] }],
                   });
                   setKey("option_" + uuid().slice(0, 8));
                   setLabel("");
@@ -371,7 +350,7 @@ export default function Config({
           <button
             className="btn btn-primary"
             disabled={
-              locked || !draft.id || !draft.name || reason.trim().length < 3
+              locked || !draft.id || !draft.name || draft.options.some(o => !o.values.length) || reason.trim().length < 3
             }
             onClick={() =>
               action(async () => {

@@ -21,13 +21,15 @@ const palette = [
 export default function ColorAssignments({
   option,
   onChange,
+  onlyCode,
 }: {
   option: Option;
   onChange: (colors: Record<string, string>) => void;
+  onlyCode?: string;
 }) {
   const [code, setCode] = useState<string | null>(null),
     [custom, setCustom] = useState("#FFFFFF");
-  const codes = [...new Set(option.values.filter((v) => v.trim()))];
+  const codes = [...new Set(option.values.filter((v) => v.trim() && (onlyCode === undefined || v === onlyCode)))];
   const assign = (color: string | null) => {
     if (code === null) return;
     const colors = { ...option.colors };
@@ -37,26 +39,26 @@ export default function ColorAssignments({
     setCode(null);
   };
   return (
-    <div className="mt-4">
-      <div className="mb-3 flex items-center">
+    <div className={onlyCode === undefined ? "mt-4" : ""}>
+      {onlyCode === undefined && <div className="mb-3 flex items-center">
         <h4 className="text-lg font-extrabold">코드별 색상</h4>
         <Help text="코드 버튼을 눌러 실제 색상을 지정하세요. 작업 화면의 버튼에 반영됩니다. 판정에는 원래 코드를 사용합니다." />
-      </div>
+      </div>}
       <div className="flex max-h-80 flex-wrap gap-3 overflow-y-auto p-1">
         {codes.map((v) => (
           <button
             key={v}
             type="button"
             aria-label={v + " 색상 지정"}
-            className="min-h-16 min-w-28 rounded-xl border-2 border-ink-700 bg-white px-5 py-3 text-xl font-extrabold"
+            className={onlyCode === undefined ? "min-h-16 min-w-28 rounded-xl border-2 border-ink-700 bg-white px-5 py-3 text-xl font-extrabold" : "btn btn-outline btn-sm min-w-20"}
             style={optionColorStyle(option, v)}
             onClick={() => {
               setCode(v);
               setCustom(option.colors?.[v] || "#FFFFFF");
             }}
           >
-            {v}
-            {!option.colors?.[v] && (
+            {onlyCode === undefined ? v : "색상"}
+            {onlyCode === undefined && !option.colors?.[v] && (
               <span className="mt-1 block text-base font-bold">색상 지정</span>
             )}
           </button>
