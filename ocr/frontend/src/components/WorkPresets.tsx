@@ -21,6 +21,8 @@ export const defaults = {
   capture_count: 1,
   capture_interval_ms: 100,
   rfid_delay_ms: 100,
+  rfid_attempts: 3,
+  rfid_interval_ms: 100,
   result_timeout_ms: 5000,
   departure_timeout_ms: 10000,
   reconnect_interval_ms: 2000,
@@ -128,7 +130,7 @@ function PresetEditor({
     api<Preset[]>("/presets")
       .then((r) => {
         if (!alive) return;
-        const rows = r.filter(
+        const rows = r.map(p => ({ ...p, flow: { ...defaults, ...p.flow } })).filter(
           (p) => p.kind === kind && (!brandId || p.brand_id === brandId),
         );
         setRows(rows);
@@ -181,13 +183,14 @@ function PresetEditor({
       setBusy(false);
     }
   };
-  const number = (key: string, label: string, step = 1) => (
+  const number = (key: string, label: string, step = 1, min = 0, max?: number) => (
     <label key={key} className="block font-bold">
       {label}
       <input
         className="field mt-1"
         type="number"
-        min={0}
+        min={min}
+        max={max}
         step={step}
         value={draft?.flow[key] ?? ""}
         onChange={(e) =>
@@ -245,10 +248,6 @@ function PresetEditor({
             {number("low_speed_ms", "저속 유지 (ms)")}
             {draft.kind !== "simple" &&
               number("capture_delay_ms", "첫 촬영 (ms)")}
-            {(brandId
-              ? brands.find((b) => b.id === brandId)?.caps.rfid
-              : draft.channels.includes("rfid")) &&
-              number("rfid_delay_ms", "RFID 확인 (ms)")}
           </div>
           {draft.kind !== "simple" && (
             <div className="grid grid-cols-3 gap-4">
@@ -272,6 +271,15 @@ function PresetEditor({
                   {number("capture_interval_ms", "촬영 간격 (ms)")}
                 </>
               )}
+            </div>
+          )}
+          {(brandId
+            ? brands.find((b) => b.id === brandId)?.caps.rfid
+            : draft.channels.includes("rfid")) && (
+            <div className="grid grid-cols-3 gap-4">
+              {number("rfid_delay_ms", "RFID 첫 읽기 (ms)")}
+              {number("rfid_attempts", "RFID 최대 횟수", 1, 1, 100)}
+              {number("rfid_interval_ms", "RFID 읽기 간격 (ms)", 1, 20, 10000)}
             </div>
           )}
         </section>

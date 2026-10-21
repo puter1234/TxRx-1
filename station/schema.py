@@ -132,6 +132,8 @@ class FlowSettings(Model):
     capture_count: int = Field(default=1, ge=1, le=30)
     capture_interval_ms: int = Field(default=100, ge=0, le=10000)
     rfid_delay_ms: int = Field(default=100, ge=0, le=60000)
+    rfid_attempts: int = Field(default=3, ge=1, le=100)
+    rfid_interval_ms: int = Field(default=100, ge=20, le=10000)
     result_timeout_ms: int = Field(default=5000, ge=100, le=120000)
     departure_timeout_ms: int = Field(default=10000, ge=100, le=120000)
     reconnect_interval_ms: int = Field(default=2000, ge=100, le=60000)
@@ -168,6 +170,10 @@ class FlowSettings(Model):
             raise ValueError("클래스 번호는 0 이상입니다.")
         return self
 
+    def validate_rfid_timing(self):
+        if self.rfid_delay_ms + self.rfid_attempts * self.rfid_interval_ms >= self.result_timeout_ms:
+            raise ValueError("검사 완료 제한을 RFID 읽기 종료 시간보다 길게 설정하세요.")
+
 
 class WorkPreset(Model):
     id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,47}$")
@@ -182,6 +188,8 @@ class WorkPreset(Model):
 
     @model_validator(mode="after")
     def coherent(self):
+        if "rfid" in self.channels:
+            self.flow.validate_rfid_timing()
         if len(self.channels) != len(set(self.channels)):
             raise ValueError("검사 항목이 중복됩니다.")
         if "barcode" in self.channels and (not self.barcode_targets or len(self.barcode_targets) != len(set(self.barcode_targets))):
@@ -212,6 +220,8 @@ class Recipe(Model):
 
     @model_validator(mode="after")
     def channels_unique(self):
+        if "rfid" in self.channels and self.flow:
+            self.flow.validate_rfid_timing()
         if self.kind == "condition" and (not self.targets or not self.channels):
             raise ValueError("조건 계수는 목표값과 검사 항목이 필요합니다.")
         if self.kind == "simple" and (

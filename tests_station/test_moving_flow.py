@@ -36,6 +36,7 @@ class IO:
         assert self.on
         self.log.append("rfid")
         return [{"epc": "1D44D280281B70D75A8DF0000E114D7A"}]
+    def inventory_once(self, *args): return self.inventory(*args)
 
 
 class Camera:

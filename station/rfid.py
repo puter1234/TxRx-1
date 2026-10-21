@@ -19,6 +19,10 @@ class Frame:
     payload: bytes
 
 
+class InventoryCancelled(RuntimeError):
+    pass
+
+
 def frame(command: int, payload: bytes = b"", kind: int = 0):
     if len(payload) > 512:
         raise ValueError("RFID frame too long")
@@ -130,22 +134,38 @@ class Reader:
                 raise IOError("RFID power GET mismatch")
             self.initialized = True
 
+    def inventory_once(self, timeout_ms: int, cancel: threading.Event | None = None):
+        return self._inventory(timeout_ms, cancel, rounds=1, first_read=True)
+
     def inventory(self, window_ms: int, cancel: threading.Event | None = None):
+        return self._inventory(window_ms, cancel, rounds=100, first_read=False)
+
+    def _inventory(self, window_ms, cancel, *, rounds, first_read):
         if not self.initialized:
             raise RuntimeError("RFID initialization required")
         with self.lock:
+            if cancel and cancel.is_set():
+                raise InventoryCancelled("RFID inventory cancelled")
             self.parser = Parser()
             self.port.reset_input_buffer()
-            self._send(0x27, b"\x22\x00\x64")
+            self._send(0x27, b"\x22" + rounds.to_bytes(2, "big"))
             deadline = time.monotonic() + window_ms / 1000
             tags = {}
             try:
                 while time.monotonic() < deadline:
                     if cancel and cancel.is_set():
-                        raise RuntimeError("RFID inventory cancelled")
-                    for m in self.parser.feed(self.port.read(512)):
+                        raise InventoryCancelled("RFID inventory cancelled")
+                    no_tag = False
+                    data = self.port.read(512)
+                    if cancel and cancel.is_set():
+                        raise InventoryCancelled("RFID inventory cancelled")
+                    for m in self.parser.feed(data):
                         if m.kind == 1 and m.command == 0xFF:
-                            # No-tag/error responses are not a successful inventory.
+                            # YRM inventory-failed (0x15) is a missed attempt.
+                            # Other device/protocol errors must still stop the job.
+                            if first_read and m.payload == b"\x15":
+                                no_tag = True
+                                continue
                             raise IOError("RFID inventory error: " + m.payload.hex())
                         if m.kind == 2 and m.command == 0x22:
                             tag = tag_notice(m)
@@ -156,6 +176,10 @@ class Reader:
                             )
                             record["samples"].append(tag["rssi"])
                             record["last_ns"] = tag["mono_ns"]
+                    # Process the whole received chunk so simultaneous distinct
+                    # EPCs remain visible to the product mismatch check.
+                    if first_read and (tags or no_tag):
+                        break
                 if self.parser.errors:
                     raise IOError("RFID frame checksum/length error")
             finally:

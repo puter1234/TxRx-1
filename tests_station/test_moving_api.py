@@ -53,6 +53,7 @@ def line(tmp_path, monkeypatch, brand):
             self.last_error = None
         def initialize(self): self.initialized = True
         def inventory(self, *args): return [{"epc": EPC}, {"epc": EPC}]
+        def inventory_once(self, *args): return self.inventory(*args)
         def close(self): self.port.is_open = False
     monkeypatch.setattr("station.hardware.Reader", Reader)
     class Camera:

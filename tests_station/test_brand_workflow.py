@@ -41,7 +41,8 @@ def test_disabled_brand_channel_cannot_be_started(brand, recipe):
 
 def test_operator_start_uses_selected_checks_and_saved_timing(line, recipe):
     preset = WorkPreset(id="brand-flow", name="브랜드 촬영", kind="condition", brand_id="hazzys",
-                        channels=["ocr", "rfid"], flow={"capture_delay_ms": 350, "low_speed_ms": 900})
+                        channels=["ocr", "rfid"], flow={"capture_delay_ms": 350, "low_speed_ms": 900,
+                                                     "rfid_attempts": 4, "rfid_interval_ms": 80})
     assert line.client.post("/api/presets", json={"preset": preset.model_dump()}).status_code == 200
     line.client.post("/api/auth/logout", json={})
     enter(line.client)
@@ -52,6 +53,8 @@ def test_operator_start_uses_selected_checks_and_saved_timing(line, recipe):
     assert actual["channels"] == ["rfid"]
     assert actual["flow"]["capture_delay_ms"] == 350
     assert actual["flow"]["low_speed_ms"] == 900
+    assert actual["flow"]["rfid_attempts"] == 4
+    assert actual["flow"]["rfid_interval_ms"] == 80
 
 
 @pytest.mark.parametrize("kind", ["simple", "condition"])

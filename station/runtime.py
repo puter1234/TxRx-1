@@ -43,6 +43,9 @@ class HardwareCycle:
 
         # Cancellation does not free readiness while a native/library call still runs.
         future = asyncio.get_running_loop().run_in_executor(None, run)
+        # Cancellation leaves the native worker running until its own STOP.
+        # Retrieve any late exception even when the awaiting task was cancelled.
+        future.add_done_callback(lambda done: None if done.cancelled() else done.exception())
         return await asyncio.shield(future)
 
     def blockers(self):

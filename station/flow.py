@@ -249,7 +249,10 @@ class FlowCycle(HardwareCycle):
                     else:
                         await self.finish()
                     return
-                p["start"] += now - max(self.wait_started, p["start"])
+                paused_for = now - max(self.wait_started, p["start"])
+                p["start"] += paused_for
+                if "rfid_next_at" in p:
+                    p["rfid_next_at"] += paused_for
                 # Resume incomplete channels from the stopped position. Completed
                 # inspection results remain attached to the same product ID.
                 if not p["camera_done"]:
@@ -370,24 +373,51 @@ class FlowCycle(HardwareCycle):
         self.event("CAPTURE_FINISHED", {"count": len(p["frames"])})
 
     async def read_rfid(self, p):
-        p["inspection"]["rfid_delay_actual_ms"] = (time.monotonic() - p["start"]) * 1000
+        recipe = Recipe.model_validate(p["inspection"]["recipe"])
+        cfg = recipe.flow
         self.event("RFID_STARTED")
-        result = await self.offload(self.io.inventory, self.c.config.rfid_window_ms or 500, self.cancel)
-        if not self.live():
-            return
-        # The reader deduplicates repeated inventory responses into one product result.
-        unique = {r["epc"]: r for r in result}
+        unique = {}
+        while p.get("rfid_attempts", 0) < cfg.rfid_attempts:
+            due = p.get("rfid_next_at", p["start"] + cfg.rfid_delay_ms / 1000)
+            await asyncio.sleep(max(0, due - time.monotonic()))
+            if not self.live():
+                return
+            started = time.monotonic()
+            p["rfid_next_at"] = started + cfg.rfid_interval_ms / 1000
+            p["rfid_attempts"] = p.get("rfid_attempts", 0) + 1
+            p["inspection"]["rfid_attempts"] = p["rfid_attempts"]
+            actual_delay = (started - p["start"]) * 1000
+            if p["rfid_attempts"] == 1:
+                p["inspection"]["rfid_delay_actual_ms"] = actual_delay
+            attempt = {"attempt": p["rfid_attempts"], "after_trigger_ms": actual_delay, "status": "reading"}
+            p["inspection"].setdefault("rfid_reads", []).append(attempt)
+            try:
+                result = await self.offload(self.io.inventory_once, cfg.rfid_interval_ms, self.cancel)
+            except asyncio.CancelledError:
+                attempt["status"] = "cancelled"
+                raise
+            except Exception as exc:
+                attempt.update(status="error", error=str(exc))
+                raise
+            if not self.live():
+                return
+            unique = {r["epc"]: r for r in result}
+            attempt.update(status="read" if unique else "missing", tags=list(unique.values()))
+            if unique:
+                break
+        # Preserve both the attempt budget and a completed read through camera
+        # reconnection. A first read is judged as-is, never retried to find a pass.
+        p["rfid_done"] = True
         p["inspection"]["rfid"] = list(unique.values())
         if len(unique) != 1:
             self.fail("RFID_MISSING" if not unique else "MULTIPLE_RFID_TAGS")
         else:
             p["observations"]["rfid"] = decode_epc(p["brand"], next(iter(unique)))
-            recipe = Recipe.model_validate(p["inspection"]["recipe"]).model_copy(update={"channels": ["rfid"]})
-            failures = judge(recipe, p["observations"])
+            failures = judge(recipe.model_copy(update={"channels": ["rfid"]}), p["observations"])
             if failures:
                 p["failures"].extend(failures)
                 self.c.stop_outputs()
-        self.event("RFID_FINISHED", {"tags": len(unique)})
+        self.event("RFID_FINISHED", {"tags": len(unique), "attempts": p.get("rfid_attempts", 0)})
 
     async def finish(self, cancelled=False):
         p = self.pending

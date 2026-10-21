@@ -141,6 +141,10 @@ it("keeps product edits while opening the same brand's timing settings and saves
   const delay = await screen.findByLabelText("첫 촬영 (ms)");
   await user.clear(delay);
   await user.type(delay, "380");
+  for (const [label, value] of [["RFID 첫 읽기 (ms)", "200"], ["RFID 최대 횟수", "5"], ["RFID 읽기 간격 (ms)", "80"]]) {
+    await user.clear(screen.getByLabelText(label));
+    await user.type(screen.getByLabelText(label), value);
+  }
   await user.click(screen.getByRole("button", { name: "저장" }));
   const call = fetcher.mock.calls.find(
     ([path, options]) => path === "/api/presets" && options?.method === "POST",
@@ -148,11 +152,15 @@ it("keeps product edits while opening the same brand's timing settings and saves
   const saved = JSON.parse(call[1]!.body as string).preset;
   expect(saved.brand_id).toBe("brand");
   expect(saved.flow.capture_delay_ms).toBe(380);
+  expect(saved.flow).toMatchObject({ rfid_delay_ms: 200, rfid_attempts: 5, rfid_interval_ms: 80 });
   expect(saved.channels).toEqual(["rfid", "ocr", "barcode"]);
   expect(saved.barcode_targets).toEqual(["tag", "poly"]);
   await user.click(screen.getByRole("tab", { name: "상품 조건" }));
   expect(screen.getByRole("button", {name: "사이즈 090 수정"})).toBeTruthy();
   expect(screen.queryByText("설정 변경 사유")).toBeNull();
+  await user.click(screen.getByRole("tab", { name: "촬영과 센서" }));
+  expect(screen.getByLabelText("RFID 최대 횟수")).toHaveProperty("value", "5");
+  expect(screen.getByLabelText("RFID 읽기 간격 (ms)")).toHaveProperty("value", "80");
 });
 
 it("shows counting settings by function without mixing saved names with action buttons", async () => {

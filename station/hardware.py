@@ -10,7 +10,7 @@ import threading
 import time
 from pathlib import Path
 
-from .rfid import Reader
+from .rfid import Reader, InventoryCancelled
 from .motor import MOTOR_RESTART_SECONDS, restart_message
 
 
@@ -275,10 +275,20 @@ class GpioIO:
         )
 
     def inventory(self, window_ms, cancel):
+        return self._inventory(window_ms, cancel, once=False)
+
+    def inventory_once(self, timeout_ms, cancel):
+        return self._inventory(timeout_ms, cancel, once=True)
+
+    def _inventory(self, timeout_ms, cancel, *, once):
         if not self.reader:
             raise RuntimeError("RFID 포트 없음")
         try:
-            return self.reader.inventory(window_ms, cancel)
+            read = self.reader.inventory_once if once else self.reader.inventory
+            return read(timeout_ms, cancel)
+        except InventoryCancelled:
+            # A clean STOP during camera recovery does not undo reader setup.
+            raise
         except Exception as exc:
             self.reader.initialized = False
             self.reader.last_error = str(exc)
