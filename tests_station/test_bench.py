@@ -655,7 +655,7 @@ def test_live_ocr_reads_auto_detected_line_without_saving_a_photo(rig, monkeypat
     assert result["reads"][0]["barcode"] is None
     assert result["reads"][0]["verdict"] == "ocr_read"
     assert result["reads"][0]["lines"][0]["text"] == "40"
-    assert result["reads"][0]["lines"][0]["preview"].startswith("data:image/jpeg;base64,")
+    assert result["reads"][0]["lines"][0]["preview"].startswith("data:image/png;base64,")
     assert result["reads"][0]["lines"][0]["crop_width"] > 0
     # The downloaded image is the exact processed frame, even after live video changes.
     import cv2
@@ -665,7 +665,9 @@ def test_live_ocr_reads_auto_detected_line_without_saving_a_photo(rig, monkeypat
     assert original.headers["content-type"] == "image/png"
     restored = cv2.imdecode(np.frombuffer(original.content, np.uint8), cv2.IMREAD_COLOR)
     assert np.array_equal(restored, frame)
-    assert c.get(result["preview_url"]).headers["content-type"] == "image/jpeg"
+    preview = c.get(result["preview_url"])
+    assert preview.headers["content-type"] == "image/png"
+    assert preview.content == original.content
     next_result = c.post("/api/bench/ocr/read", json={"locator": locator})
     assert next_result.status_code == 200, next_result.text
     assert c.get(result["original_url"]).status_code == 410
@@ -677,6 +679,18 @@ def test_live_ocr_has_no_image_correction_endpoints(rig):
     c, _ = rig
     assert c.get("/api/bench/ocr/correction").status_code == 404
     assert c.put("/api/bench/ocr/correction", json={}).status_code in (404, 405)
+
+
+def test_live_ocr_defaults_to_models_and_rejects_lower_resolution(rig):
+    c, app = rig
+    profile = app.state.camera.backend.profile.model_dump()
+    assert c.post("/api/bench/camera/apply", json={
+        "profile": profile, "save": False, "expected_revision": 0,
+    }).status_code == 200
+    app.state.vision.load = lambda: None
+    response = c.post("/api/bench/ocr/read", json={})
+    assert response.status_code == 422 and "48MP" in response.text
+    assert not app.state.bench.runs
 
 
 def test_unconfirmed_off_remains_blocked(rig):

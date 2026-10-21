@@ -27,6 +27,7 @@ type OcrResult = { ok: boolean; mode?: "ocr_only"; reads: { barcode: string | nu
     stages: { stage: string; candidates: number; attempted: number; decoded: number; detect_ms: number; decode_ms: number }[];
     runtime: { opencv: string; zxing: string; python: string; source: string; report_version: number } } };
 const barcodeStages: Record<string, string> = {
+  yolo26: "택 검출과 바코드 분할",
   stripes: "줄무늬 위치 검출",
   small: "축소본 위치 검출", full: "원본 위치 검출", tiled: "분할 위치 검출", "whole-image": "원본 전체 판독",
 };
@@ -38,7 +39,7 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy, sharedPrevi
   const [url, setUrl] = useState("");
   const [result, setResult] = useState<OcrResult | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
-  const [locator, setLocator] = useState<Locator>("stripes");
+  const [locator, setLocator] = useState<Locator>("yolo26");
   useEffect(() => {
     if (!connected || sharedPreview) { setUrl(""); return; }
     let alive = true, current = "", timer: ReturnType<typeof setTimeout>;
@@ -79,6 +80,7 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy, sharedPrevi
       </div>
       <div className="space-y-4">
         <LocatorSelect value={locator} onChange={setLocator} disabled={busy}/>
+        {locator === "yolo26" && <p>48MP 촬영 원본에서 글자를 추출합니다. 카메라 해상도는 8000 x 6000으로 설정하세요.</p>}
         <div className="flex flex-wrap gap-3">
           <button className="btn btn-primary flex-1" disabled={!canRead} onClick={read}>{busy ? "검사 중" : "현재 영상 OCR 검사"}</button>
         </div>

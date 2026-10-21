@@ -68,6 +68,10 @@ class HardwareCycle:
         if s and "ocr" in s["recipe"]["channels"]:
             if not self.vision.status()["local_assets_present"]:
                 reasons.append("로컬 OCR 모델 필요")
+        if s and set(s["recipe"]["channels"]) & {"ocr", "barcode"} and self.camera and hasattr(self.vision, "source_error"):
+            error = self.vision.source_error(self.camera.status())
+            if error:
+                reasons.append(error)
         return reasons
 
     async def tick(self):

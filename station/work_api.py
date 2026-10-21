@@ -36,6 +36,10 @@ def prepare_session(controller, vision, monitor, recipe, actor):
         recipe = controller.resolve_recipe(recipe)
         if "ocr" in recipe.channels:
             vision.load()
+        if set(recipe.channels) & {"ocr", "barcode"} and hasattr(vision, "prepare_locator"):
+            vision.prepare_locator()
+            if monitor and monitor.camera:
+                vision.prepare_capture(monitor.camera.status())
         if monitor and recipe.flow:
             monitor.prepare(recipe.model_dump())
         result = controller.new_session(recipe, actor)

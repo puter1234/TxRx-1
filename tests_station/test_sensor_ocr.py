@@ -119,3 +119,18 @@ def test_starting_with_active_sensor_waits_for_clear_without_counting():
         assert trial.status()["count"] == trial.status()["detected"] == 1
     finally:
         trial.close()
+
+
+def test_model_upgrade_preserves_timings_and_later_comparison_choice():
+    saved = {"sensor_ocr_settings": SensorOcrSettings(
+        locator="stripes", low_speed_ms=750, capture_delay_ms=180, frame_count=2).model_dump()}
+    bench = Bench()
+    bench.store = SimpleNamespace(get=lambda key, default=None: saved.get(key, default),
+                                  put=lambda key, value: saved.__setitem__(key, value))
+    trial = SensorOcrTest(bench, Camera(), SimpleNamespace())
+    assert trial.settings.locator == "yolo26"
+    assert trial.settings.low_speed_ms == 750 and trial.settings.capture_delay_ms == 180
+    assert trial.settings.frame_count == 2
+    trial.save_settings(trial.settings.model_copy(update={"locator": "opencv"}))
+    restored = SensorOcrTest(bench, Camera(), SimpleNamespace())
+    assert restored.settings.locator == "opencv"

@@ -312,6 +312,9 @@ def test_native_device_check_blocks_work_until_worker_releases(tmp_path):
     entered, release = threading.Event(), threading.Event()
 
     class SlowVision:
+        def prepare_locator(self):
+            pass
+
         def load(self):
             entered.set()
             assert release.wait(5)

@@ -188,7 +188,7 @@ def test_settings_reach_gpio_capture_ocr_and_di2_count(trial):
     job = t.state()["jobs"][0]
     assert job["matched_text"] == "AB12" and job["counted"]
     assert job["frames"][0]["result"]["reads"][0]["lines"][0]["text"] == "AB12"
-    assert t.vision.locators == ["stripes"]
+    assert t.vision.locators == ["yolo26"]
     image = t.client.get(f'/api/bench/pipeline/frames/{job["id"]}/{frames[0]["seq"]}')
     assert image.status_code == 200 and image.headers["content-type"] == "image/png"
     assert t.client.get("/api/history").json()["inspections"] == []
@@ -322,6 +322,14 @@ def test_model_load_failure_never_enables_outputs(trial):
     assert response.status_code == 422
     assert "모델 파일 없음" in response.text
     assert not t.writes and not t.state()["active"]
+
+
+def test_48mp_preflight_rejects_camera_before_motor_starts(trial):
+    from station.vision import Vision
+    trial.vision.prepare_capture = Vision().prepare_capture
+    response = trial.client.post("/api/bench/pipeline/start", json={"conveyor_sync": True})
+    assert response.status_code == 422 and "48MP" in response.text
+    assert not trial.writes and not trial.state()["active"]
 
 
 def test_trial_restart_waits_five_seconds_without_delaying_stop(trial):

@@ -28,7 +28,7 @@ class SensorOcrSettings(Model):
     sensor_channel: int = Field(default=1, ge=1, le=2)
     active_raw: int = Field(default=0, ge=0, le=1)
     pattern: str = Field(default="", max_length=160)
-    locator: Literal["stripes", "opencv"] = "stripes"
+    locator: Literal["yolo26", "stripes", "opencv"] = "yolo26"
 
     @model_validator(mode="after")
     def valid_pattern(self):
@@ -63,6 +63,12 @@ class SensorOcrTest:
         if hasattr(bench, "store"):
             self.settings = SensorOcrSettings.model_validate(
                 bench.store.get("sensor_ocr_settings", {"conveyor_sync": True}))
+            # Upgrade the existing trial to the installed models once. Later
+            # explicit comparisons with the older locators remain saved.
+            if not bench.store.get("sensor_ocr_yolo26_enabled", False):
+                self.settings = self.settings.model_copy(update={"locator": "yolo26"})
+                bench.store.put("sensor_ocr_settings", self.settings.model_dump())
+                bench.store.put("sensor_ocr_yolo26_enabled", True)
         self.jobs = []
         self.detected = self.count = self.passed = self.failed = 0
         self.bytes_used = self.budget = 0
@@ -102,6 +108,8 @@ class SensorOcrTest:
         width, height = status.get("width") or profile.get("width"), status.get("height") or profile.get("height")
         if not width or not height:
             raise Conflict("카메라 해상도를 확인할 수 없습니다.")
+        if hasattr(self.vision, "prepare_capture"):
+            self.vision.prepare_capture(status, settings.locator)
         budget = min(1024**3, int(psutil.virtual_memory().available * 0.25))
         maximum = min(100, budget // (int(width) * int(height) * 3))
         if settings.frame_count > maximum:

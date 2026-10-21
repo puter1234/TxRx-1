@@ -33,7 +33,7 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
   const [state, setState] = useState<State | null>(null), [error, setError] = useState("");
   const [selection, setSelection] = useState<{ job: string; seq: number } | null>(null);
   const [actualSize, setActualSize] = useState(false);
-  const [locator, setLocator] = useState<Locator>("stripes");
+  const [locator, setLocator] = useState<Locator>("yolo26");
   useEffect(() => {
     let alive = true, timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
@@ -45,7 +45,7 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
             const s = next.settings;
             setLinked(s.conveyor_sync); setCount(s.frame_count); setChannel(s.sensor_channel);
             setActiveRaw(s.active_raw); setPattern(s.pattern); setLowMs(s.low_speed_ms);
-            setLocator(s.locator ?? "stripes");
+            setLocator(s.locator ?? "yolo26");
             setDelayMs(s.capture_delay_ms); setIntervalMs(s.capture_interval_ms); setDepartureMs(s.departure_timeout_ms);
           }
         }
@@ -89,6 +89,7 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
       </select>
     </label>
     <LocatorSelect value={locator} onChange={setLocator} disabled={running}/>
+    {locator === "yolo26" && <p>48MP 원본에서 촬영합니다. 12MP 축소본으로 위치를 찾고 글자는 같은 48MP 원본에서 추출합니다.</p>}
     {linked && <div className="space-y-3">
       <p className="text-lg">DI1에서 저속과 LED 켜기, DI2에서 LED 끄기와 계수</p>
       <div className="grid grid-cols-2 gap-3">

@@ -125,7 +125,7 @@ it("shows the exact OCR test frame and offers its original download", async () =
     expect(screen.queryByText("검사 통과")).toBeNull();
     expect(screen.queryByText("검사 실패")).toBeNull();
     expect(screen.getByAltText("자동 검출한 글자 줄")).toHaveProperty("src", "data:image/jpeg;base64,dGVzdA==");
-    expect(mocks.api).toHaveBeenCalledWith("/bench/ocr/read", { locator: "stripes" });
+    expect(mocks.api).toHaveBeenCalledWith("/bench/ocr/read", { locator: "yolo26" });
     expect(screen.getByAltText("이번 검사에 사용한 사진").getAttribute("src")).toBe("/api/bench/ocr/frames/test-frame");
     expect(screen.getByRole("link", { name: "검사 원본 사진 저장" }).getAttribute("href")).toBe("/api/bench/ocr/frames/test-frame?original=true");
     fireEvent.change(screen.getByLabelText("바코드 위치 검출"), { target: { value: "opencv" } });

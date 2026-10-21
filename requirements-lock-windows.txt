@@ -66,3 +66,6 @@ websockets==15.0.1
 Werkzeug==3.1.8
 yarl==1.24.5
 zxing-cpp==3.1.1
+
+# Additional bundled detection and segmentation runtime.
+-r requirements-barcode-pipeline.txt

@@ -16,7 +16,7 @@ from .schema import Brand, Recipe
 
 ROOT = Path(__file__).resolve().parents[1]
 
-OCR_MODULES = ("PIL", "torch", "torchvision", "timm", "pytorch_lightning", "yaml", "lmdb", "nltk", "zxingcpp")
+OCR_MODULES = ("PIL", "torch", "torchvision", "timm", "pytorch_lightning", "yaml", "lmdb", "nltk", "zxingcpp", "onnxruntime", "ultralytics")
 
 
 def missing_ocr_modules():
@@ -68,13 +68,37 @@ def verify_model(directory: Path):
 
 
 class Vision:
-    def __init__(self, model_dir: Path | None = None):
+    def __init__(self, model_dir: Path | None = None, *, locator="yolo26"):
         self.directory = model_dir or ROOT / "models/parseq"
+        self.locator = locator
         self.recognizer = None
         self.lock = threading.Lock()
         self.model_lock = threading.Lock()
         self.model_hash = None
         self.error = None
+
+    def prepare_locator(self, locator=None):
+        if (locator or self.locator) == "yolo26":
+            from tagreader.model_pipeline import get_locator
+            get_locator()
+
+    def source_error(self, status, locator=None):
+        if (locator or self.locator) != "yolo26" or not status.get("connected"):
+            return None
+        from tagreader.model_pipeline import validate_source_size
+        profile = status.get("profile") or {}
+        try:
+            validate_source_size(status.get("width") or profile.get("width"),
+                                 status.get("height") or profile.get("height"))
+        except ValueError as exc:
+            return str(exc)
+        return None
+
+    def prepare_capture(self, status, locator=None):
+        error = self.source_error(status, locator)
+        if error:
+            raise ValueError(error)
+        self.prepare_locator(locator)
 
     def load(self):
         with self.model_lock:
@@ -139,8 +163,8 @@ class Vision:
             width, height = (
                 image.size if image is not None else (frame.shape[1], frame.shape[0])
             )
-            if "barcode" in recipe.channels and width * height > 24_000_000:
-                raise ValueError("바코드 영상은 2,400만 화소 이하만 지원합니다.")
+            if width * height > 48_000_000:
+                raise ValueError("검사 영상은 4,800만 화소 이하만 지원합니다.")
             observations, detail, failures = {}, {}, []
             task = None
             if "ocr" in recipe.channels:
@@ -177,6 +201,9 @@ class Vision:
                     if frame is not None
                     else cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
                 )
+                if task is None and self.locator == "yolo26":
+                    import pipeline
+                    task = pipeline.process_task(bgr, None, locator=self.locator, decode_values=True)
                 codes = sorted({t.text for t in tagreader.read_tag(bgr) if t.text}) if task is None else sorted({r.barcode for r in task.reads if r.barcode})
                 detail["barcodes"] = codes
                 if len(codes) != 1:
@@ -207,13 +234,13 @@ class Vision:
         finally:
             self.lock.release()
 
-    def _auto_read(self, frame, *, diagnostics=None, decode_values=True, locator="opencv"):
+    def _auto_read(self, frame, *, diagnostics=None, decode_values=True, locator=None):
         self.load()
         import pipeline
         return pipeline.process_task(frame, self.recognizer, diagnostics=diagnostics,
-                                     decode_values=decode_values, locator=locator)
+                                     decode_values=decode_values, locator=locator or self.locator)
 
-    def test_auto(self, frame, *, include_previews=True, crop_images=None, locator="stripes"):
+    def test_auto(self, frame, *, include_previews=True, crop_images=None, locator=None):
         """Compare selectable locators using original text crops and the existing OCR."""
         if not self.lock.acquire(blocking=False):
             raise RuntimeError("이전 영상 처리가 아직 끝나지 않았습니다.")
@@ -243,10 +270,9 @@ class Vision:
                     item = {**line, "crop_width": crop.shape[1], "crop_height": crop.shape[0]}
                     if include_previews:
                         preview = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
-                        preview.thumbnail((800, 500))
                         memory = io.BytesIO()
-                        preview.save(memory, format="JPEG", quality=80)
-                        item["preview"] = "data:image/jpeg;base64," + base64.b64encode(memory.getvalue()).decode()
+                        preview.save(memory, format="PNG")
+                        item["preview"] = "data:image/png;base64," + base64.b64encode(memory.getvalue()).decode()
                     if crop_images is not None:
                         crop_images.append(crop)
                     lines.append(item)
@@ -283,6 +309,7 @@ class Vision:
             "loaded": self.recognizer is not None,
             "local_assets_present": (self.directory / "manifest.json").exists(),
             "model": "PARSeq",
+            "locator": self.locator,
             "model_hash": self.model_hash,
             "error": self.error,
             "busy": self.lock.locked(),

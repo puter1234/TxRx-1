@@ -105,6 +105,10 @@ class FlowCycle(HardwareCycle):
             reasons.append("RFID 연결을 확인하세요.")
         if "ocr" in recipe["channels"] and not self.vision.status().get("local_assets_present"):
             reasons.append("OCR 모델을 확인하세요.")
+        if set(recipe.get("channels", [])) & {"ocr", "barcode"} and self.camera and hasattr(self.vision, "source_error"):
+            error = self.vision.source_error(self.camera.status())
+            if error:
+                reasons.append(error)
         return reasons
 
     def event(self, kind, body=None):

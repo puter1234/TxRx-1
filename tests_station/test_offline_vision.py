@@ -26,7 +26,7 @@ def test_live_frame_matches_saved_png_without_model(tmp_path, monkeypatch):
     monkeypatch.setattr(tagreader, "read_tag", read_tag)
     brand = Brand(id="test", name="Test", options=[{"key": "color", "label": "Color", "values": ["red"]}])
     recipe = Recipe(brand_id="test", brand_revision=1, targets={"color": "red"}, channels=["barcode"])
-    vision = Vision()
+    vision = Vision(locator="opencv")
 
     live = vision.inspect_frame(frame, brand, recipe)
     saved = vision.inspect(path, brand, recipe)
@@ -51,7 +51,7 @@ def test_live_test_and_production_ocr_use_the_camera_crop(monkeypatch):
             return {"text": str(value), "confidence": 0.9, "min_char": 0.9,
                     "chars": [], "ms": 1.0}
 
-    vision = Vision()
+    vision = Vision(locator="opencv")
     vision.recognizer = Reader()
     vision.load = lambda: None
     import pipeline
@@ -96,7 +96,7 @@ def test_ocr_without_barcode_location_stops_before_model_inference(monkeypatch):
             return {"text": "HUTS6A211BK095", "confidence": 0.9,
                     "min_char": 0.9, "chars": [], "ms": 1.0}
 
-    vision = Vision()
+    vision = Vision(locator="opencv")
     vision.recognizer = Reader()
     vision.load = lambda: None
     brand = Brand(id="hazzys", name="Hazzys", options=[
@@ -134,7 +134,7 @@ def test_ocr_only_uses_detected_position_and_keeps_selected_target_validation(mo
         def read(self, image):
             return {"text": "HUTS6A211BK095", "confidence": 0.9, "ms": 1.0}
 
-    vision = Vision()
+    vision = Vision(locator="opencv")
     vision.recognizer = Reader()
     vision.load = lambda: None
     brand = Brand(id="test", name="Test", options=[
@@ -178,7 +178,7 @@ def test_real_parseq_without_network(tmp_path, monkeypatch):
     )
     if not source.exists():
         pytest.skip("Local private fixture required")
-    v = Vision()
+    v = Vision(locator="opencv")
     v.load()
     legacy = pipeline.process_task(imread(source), v.recognizer)
     assert legacy.reads and legacy.reads[0].verdict.ok

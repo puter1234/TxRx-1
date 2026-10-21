@@ -11,8 +11,8 @@ def save_upload(root, ident, data):
     target = root / "evidence" / f"{ident}.png"
     target.parent.mkdir(exist_ok=True)
     with Image.open(io.BytesIO(data)) as original:
-        if original.width * original.height > 24_000_000:
-            raise ValueError("이미지는 2,400만 화소 이하여야 합니다.")
+        if original.width * original.height > 48_000_000:
+            raise ValueError("이미지는 4,800만 화소 이하여야 합니다.")
         original.load()
         # Preserve the established EXIF + white-alpha preprocessing exactly.
         to_rgb(original).save(target, format="PNG")

@@ -38,7 +38,7 @@ class Device(Model):
 
 
 class OcrRead(Model):
-    locator: Literal["stripes", "opencv"] = "stripes"
+    locator: Literal["yolo26", "stripes", "opencv"] = "yolo26"
 
 
 class CameraApply(Model):
@@ -320,6 +320,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
                 return {"ok": False, "detail": "OCR 실행 패키지 없음: " + ", ".join(missing)}
             try:
                 app.state.vision.load()
+                app.state.vision.prepare_locator()
             except ModuleNotFoundError as exc:
                 return {"ok": False, "detail": "OCR 실행 패키지가 설치되지 않았습니다: " + str(exc.name)}
             status = app.state.vision.status()
@@ -344,7 +345,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
             # Waiting for two more frames adds hundreds of milliseconds at low FPS.
             frame, timing = camera.read_latest()
             capture_ms = (time.perf_counter() - started) * 1000
-            result = app.state.vision.test_auto(frame, locator=body.locator if body else "stripes")
+            result = app.state.vision.test_auto(frame, locator=body.locator if body else "yolo26")
             result["timing"] = timing
             result["capture_ms"] = round(capture_ms, 1)
             result["processing_ms"] = round(
@@ -369,20 +370,12 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
                 raise HTTPException(410, "이전 검사 사진은 다음 검사에서 교체됩니다.")
             image = ocr_frame["image"]
         headers = {"Cache-Control": "no-store"}
+        ok, encoded = cv2.imencode(".png", image, [cv2.IMWRITE_PNG_COMPRESSION, 1])
         if original:
-            ok, encoded = cv2.imencode(".png", image, [cv2.IMWRITE_PNG_COMPRESSION, 1])
             headers["Content-Disposition"] = f'attachment; filename="ocr-frame-{ident}.png"'
-            media_type = "image/png"
-        else:
-            height, width = image.shape[:2]
-            scale = min(1.0, 1280 / max(width, height))
-            if scale < 1:
-                image = cv2.resize(image, (max(1, round(width * scale)), max(1, round(height * scale))))
-            ok, encoded = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 90])
-            media_type = "image/jpeg"
         if not ok:
             raise HTTPException(500, "검사 사진을 표시하지 못했습니다.")
-        return Response(encoded.tobytes(), media_type=media_type, headers=headers)
+        return Response(encoded.tobytes(), media_type="image/png", headers=headers)
 
     @app.get("/api/bench/camera/devices")
     async def cameras():

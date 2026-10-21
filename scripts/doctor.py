@@ -25,6 +25,8 @@ def inspect():
         "zxing-cpp",
         "psutil",
         "pyserial",
+        "ultralytics",
+        "onnxruntime",
     ):
         try:
             results.append(
@@ -46,6 +48,12 @@ def inspect():
         )
     except Exception as exc:
         results.append({"check": "model_manifest", "ok": False, "detail": str(exc)})
+    try:
+        from tagreader.model_pipeline import verify_bundle
+        bundle = verify_bundle()
+        results.append({"check": "barcode_models", "ok": True, "source_commit": bundle["commit"]})
+    except Exception as exc:
+        results.append({"check": "barcode_models", "ok": False, "detail": str(exc)})
     results.append(
         {
             "check": "frontend_build",

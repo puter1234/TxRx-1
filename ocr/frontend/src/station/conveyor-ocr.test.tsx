@@ -42,6 +42,7 @@ it("saves timings and starts physical OCR without a GPIO-number field", async ()
   const view = render(<SensorPipelineTest bench={bench} locked={false}/>);
   await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/bench/pipeline"));
   fireEvent.change(screen.getByLabelText("저속 유지 (ms)"), { target: { value: "650" } });
+  expect(screen.getByLabelText("바코드 위치 검출")).toHaveProperty("value", "yolo26");
   fireEvent.change(screen.getByLabelText("촬영 지연 (ms)"), { target: { value: "150" } });
   fireEvent.change(screen.getByLabelText("OCR 촬영 간격 (ms)"), { target: { value: "90" } });
   fireEvent.change(screen.getByLabelText("바코드 위치 검출"), { target: { value: "opencv" } });

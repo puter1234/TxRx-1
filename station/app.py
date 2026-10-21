@@ -632,6 +632,7 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
                         "tags": tags,
                     }
                 vision.load()
+                vision.prepare_locator()
                 status = vision.status()
                 device = str(status.get("device") or "")
                 detail = ("OCR GPU 사용: " + str(status.get("gpu_name") or device)
