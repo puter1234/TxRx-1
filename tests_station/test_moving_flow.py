@@ -45,6 +45,7 @@ class Camera:
     def after(self, *args):
         self.io.log.append("capture")
         return np.zeros((50, 50, 3), dtype=np.uint8), {"seq": 10, "host_received_ns": time.monotonic_ns()}
+    def read_latest(self): return self.after()
     def connect(self): self.retries += 1; self.connected = True
 
 
@@ -102,6 +103,37 @@ def test_simple_count_ignores_camera_and_waits_for_di2(controller, monkeypatch):
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("low_speed_ms,debounce_ms", [(0, 0), (0, 20), (10, 20), (20, 20), (50, 20)])
+def test_short_low_speed_hold_is_not_restarted_by_debounced_di1(controller, monkeypatch, low_speed_ms, debounce_ms):
+    c, io, _, cycle, clock = rig(controller, monkeypatch, low_speed_ms=low_speed_ms)
+    c.session["recipe"]["flow"]["di1_debounce_ms"] = debounce_ms
+    io.log.clear()
+
+    async def run():
+        await cycle.tick()
+        clock[0] = 100.1
+        await cycle.tick()
+        assert cycle.edges[0].armed
+        clock[0] = 100.2
+        io.raw[0] = 0
+        await cycle.tick()
+        assert io.on and io.led
+        assert io.high is (low_speed_ms == 0)
+        clock[0] = 100.221
+        await cycle.tick()
+        assert cycle.pending is not None
+        assert io.high is (low_speed_ms <= 20)
+        clock[0] = 100.3
+        await cycle.tick()
+        assert io.high and io.on
+        io.raw[1] = 0
+        await cycle.tick()
+        assert c.session["count"] == 1 and io.high and io.on
+        assert "stop" not in io.log
+
+    asyncio.run(run())
+
+
 def test_independent_camera_rfid_and_speed_deadlines(controller, recipe, monkeypatch):
     recipe.channels = ["ocr", "rfid"]
     c, io, camera, cycle, clock = rig(controller, monkeypatch, recipe, capture_delay_ms=0, rfid_delay_ms=100, low_speed_ms=200)
@@ -125,6 +157,41 @@ def test_independent_camera_rfid_and_speed_deadlines(controller, recipe, monkeyp
         await spin()
         assert c.session["count"] == 1 and c.last_result["di2_count"] == 1
         assert c.last_result["status"] == "PASS" and io.on
+    asyncio.run(run())
+
+
+def test_moving_capture_uses_available_due_frames_without_settling_wait(controller, recipe, monkeypatch):
+    recipe.channels = ["ocr"]
+    c, io, camera, cycle, _ = rig(controller, monkeypatch, recipe, capture_count=2, capture_interval_ms=0)
+    frames = [np.full((50, 50, 3), value, np.uint8) for value in (12, 34)]
+    sequence = [10]
+    camera.status = lambda: {"connected": True, "frames": sequence[0]}
+
+    def latest():
+        seq = sequence[0]
+        sequence[0] += 1
+        return frames[seq - 10], {"seq": seq, "host_received_ns": time.monotonic_ns()}
+
+    def forbidden(*args):
+        raise AssertionError("Moving capture must not wait for two additional frames")
+
+    camera.read_latest = latest
+    camera.after = forbidden
+
+    async def run():
+        await cycle.tick()
+        io.raw[0] = 0
+        await cycle.tick()
+        p = cycle.pending
+        assert cycle.camera_task is None
+        p["start"] = 0
+        await cycle.capture(p, cycle.flow())
+        assert [meta["seq"] for _, meta in p["frames"]] == [10, 11]
+        assert p["inspection"]["capture_delay_actual_ms"] == pytest.approx(p["frames"][0][1]["host_received_ns"] / 1e6)
+        assert all(actual is expected for (actual, _), expected in zip(p["frames"], frames))
+        assert p["observations"]["ocr"] == recipe.targets and not p["failures"]
+        assert io.on
+
     asyncio.run(run())
 
 
@@ -497,7 +564,7 @@ def test_tracking_frame_read_does_not_block_io_monitor(controller, monkeypatch):
     def read_latest():
         reading.set()
         gate.wait(.5)
-        return np.zeros((50, 50, 3), dtype=np.uint8), {"seq": 1}
+        return np.zeros((50, 50, 3), dtype=np.uint8), {"seq": 1, "host_received_ns": time.monotonic_ns()}
     camera.read_latest = read_latest
     async def run():
         await cycle.tick()

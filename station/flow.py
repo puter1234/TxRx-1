@@ -205,7 +205,9 @@ class FlowCycle(HardwareCycle):
                     "start": self.edges[0].changed, "di2": False, "high": False,
                     "observations": {}, "failures": [], "frames": [], "crossings": 0, "tracking_started": False,
                     "camera_done": not self.camera_required(), "rfid_done": "rfid" not in s["recipe"]["channels"]}
-                self.io.speed(False)
+                # The raw DI1 edge already started the low-speed timer. A
+                # debounced acceptance must not undo an expired timer's return
+                # to high speed, including a configured zero-length hold.
         if hits[1]:
             self.event("DI2_DETECTED")
             self.io.light(False)
@@ -330,16 +332,21 @@ class FlowCycle(HardwareCycle):
         return self.counter.update(frame, now)
 
     async def capture(self, p, cfg):
-        p["inspection"]["capture_delay_actual_ms"] = (time.monotonic() - p["start"]) * 1000
+        from .usb_camera import frame_at
+
         self.event("CAPTURE_STARTED")
         await self.offload(self.camera.verify_fixed_controls)
         recipe = Recipe.model_validate(p["inspection"]["recipe"])
         for i in range(cfg.capture_count):
             due = p["start"] + (cfg.capture_delay_ms + i * cfg.capture_interval_ms) / 1000
             await asyncio.sleep(max(0, due - time.monotonic()))
-            frame, meta = await self.offload(self.camera.after, int(due * 1e9), cfg.result_timeout_ms / 1000)
+            previous_seq = p["frames"][-1][1]["seq"] if p["frames"] else -1
+            frame, meta = await self.offload(frame_at, self.camera, int(due * 1e9),
+                                             cfg.result_timeout_ms / 1000, previous_seq, self.cancel)
             if not self.live():
                 return
+            if i == 0:
+                p["inspection"]["capture_delay_actual_ms"] = (meta["host_received_ns"] / 1e9 - p["start"]) * 1000
             import psutil
             budget = p.setdefault("frame_budget", min(1024**3, int(psutil.virtual_memory().available * .25)))
             if sum(f.nbytes for f, _ in p["frames"]) + frame.nbytes > budget:

@@ -263,14 +263,20 @@ class Controller:
                 with self.stop_lock:
                     self.pending_stops -= 1
 
-    def _motor_on(self, generation):
+    def _motor_on(self, generation, *, high_speed=False):
         def allowed():
             with self.stop_lock:
                 return self.stop_serial == generation and self.pending_stops == 0
 
         if not allowed():
             raise Conflict("정지 요청이 우선합니다. 새 운전 명령이 필요합니다.")
-        self.io.motor(True, allowed=allowed)
+        try:
+            if high_speed:
+                self.io.speed(True, allowed=allowed)
+            self.io.motor(True, allowed=allowed)
+        except Exception:
+            self.stop_outputs()
+            raise
 
     def _command(self, cmd, actor, generation, stop_action):
         fingerprint = hashlib.sha256(dump(cmd.model_dump()).encode()).hexdigest()
@@ -335,7 +341,7 @@ class Controller:
                     if s["recipe"].get("flow"):
                         if s["active_product"]:
                             raise Conflict("이송 중인 제품의 조치를 먼저 완료하세요.")
-                        self._motor_on(generation)
+                        self._motor_on(generation, high_speed=True)
                         s["phase"] = "FEEDING"
                     elif not counted and (
                         s["active_product"]

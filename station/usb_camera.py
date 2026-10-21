@@ -15,6 +15,31 @@ from .schema import Model
 from .controller import Conflict
 
 
+def frame_at(camera, minimum_ns, timeout, previous_seq=-1, cancelled=None):
+    """Read a distinct frame received at/after a moving capture's due time.
+
+    The stopped-capture after() method discards two frames for settling. Moving
+    products instead need the available frame from their scheduled position.
+    Run this wait in a worker, keeping sensor and output monitoring responsive.
+    """
+    deadline = time.monotonic() + timeout
+    checked = previous_seq
+    while time.monotonic() < deadline:
+        if cancelled is not None and cancelled.is_set():
+            raise RuntimeError("촬영이 취소되었습니다.")
+        status = camera.status()
+        if not status.get("connected"):
+            raise RuntimeError("카메라 연결이 끊겼습니다.")
+        if status.get("frames", 0) > checked:
+            frame, metadata = camera.read_latest()
+            sequence = int(metadata["seq"])
+            if sequence > previous_seq and metadata["host_received_ns"] >= minimum_ns:
+                return frame, metadata
+            checked = max(checked, sequence)
+        time.sleep(0.002)
+    raise TimeoutError("새 카메라 영상 대기 시간 초과")
+
+
 class CameraProfile(Model):
     device: str = Field(min_length=1, max_length=240)
     width: int = Field(ge=320, le=8000)

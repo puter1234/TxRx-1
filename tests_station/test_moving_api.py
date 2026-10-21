@@ -145,6 +145,7 @@ def test_preset_to_target_completion_with_real_gpio_adapter(line, channels):
         line.camera.connected = False
         line.io.reader.port.is_open = False
     issue(line, "start")
+    assert line.io.snapshot()["speed_requested"]
     for count in (1, 2):
         line.gpio.sensor(1, 0)
         wait_state(line, lambda s: s["session"]["active_product"] is not None)
@@ -161,6 +162,41 @@ def test_preset_to_target_completion_with_real_gpio_adapter(line, channels):
     assert len(rows) == 2 and all(r["status"] == "PASS" and r["di2_count"] == 1 for r in rows)
     assert len({r["product_id"] for r in rows}) == 2
     issue(line, "start", 409)
+
+
+def test_manual_restart_selects_high_speed_again(line):
+    prepare(line)
+    issue(line, "start")
+    assert line.io.snapshot()["speed_requested"]
+    issue(line, "stop")
+    assert not line.io.snapshot()["motor_requested"]
+    assert not line.io.snapshot()["speed_requested"]
+    # Advance the synthetic hardware's restart deadline; the five-second
+    # interlock has separate coverage for every motor-off path.
+    line.io.motor_ready_at = time.monotonic() - 1
+    wait_state(line, lambda s: s["can_start"])
+    issue(line, "start")
+    assert line.io.snapshot()["motor_requested"] and line.io.snapshot()["speed_requested"]
+
+
+@pytest.mark.parametrize("target", ["speed", "motor"])
+def test_failed_start_clears_motor_and_speed_outputs(line, monkeypatch, target):
+    from test_controller import command
+
+    prepare(line)
+    original = getattr(line.io, target)
+
+    def fail_on(value, *args, **kwargs):
+        if value:
+            raise RuntimeError("test output failure")
+        return original(value, *args, **kwargs)
+
+    monkeypatch.setattr(line.io, target, fail_on)
+    controller = line.app.state.controller
+    with pytest.raises(RuntimeError, match="test output failure"):
+        controller.command(command(controller, "start"), "test")
+    assert not line.io.snapshot()["motor_requested"]
+    assert not line.io.snapshot()["speed_requested"]
 
 
 def test_rejected_direct_session_creation_cannot_replace_running_counter(line, monkeypatch):
