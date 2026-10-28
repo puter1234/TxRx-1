@@ -12,6 +12,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
+    directory = Path(os.environ.get('TXRX_DATA', ROOT / 'runtime')) / 'diagnostics'
+    for trace in sorted(directory.glob('ocr-*.log'), reverse=True):
+        try:
+            recorded = trace.read_text(errors='replace')
+        except OSError:
+            continue
+        if 'Timeout (' in recorded:
+            print(f'OCR 처리 중 자동 수집한 기록: {trace}')
+            print(recorded)
+            return
     targets = []
     for proc in psutil.process_iter(['pid', 'cmdline', 'cwd']):
         try:

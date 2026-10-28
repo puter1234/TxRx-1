@@ -239,11 +239,8 @@ def _capture(settings, memory_name, metadata, lock, errors, pipe):
                 try: errors.put_nowait("실제 영상 크기가 설정과 다릅니다.")
                 except Exception: pass
                 return
-            with lock:
-                # pygrabber delivers bottom-up BGR converted to top-down BGR.
-                np.copyto(target, image)
-                metadata[0] += 1
-                metadata[1] = time.monotonic_ns()
+            from .usb_camera import publish_frame
+            publish_frame(image, mem.buf, metadata, lock, time.monotonic_ns())
             graph.grab_frame()
         graph.add_sample_grabber(frame)
         graph.add_null_render()

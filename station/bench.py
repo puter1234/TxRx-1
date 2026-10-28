@@ -468,8 +468,6 @@ class Bench:
         with self.stop_lock:
             self.stop_serial += 1
         with self.lock:
-            for listener in self.stop_listeners:
-                listener(reason)
             self.generation += 1
             self.cancel.set()
             old, self.runs = self.runs, {}
@@ -485,6 +483,13 @@ class Bench:
                 # Count from completion of the OFF write, never before a slow write.
                 for target in old:
                     self.next_output_at[target] = time.monotonic() + (MOTOR_RESTART_SECONDS if target == "motor" else 1)
+            # Output OFF must precede OCR queue cleanup, including a blocked or
+            # failing listener. A cleanup error must never skip the OFF write.
+            for listener in self.stop_listeners:
+                try:
+                    listener(reason)
+                except Exception as exc:
+                    self.error = self.error or "시험 중지 처리 실패: " + str(exc)
             for run in old.values():
                 try:
                     self.store.event("BENCH_OUTPUT_STOP", {"id": run["id"], "reason": reason, "error": self.error})

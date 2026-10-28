@@ -260,15 +260,50 @@ def test_preview_failure_does_not_stop_live_outputs_and_next_frame_recovers(rig,
     assert client.post('/api/bench/io/connect', json={}).status_code == 200
     assert pulse(client, 'led', seconds=None).status_code == 200
     stream = app.state.camera.stream
-    original = app.state.camera.read_latest
+    original = app.state.camera.read_preview
     def interrupted():
         raise failure('temporary preview failure')
-    monkeypatch.setattr(app.state.camera, 'read_latest', interrupted)
+    monkeypatch.setattr(app.state.camera, 'read_preview', interrupted)
     response = client.get('/api/camera/frame')
     assert response.status_code == 503
     assert app.state.camera.stream is stream and not stream.closed
     assert app.state.bench.io.led is True
     assert 'led' in app.state.bench.runs
-    monkeypatch.setattr(app.state.camera, 'read_latest', original)
+    monkeypatch.setattr(app.state.camera, 'read_preview', original)
     assert client.get('/api/camera/frame').status_code == 200
     assert app.state.bench.io.led is True
+
+
+def test_preview_reads_small_buffer_and_keeps_camera_fps(rig, monkeypatch):
+    import numpy as np
+    client, app = rig
+    apply(client, app)
+    stream = app.state.camera.stream
+    stream.read_preview = lambda: (np.zeros((48, 64, 3), np.uint8), {"seq": 103})
+    monkeypatch.setattr(stream, 'read_latest', lambda: pytest.fail('preview must not copy the full original'))
+    result = client.get('/api/camera/frame')
+    assert result.status_code == 200
+    assert result.headers['x-camera-fps'] == '30.0'
+    assert result.headers['x-camera-frame'] == '103'
+
+
+def test_camera_recovery_restores_current_profile_and_respects_manual_disconnect(rig):
+    from station.camera_recovery import CameraRecovery
+    client, app = rig
+    apply(client, app, {'focus_absolute': 42}, save=False)
+    camera = app.state.camera
+    recovery = CameraRecovery(camera)
+    old = camera.stream
+    old.closed = True
+    recovery.tick(100)
+    recovery.tick(101)
+    assert camera.stream is old
+    recovery.tick(102)
+    assert camera.stream is not old and camera.status()['connected']
+    assert camera.profile['controls']['focus_absolute'] == 42
+    assert not app.state.bench.runs
+    replacement = camera.stream
+    camera.close()
+    camera.recover(replacement)
+    recovery.tick(105)
+    assert camera.stream is None

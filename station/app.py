@@ -100,6 +100,8 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
                 if config.commissioning.detector_module:
                     hardware_errors.append(str(exc))
     vision = vision or Vision()
+    if isinstance(vision, Vision):
+        vision.trace_directory = store.root / "diagnostics"
     controller = Controller(store, io, config)
     controller.external_busy = lambda: vision.status().get("busy", False)
     auth = Auth(store)
@@ -197,10 +199,17 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
 
     @asynccontextmanager
     async def lifespan(app):
+        recovery = None
+        if config.mode == "REPLAY" and isinstance(camera, CameraManager):
+            from .camera_recovery import CameraRecovery
+            recovery = CameraRecovery(camera)
+            recovery.start()
         task = asyncio.create_task(watch())
         maintenance = asyncio.create_task(maintain())
         yield
         bench.stop("서비스 종료")
+        if recovery:
+            recovery.close()
         if hasattr(app.state, "sensor_ocr"):
             await asyncio.to_thread(app.state.sensor_ocr.close)
         controller.stop_outputs()
@@ -579,7 +588,7 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
         from fastapi.responses import Response
 
         def encode():
-            frame, metadata = camera.read_latest()
+            frame, metadata = getattr(camera, "read_preview", camera.read_latest)()
             # Preview is bounded; saved test captures keep the original resolution.
             if frame.shape[1] > 1280:
                 frame = cv2.resize(frame, (1280, max(1, round(frame.shape[0] * 1280 / frame.shape[1]))))
@@ -587,6 +596,9 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
             if not ok:
                 raise RuntimeError("카메라 영상 변환 실패")
             headers = {"Cache-Control": "no-store"}
+            fps = (metadata.get("camera_profile") or {}).get("fps")
+            if fps:
+                headers["X-Camera-Fps"] = str(fps)
             for field, header in (("seq", "X-Camera-Frame"),
                                   ("camera_settings_revision", "X-Camera-Revision"),
                                   ("host_received_ns", "X-Camera-Received-Ns")):

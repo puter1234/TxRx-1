@@ -10,6 +10,7 @@ import time
 import cv2
 import numpy as np
 from PIL import Image
+from station.vision_trace import stage
 
 SOURCE_SIZE = (8000, 6000)
 DETECTION_SIZE = (4000, 3000)
@@ -61,10 +62,12 @@ class ModelLocator:
     def locate(self, original, diagnostics, *, text=True):
         started = time.perf_counter()
         # This is the only full-frame resampling. Never replace the retained source.
-        detection = cv2.resize(original, DETECTION_SIZE, interpolation=cv2.INTER_AREA)
+        with stage("frame_resize"):
+            detection = cv2.resize(original, DETECTION_SIZE, interpolation=cv2.INTER_AREA)
         resize_ms = (time.perf_counter() - started) * 1000
         with self.lock:
-            found = self.detector.predict(detection, roi_padding=self.padding)
+            with stage("tag_detection"):
+                found = self.detector.predict(detection, roi_padding=self.padding)
             tag_ms = found["timing_ms"]["pipeline_without_decode"]
             segmentation_ms = text_ms = 0.
             records = []
@@ -72,13 +75,15 @@ class ModelLocator:
                 roi = det["roi_bbox_xyxy"]
                 x1, y1, x2, y2 = roi
                 raw = detection[y1:y2, x1:x2].copy()
-                result = self.segmenter.predict(raw, roi_xyxy=roi, source_size=list(DETECTION_SIZE),
-                                                target_size=list(SOURCE_SIZE))
+                with stage(f"barcode_segmentation roi={roi_index} shape={raw.shape}"):
+                    result = self.segmenter.predict(raw, roi_xyxy=roi, source_size=list(DETECTION_SIZE),
+                                                    target_size=list(SOURCE_SIZE))
                 segmentation_ms += result["timing_ms"]["total_without_decode"]
                 regions = []
                 if text and result["instances"]:
-                    candidates = self.extract_text(raw, result["instances"], roi,
-                                                   list(DETECTION_SIZE), list(SOURCE_SIZE))
+                    with stage(f"text_regions roi={roi_index}"):
+                        candidates = self.extract_text(raw, result["instances"], roi,
+                                                       list(DETECTION_SIZE), list(SOURCE_SIZE))
                     regions = candidates["regions"]
                     text_ms += candidates["elapsed_ms"]
                 for index, instance in enumerate(result["instances"]):
@@ -148,7 +153,9 @@ def process_frame(original, recognizer, *, diagnostics=None, decode_values=False
     validate_source_size(original.shape[1], original.shape[0])
     started = time.perf_counter()
     diagnostics = diagnostics if diagnostics is not None else {}
-    records = get_locator().locate(original, diagnostics, text=recognizer is not None)
+    with stage("locator.initialize"):
+        locator = get_locator()
+    records = locator.locate(original, diagnostics, text=recognizer is not None)
     location_ms = (time.perf_counter() - started) * 1000
     reads, ocr_ms, decode_ms, align_ms = [], 0., 0., 0.
     for record in records:

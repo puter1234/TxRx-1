@@ -10,7 +10,8 @@ from station import usb_camera
 
 
 @pytest.mark.parametrize('persistent', [False, True])
-def test_uvc_read_failure_recovery_and_deadline(monkeypatch, persistent):
+@pytest.mark.parametrize('decode_error', [False, True])
+def test_uvc_read_failure_recovery_and_deadline(monkeypatch, persistent, decode_error):
     pixels = bytearray(4 * 3 * 3)
     mem = SimpleNamespace(buf=pixels, close=lambda: None)
     monkeypatch.setattr(usb_camera.shared_memory, 'SharedMemory', lambda **kw: mem)
@@ -27,7 +28,10 @@ def test_uvc_read_failure_recovery_and_deadline(monkeypatch, persistent):
         def read(self):
             calls.append(True)
             if len(calls) == 1: return True, frame
-            if len(calls) == 2 or persistent: return False, None
+            if len(calls) == 2 or persistent:
+                if decode_error:
+                    raise cv2.error('bad camera frame')
+                return False, None
             if len(calls) == 3: return True, frame
             raise RuntimeError('test finished')
     cap = Capture()
@@ -44,3 +48,17 @@ def test_uvc_read_failure_recovery_and_deadline(monkeypatch, persistent):
         assert metadata[0] == 2
         assert errors.get_nowait() == 'test finished'
         np.testing.assert_array_equal(np.ndarray((3,4,3),np.uint8,buffer=pixels),frame)
+
+
+def test_preview_buffer_preserves_original_and_sequence():
+    frame = np.zeros((1200, 1600, 3), np.uint8)
+    frame[:, ::2] = (17, 83, 241)
+    shape = usb_camera.preview_shape(1600, 1200)
+    pixels = bytearray(frame.nbytes + np.prod(shape))
+    metadata = [0, 0, 0, 0, 0]
+    usb_camera.publish_frame(frame, pixels, metadata, threading.Lock(), 123456)
+    original = np.ndarray(frame.shape, np.uint8, buffer=pixels)
+    preview = np.ndarray(shape, np.uint8, buffer=pixels, offset=frame.nbytes)
+    np.testing.assert_array_equal(original, frame)
+    np.testing.assert_array_equal(preview, cv2.resize(frame, (1280, 960)))
+    assert metadata[:2] == [1, 123456]

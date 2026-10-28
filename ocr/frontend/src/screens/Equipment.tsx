@@ -1,3 +1,4 @@
+import { useCameraPreview } from "../components/useCameraPreview";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft, CreditCard, ScanText } from "lucide-react";
@@ -37,28 +38,10 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy, sharedPrevi
   checkOcr: () => void; ocr: { ok: boolean; detail: string } | null; ocrBusy: boolean; sharedPreview?: boolean;
 }) {
   const connected = bench.state?.camera?.connected === true;
-  const [url, setUrl] = useState("");
+  const { url } = useCameraPreview(connected && !sharedPreview);
   const [result, setResult] = useState<OcrResult | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
   const [locator, setLocator] = useState<Locator>("yolo26");
-  useEffect(() => {
-    if (!connected || sharedPreview) { setUrl(""); return; }
-    let alive = true, current = "", timer: ReturnType<typeof setTimeout>;
-    const abort = new AbortController();
-    const next = async () => {
-      try {
-        const response = await fetch("/api/camera/frame", { signal: abort.signal, cache: "no-store" });
-        if (!response.ok) throw new Error("영상 수신 실패");
-        const nextUrl = URL.createObjectURL(await response.blob());
-        if (!alive) { URL.revokeObjectURL(nextUrl); return; }
-        if (current) URL.revokeObjectURL(current);
-        current = nextUrl; setUrl(nextUrl);
-      } catch { if (alive) setUrl(""); }
-      if (alive) timer = setTimeout(next, 700);
-    };
-    void next();
-    return () => { alive = false; abort.abort(); clearTimeout(timer); if (current) URL.revokeObjectURL(current); };
-  }, [connected, sharedPreview]);
 
   const read = async () => {
     setBusy(true); setError(""); setResult(null);

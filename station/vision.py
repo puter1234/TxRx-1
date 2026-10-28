@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 from .schema import Brand, Recipe
+from .vision_trace import record_operation, stage
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -76,7 +77,9 @@ class Vision:
         self.model_lock = threading.Lock()
         self.model_hash = None
         self.error = None
+        self.trace_directory = ROOT / "runtime/diagnostics"
 
+    @record_operation("locator.load")
     def prepare_locator(self, locator=None):
         if (locator or self.locator) == "yolo26":
             from tagreader.model_pipeline import get_locator
@@ -100,6 +103,7 @@ class Vision:
             raise ValueError(error)
         self.prepare_locator(locator)
 
+    @record_operation("parseq.load")
     def load(self):
         with self.model_lock:
             self._load()
@@ -117,11 +121,13 @@ class Vision:
         sys.path.insert(0, str(self.directory / "source"))
         from strhub.models.utils import create_model
 
-        model = create_model("parseq", pretrained=False)
-        state = torch.load(
-            self.directory / "parseq-bb5792a6.pt", map_location="cpu", weights_only=True
-        )
-        model.model.load_state_dict(state, strict=True)
+        with stage("parseq.create_model"):
+            model = create_model("parseq", pretrained=False)
+        with stage("parseq.load_weights"):
+            state = torch.load(
+                self.directory / "parseq-bb5792a6.pt", map_location="cpu", weights_only=True
+            )
+            model.model.load_state_dict(state, strict=True)
         recognizer = Recognizer.__new__(Recognizer)
         recognizer.model_name = "parseq"
         recognizer.device = device
@@ -130,7 +136,8 @@ class Vision:
             if recognizer.device.type == "cuda"
             else ""
         )
-        recognizer.model = model.eval().to(recognizer.device)
+        with stage("parseq.to_device"):
+            recognizer.model = model.eval().to(recognizer.device)
         recognizer.img_size = tuple(model.hparams.img_size)
         recognizer.transform = build_transform(model.hparams.img_size)
         recognizer._lock = threading.Lock()
@@ -143,6 +150,7 @@ class Vision:
         """Inspect an OpenCV BGR frame without encoding or reopening a photo."""
         return self._inspect(frame, brand, recipe)
 
+    @record_operation("production.inspect")
     def _inspect(self, source, brand: Brand, recipe: Recipe):
         if not self.lock.acquire(blocking=False):
             raise RuntimeError("이전 영상 처리가 아직 끝나지 않았습니다.")
@@ -249,6 +257,7 @@ class Vision:
         return pipeline.process_task(frame, self.recognizer, diagnostics=diagnostics,
                                      decode_values=decode_values, locator=locator or self.locator)
 
+    @record_operation("test_auto")
     def test_auto(self, frame, *, include_previews=True, crop_images=None, locator=None):
         """Compare selectable locators using original text crops and the existing OCR."""
         if not self.lock.acquire(blocking=False):

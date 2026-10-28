@@ -822,3 +822,25 @@ def test_input_adapter_never_acquires_output_until_test(monkeypatch):
         assert all(v["direction"] == Direction.INPUT for v in calls[0]["config"].values())
     finally:
         gpio.close()
+
+
+def test_output_off_precedes_blocked_ocr_cleanup(rig):
+    client, app = rig
+    setup(client)
+    assert client.post('/api/bench/io/connect', json={}).status_code == 200
+    assert pulse(client, 'motor', None).status_code == 200
+    entered, release = threading.Event(), threading.Event()
+    def cleanup(reason):
+        entered.set()
+        assert release.wait(2)
+    app.state.bench.stop_listeners.append(cleanup)
+    worker = threading.Thread(target=app.state.bench.stop)
+    try:
+        worker.start()
+        assert entered.wait(1)
+        assert app.state.bench.io.motor is False
+        assert app.state.bench.cooldown_ms('motor') > 0
+    finally:
+        release.set()
+        worker.join(2)
+        app.state.bench.stop_listeners.remove(cleanup)

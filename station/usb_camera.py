@@ -231,6 +231,7 @@ def _capture_process(settings, memory_name, metadata, lock, errors):
     try:
         import cv2
         import numpy as np
+        cv2.setNumThreads(1)
         mem = shared_memory.SharedMemory(name=memory_name)
         cap = cv2.VideoCapture(settings["device"], cv2.CAP_V4L2)
         if not cap.isOpened():
@@ -243,24 +244,28 @@ def _capture_process(settings, memory_name, metadata, lock, errors):
         target = np.ndarray((settings["height"], settings["width"], 3), dtype=np.uint8, buffer=mem.buf)
         last_frame_at = time.monotonic()
         frame_timeout = max(2.0, 3.0 / settings["fps"])
+        read_error = ""
         while True:
-            ok, frame = cap.read()
+            capture_stage(metadata, 1)
+            try:
+                ok, frame = cap.read()
+            except cv2.error as exc:
+                ok, frame = False, None
+                read_error = str(exc)
             received = time.monotonic_ns()
             if not ok or frame is None:
                 metadata[2] += 1
                 # A dropped UVC frame is not a request to release the camera.
                 # Freshness monitoring still stops a process with no new frames.
                 if time.monotonic() - last_frame_at >= frame_timeout:
-                    raise RuntimeError(f"카메라 프레임 읽기 실패: {frame_timeout:.1f}초 동안 새 영상 없음")
+                    raise RuntimeError(f"카메라 프레임 읽기 실패: {frame_timeout:.1f}초 동안 새 영상 없음 {read_error}")
                 time.sleep(0.01)
                 continue
             last_frame_at = time.monotonic()
+            read_error = ""
             if frame.shape != target.shape:
                 raise RuntimeError("실제 영상 크기가 설정과 다릅니다.")
-            with lock:
-                np.copyto(target, frame)
-                metadata[0] += 1
-                metadata[1] = received
+            publish_frame(frame, mem.buf, metadata, lock, received)
     except BaseException as exc:
         try:
             errors.put_nowait(str(exc))
@@ -273,14 +278,67 @@ def _capture_process(settings, memory_name, metadata, lock, errors):
             mem.close()
 
 
+def preview_shape(width, height):
+    scale = min(1., 1280 / width)
+    return max(1, round(height * scale)), min(width, 1280), 3
+
+
+def capture_stage(metadata, value):
+    if len(metadata) >= 5:
+        metadata[3], metadata[4] = value, time.monotonic_ns()
+
+
+def usb_link(device):
+    """Read the camera's current USB identity at a loss, without running commands."""
+    try:
+        node = Path(device).resolve()
+        info = {"node": str(node), "device_present": node.exists()}
+        sys_device = Path("/sys/class/video4linux") / node.name / "device"
+        if not sys_device.exists():
+            return info
+        for parent in sys_device.resolve().parents:
+            if (parent / "idVendor").is_file():
+                for field in ("idVendor", "idProduct", "speed", "busnum", "devnum", "power/control", "power/runtime_status"):
+                    try:
+                        info[field] = (parent / field).read_text().strip()
+                    except OSError:
+                        pass
+                break
+        return info
+    except OSError as exc:
+        return {"error": str(exc)}
+
+
+def publish_frame(frame, buffer, metadata, lock, received):
+    """Publish the original and a small preview from the same camera frame."""
+    import cv2
+    import numpy as np
+    target = np.ndarray(frame.shape, dtype=np.uint8, buffer=buffer)
+    shape = preview_shape(frame.shape[1], frame.shape[0])
+    preview = None
+    capture_stage(metadata, 2)
+    if len(buffer) > frame.nbytes:
+        preview = cv2.resize(frame, (shape[1], shape[0])) if shape != frame.shape else frame
+    capture_stage(metadata, 3)
+    with lock:
+        capture_stage(metadata, 4)
+        np.copyto(target, frame)
+        if preview is not None:
+            np.copyto(np.ndarray(shape, dtype=np.uint8, buffer=buffer, offset=frame.nbytes), preview)
+        metadata[0] += 1
+        metadata[1] = received
+
+
 class UVCStream:
     def __init__(self, profile, capture_target=_capture_process, extra_args=()):
         self.profile = profile
         ctx = mp.get_context("spawn")
         self.lock = ctx.Lock()
-        self.metadata = ctx.Array("q", 3, lock=False)
+        self.metadata = ctx.Array("q", 5, lock=False)
         self.errors = ctx.Queue(maxsize=1)
-        self.mem = shared_memory.SharedMemory(create=True, size=profile.width * profile.height * 3)
+        self.preview_shape = preview_shape(profile.width, profile.height)
+        self.mem = shared_memory.SharedMemory(create=True, size=profile.width * profile.height * 3
+                                             + self.preview_shape[0] * self.preview_shape[1] * 3)
         self.started = time.monotonic()
         self.error = None
         self.closed = False
@@ -315,18 +373,30 @@ class UVCStream:
                 "frames": seq, "last_frame_age_ms": age, "error": detail, "process_alive": alive,
                 "process_exitcode": self.process.exitcode,
                 "read_failures": self.metadata[2] if len(self.metadata) > 2 else 0,
+                "capture_stage": ({1: "device_read", 2: "preview_resize", 3: "frame_lock", 4: "frame_copy"}
+                                  .get(self.metadata[3], "starting") if len(self.metadata) >= 5 else None),
+                "capture_stage_ms": ((time.monotonic_ns() - self.metadata[4]) / 1e6
+                                     if len(self.metadata) >= 5 and self.metadata[4] else None),
                 "width": self.profile.width, "height": self.profile.height,
                 "requested_fps": self.profile.fps, "mean_received_fps": seq / max(0.001, time.monotonic() - self.started),
                 "source": self.profile.device, "dropped_frames": None, "sensor_timestamp": None}
 
     def read_latest(self):
+        return self._read(False)
+
+    def read_preview(self):
+        return self._read(True)
+
+    def _read(self, preview):
         import numpy as np
         if not self.status()["connected"]:
             raise ValueError(self.error or "새 카메라 영상이 없습니다.")
         if not self.lock.acquire(timeout=0.5):
             raise TimeoutError("카메라 프레임 읽기 시간이 초과되었습니다.")
         try:
-            img = np.ndarray((self.profile.height, self.profile.width, 3), dtype=np.uint8, buffer=self.mem.buf).copy()
+            shape = self.preview_shape if preview else (self.profile.height, self.profile.width, 3)
+            offset = self.profile.width * self.profile.height * 3 if preview else 0
+            img = np.ndarray(shape, dtype=np.uint8, buffer=self.mem.buf, offset=offset).copy()
             return img, {"seq": self.metadata[0], "host_received_ns": self.metadata[1], "sensor_timestamp": None}
         finally:
             self.lock.release()
@@ -386,9 +456,11 @@ class CameraManager:
         if stream and health != self._health_state:
             if not status.get("connected"):
                 logging.getLogger(__name__).warning(
-                    "CAMERA_INTERRUPTED device=%s frames=%s age_ms=%s process_alive=%s exitcode=%s read_failures=%s error=%s",
+                    "CAMERA_INTERRUPTED device=%s frames=%s age_ms=%s process_alive=%s exitcode=%s read_failures=%s error=%s capture_stage=%s stage_ms=%s usb=%s",
                     (self.profile or {}).get("device"), status.get("frames"), status.get("last_frame_age_ms"),
-                    status.get("process_alive"), status.get("process_exitcode"), status.get("read_failures"), status.get("error"))
+                    status.get("process_alive"), status.get("process_exitcode"), status.get("read_failures"), status.get("error"),
+                    status.get("capture_stage"), status.get("capture_stage_ms"),
+                    usb_link((self.profile or {}).get("device", "")))
             self._health_state = health
         return {**status, "error": self.error or status.get("error"),
                 "profile": self.profile, "saved_profile": self.saved,
@@ -481,12 +553,30 @@ class CameraManager:
         raise Conflict("환경 설정에서 카메라와 촬영 설정을 저장하세요.")
 
     def read_latest(self):
+        return self._read_frame(False)
+
+    def read_preview(self):
+        return self._read_frame(True)
+
+    def _read_frame(self, preview):
         with self.lock:
             if not self.stream:
                 raise ValueError("카메라가 연결되지 않았습니다.")
-            image, metadata = self.stream.read_latest()
+            reader = getattr(self.stream, "read_preview", self.stream.read_latest) if preview else self.stream.read_latest
+            image, metadata = reader()
             return image, {**metadata, "camera_settings_revision": self.revision,
                            "camera_profile": self.profile}
+
+    def recover(self, expected_stream):
+        with self.lock:
+            # A manual disconnect or another apply invalidates the pending retry.
+            if self.stream is not expected_stream or not self.profile:
+                return
+            if self.stream.status().get("connected"):
+                return
+            profile = CameraProfile.model_validate(self.profile)
+            self.apply(profile, persist=False, actor="camera-recovery")
+            self.store.event("CAMERA_RECOVERED", {"device": profile.device})
 
     def verify_fixed_controls(self):
         """Check actual driver controls before a test capture; never silently correct drift."""

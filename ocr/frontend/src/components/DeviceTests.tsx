@@ -6,6 +6,7 @@ import { useApp } from "../lib/store";
 import { cameraEditable, ended } from "../lib/station";
 import Help from "./Help";
 import BatchCapture from "./BatchCapture";
+import { useCameraPreview } from "./useCameraPreview";
 
 type BenchRun = { id: string; target: string; remaining_ms: number | null; feedback_checked?: boolean; feedback_error?: string | null };
 export type BenchState = {
@@ -117,27 +118,7 @@ export function useBench() {
 export type BenchHook = ReturnType<typeof useBench>;
 
 export function CameraView({ connected, tracking, flow }: { connected: boolean; tracking?: {boxes: number[][]; width: number; height: number}; flow?: Record<string, any> }) {
-  const [url, setUrl] = useState(""), [failed, setFailed] = useState(false);
-  const [frame, setFrame] = useState({ seq: "", revision: "" });
-  useEffect(() => {
-    if (!connected) { setUrl(""); setFailed(false); return; }
-    let alive = true, current = "", timer: ReturnType<typeof setTimeout>;
-    const abort = new AbortController();
-    const next = async () => {
-      try {
-        const r = await fetch("/api/camera/frame", { signal: abort.signal, cache: "no-store" });
-        if (!r.ok) throw new Error();
-        const nextUrl = URL.createObjectURL(await r.blob());
-        if (!alive) { URL.revokeObjectURL(nextUrl); return; }
-        if (current) URL.revokeObjectURL(current);
-        current = nextUrl; setUrl(nextUrl); setFailed(false);
-        setFrame({ seq: r.headers?.get("X-Camera-Frame") || "", revision: r.headers?.get("X-Camera-Revision") || "" });
-      } catch { if (alive) setFailed(true); }
-      if (alive) timer = setTimeout(next, 500);
-    };
-    void next();
-    return () => { alive = false; abort.abort(); clearTimeout(timer); if (current) URL.revokeObjectURL(current); };
-  }, [connected]);
+  const { url, failed, frame } = useCameraPreview(connected);
   return <div><div className="relative flex h-80 items-center justify-center overflow-hidden rounded-xl bg-ink-900">
     {connected && url ? <img src={url} alt="카메라 시험 영상" className="h-full w-full object-contain" />
       : <p className="p-8 text-2xl font-bold text-white">{connected ? "영상 수신 재시도 중" : "카메라 미연결"}</p>}
