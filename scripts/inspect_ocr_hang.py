@@ -28,7 +28,9 @@ def main():
     subprocess.run([sys.executable, '-m', 'pip', 'install', '--target', str(tool_dir),
                     '--disable-pip-version-check', 'py-spy==0.4.1'], check=True)
     tool = tool_dir / 'bin/py-spy'
-    command = [str(tool), 'dump', '--pid', str(targets[0]), '--native']
+    # Native unwinding is not supported by py-spy on Jetson ARM64.
+    # Python stacks still identify the model call or lock that is waiting.
+    command = [str(tool), 'dump', '--pid', str(targets[0])]
     if os.geteuid() != 0:
         command.insert(0, 'sudo')
     output = ROOT / 'runtime' / ('ocr-hang-' + time.strftime('%Y%m%d-%H%M%S') + '.txt')
