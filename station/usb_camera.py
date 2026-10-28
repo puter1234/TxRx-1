@@ -4,6 +4,7 @@ from __future__ import annotations
 import multiprocessing as mp
 from multiprocessing import shared_memory
 import platform
+import logging
 import re
 import subprocess
 import threading
@@ -240,11 +241,20 @@ def _capture_process(settings, memory_name, metadata, lock, errors):
         cap.set(cv2.CAP_PROP_FPS, settings["fps"])
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         target = np.ndarray((settings["height"], settings["width"], 3), dtype=np.uint8, buffer=mem.buf)
+        last_frame_at = time.monotonic()
+        frame_timeout = max(2.0, 3.0 / settings["fps"])
         while True:
             ok, frame = cap.read()
             received = time.monotonic_ns()
             if not ok or frame is None:
-                raise RuntimeError("카메라 영상이 끊겼습니다.")
+                metadata[2] += 1
+                # A dropped UVC frame is not a request to release the camera.
+                # Freshness monitoring still stops a process with no new frames.
+                if time.monotonic() - last_frame_at >= frame_timeout:
+                    raise RuntimeError(f"카메라 프레임 읽기 실패: {frame_timeout:.1f}초 동안 새 영상 없음")
+                time.sleep(0.01)
+                continue
+            last_frame_at = time.monotonic()
             if frame.shape != target.shape:
                 raise RuntimeError("실제 영상 크기가 설정과 다릅니다.")
             with lock:
@@ -268,7 +278,7 @@ class UVCStream:
         self.profile = profile
         ctx = mp.get_context("spawn")
         self.lock = ctx.Lock()
-        self.metadata = ctx.Array("q", 2, lock=False)
+        self.metadata = ctx.Array("q", 3, lock=False)
         self.errors = ctx.Queue(maxsize=1)
         self.mem = shared_memory.SharedMemory(create=True, size=profile.width * profile.height * 3)
         self.started = time.monotonic()
@@ -304,6 +314,7 @@ class UVCStream:
         return {"connected": bool(alive and seq and not detail),
                 "frames": seq, "last_frame_age_ms": age, "error": detail, "process_alive": alive,
                 "process_exitcode": self.process.exitcode,
+                "read_failures": self.metadata[2] if len(self.metadata) > 2 else 0,
                 "width": self.profile.width, "height": self.profile.height,
                 "requested_fps": self.profile.fps, "mean_received_fps": seq / max(0.001, time.monotonic() - self.started),
                 "source": self.profile.device, "dropped_frames": None, "sensor_timestamp": None}
@@ -364,12 +375,21 @@ class CameraManager:
         self.profile = None
         self.error = None
         self.identity = None
+        self._health_state = None
         self.revision = int(store.get("camera_settings_revision", 0))
 
     def status(self):
         # Do not block the UI or output STOP while a configuration operation is running.
         stream = self.stream
         status = stream.status() if stream else {"connected": False, "frames": 0}
+        health = (status.get("connected"), status.get("process_alive"), status.get("process_exitcode"))
+        if stream and health != self._health_state:
+            if not status.get("connected"):
+                logging.getLogger(__name__).warning(
+                    "CAMERA_INTERRUPTED device=%s frames=%s age_ms=%s process_alive=%s exitcode=%s read_failures=%s error=%s",
+                    (self.profile or {}).get("device"), status.get("frames"), status.get("last_frame_age_ms"),
+                    status.get("process_alive"), status.get("process_exitcode"), status.get("read_failures"), status.get("error"))
+            self._health_state = health
         return {**status, "error": self.error or status.get("error"),
                 "profile": self.profile, "saved_profile": self.saved,
                 "revision": self.revision, "identity": self.identity}
