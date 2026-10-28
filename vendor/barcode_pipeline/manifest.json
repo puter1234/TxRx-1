@@ -13,8 +13,11 @@
     "barcode_segmenter/barseg/common.py": "ed9c2ad96f7bafd22e55c43b545820af09624eaaf6d90f7c8779eed93da38444",
     "barcode_segmenter/barseg/infer.py": "60b977c0f340cfb6ce7b8c9a119e047365e87202b4225ed5df7220e1e5f4d235",
     "barcode_segmenter/barseg/onnx_runner.py": "50c92e3a761252abbe499c596d590e71c2480b2edcef37720e8c3b7ffcea4ba1",
-    "barcode_segmenter/barseg/text_regions.py": "63181d4b42e00f7972defc7c64dc2b97c4f74a3344598a9be74f3d5a4a3c788f",
+    "barcode_segmenter/barseg/text_regions.py": "768442516382b09ca5b529d56bcb0f5a3a06d58986f58f27bde4b7c5870c4999",
     "barcode_segmenter/models/deployment.json": "c8ba53092d4b8cee282913e203e5b625d69dda45dd32e6870fb3d7cefe9b806b",
     "barcode_segmenter/models/barcode.onnx": "d8bd2f0d86d11053a5433f2e00f19eae1ec837b27c05f00aa9281245974ac2fe"
+  },
+  "local_patches": {
+    "barcode_segmenter/barseg/text_regions.py": "Require printed text direction within 5 degrees of the barcode axis and at least 70 percent horizontal overlap."
   }
 }

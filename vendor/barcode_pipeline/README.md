@@ -1,8 +1,13 @@
 # Barcode pipeline runtime
 
-Inference sources, deployment settings and ONNX weights copied without changes
+Inference sources, deployment settings and ONNX weights originate
 from https://github.com/puter1234/barcode-pipeline at
 `100a3025192e7ea06a1eefcf32c2b7d7b16ba9a9`.
+
+The local text-region patch requires a measured text direction within 5 degrees
+of the barcode's long axis and at least 70 percent horizontal overlap. This is
+recorded in `manifest.json` along with the updated source hash. Model weights
+and their preprocessing are unchanged.
 
 `manifest.json` records each bundled file's SHA-256. The station verifies this
 bundle before loading either model. Runtime inference does not download files.
