@@ -249,3 +249,26 @@ def test_stale_frame_status_explains_loss_and_recovers_without_closing_process()
     stream.metadata[1] = time.monotonic_ns()
     assert stream.status()['connected']
     assert stream.status()['error'] is None
+
+
+@pytest.mark.parametrize('failure', [TimeoutError, ValueError, RuntimeError])
+def test_preview_failure_does_not_stop_live_outputs_and_next_frame_recovers(rig, monkeypatch, failure):
+    from tests_station.test_bench import setup
+    client, app = rig
+    apply(client, app)
+    setup(client)
+    assert client.post('/api/bench/io/connect', json={}).status_code == 200
+    assert pulse(client, 'led', seconds=None).status_code == 200
+    stream = app.state.camera.stream
+    original = app.state.camera.read_latest
+    def interrupted():
+        raise failure('temporary preview failure')
+    monkeypatch.setattr(app.state.camera, 'read_latest', interrupted)
+    response = client.get('/api/camera/frame')
+    assert response.status_code == 503
+    assert app.state.camera.stream is stream and not stream.closed
+    assert app.state.bench.io.led is True
+    assert 'led' in app.state.bench.runs
+    monkeypatch.setattr(app.state.camera, 'read_latest', original)
+    assert client.get('/api/camera/frame').status_code == 200
+    assert app.state.bench.io.led is True

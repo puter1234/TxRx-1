@@ -120,7 +120,7 @@ export function CameraView({ connected, tracking, flow }: { connected: boolean; 
   const [url, setUrl] = useState(""), [failed, setFailed] = useState(false);
   const [frame, setFrame] = useState({ seq: "", revision: "" });
   useEffect(() => {
-    if (!connected) { setUrl(""); return; }
+    if (!connected) { setUrl(""); setFailed(false); return; }
     let alive = true, current = "", timer: ReturnType<typeof setTimeout>;
     const abort = new AbortController();
     const next = async () => {
@@ -132,20 +132,20 @@ export function CameraView({ connected, tracking, flow }: { connected: boolean; 
         if (current) URL.revokeObjectURL(current);
         current = nextUrl; setUrl(nextUrl); setFailed(false);
         setFrame({ seq: r.headers?.get("X-Camera-Frame") || "", revision: r.headers?.get("X-Camera-Revision") || "" });
-      } catch { if (alive) { setFailed(true); setUrl(""); } }
+      } catch { if (alive) setFailed(true); }
       if (alive) timer = setTimeout(next, 500);
     };
     void next();
     return () => { alive = false; abort.abort(); clearTimeout(timer); if (current) URL.revokeObjectURL(current); };
   }, [connected]);
   return <div><div className="relative flex h-80 items-center justify-center overflow-hidden rounded-xl bg-ink-900">
-    {connected && url && !failed ? <img src={url} alt="카메라 시험 영상" className="h-full w-full object-contain" />
-      : <p className="p-8 text-2xl font-bold text-white">{failed ? "영상 연결 끊김" : "카메라 미연결"}</p>}
+    {connected && url ? <img src={url} alt="카메라 시험 영상" className="h-full w-full object-contain" />
+      : <p className="p-8 text-2xl font-bold text-white">{connected ? "영상 수신 재시도 중" : "카메라 미연결"}</p>}
     {tracking && flow && connected && url && !failed && <svg aria-label="검출 위치와 계수선" className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${tracking.width} ${tracking.height}`} preserveAspectRatio="xMidYMid meet">
       {tracking.boxes.map(([x1,y1,x2,y2], i) => <rect key={i} x={x1*tracking.width} y={y1*tracking.height} width={(x2-x1)*tracking.width} height={(y2-y1)*tracking.height} fill="none" stroke="#22c55e" strokeWidth={2}/>)}
       <line x1={flow.axis === "x" ? flow.line*tracking.width : 0} x2={flow.axis === "x" ? flow.line*tracking.width : tracking.width} y1={flow.axis === "y" ? flow.line*tracking.height : 0} y2={flow.axis === "y" ? flow.line*tracking.height : tracking.height} stroke="#facc15" strokeWidth={2}/>
     </svg>}
-  </div>{connected && url && !failed && frame.seq && <details className="mt-2 text-sm text-ink-700"><summary className="cursor-pointer">영상 정보</summary><p>프레임 {frame.seq}, 설정 버전 {frame.revision || "미확인"}</p></details>}</div>;
+  </div>{connected && url && failed && <p role="status" className="mt-2 text-sm">영상 갱신 지연</p>}{connected && url && !failed && frame.seq && <details className="mt-2 text-sm text-ink-700"><summary className="cursor-pointer">영상 정보</summary><p>프레임 {frame.seq}, 설정 버전 {frame.revision || "미확인"}</p></details>}</div>;
 }
 
 export function OutputTests({ bench, ledOnly = false, compact = false }: { bench: BenchHook; ledOnly?: boolean; compact?: boolean }) {

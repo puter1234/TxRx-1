@@ -594,7 +594,12 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
                     headers[header] = str(metadata[field])
             return data.tobytes(), headers
 
-        data, headers = await asyncio.to_thread(encode)
+        try:
+            data, headers = await asyncio.to_thread(encode)
+        except (TimeoutError, ValueError, RuntimeError, cv2.error) as exc:
+            import logging
+            logging.getLogger(__name__).warning("CAMERA_PREVIEW_FAILED: %s", exc)
+            raise HTTPException(503, "카메라 영상을 갱신하지 못했습니다.") from exc
         return Response(data, media_type="image/jpeg", headers=headers)
 
     @app.post("/api/device/test/{kind}")
