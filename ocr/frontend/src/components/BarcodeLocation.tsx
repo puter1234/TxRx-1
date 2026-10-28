@@ -1,5 +1,7 @@
 export type Locator = "yolo26" | "stripes" | "opencv";
 export type LocationDiagnostics = {
+  tags?: { roi: number[] }[];
+  texts?: { quad: number[][] }[];
   locator?: Locator; source_width?: number; source_height?: number;
   detection_width?: number; detection_height?: number;
   regions?: { quad: number[][]; stage: string }[];
@@ -21,11 +23,20 @@ export function LocatorSelect({ value, onChange, disabled = false }: {
   </label>;
 }
 
-export function BarcodeOverlay({ diagnostics }: { diagnostics?: LocationDiagnostics }) {
-  if (!diagnostics?.source_width || !diagnostics.source_height || !diagnostics.regions?.length) return null;
+export function BarcodeOverlay({ diagnostics, showAll = false }: { diagnostics?: LocationDiagnostics; showAll?: boolean }) {
+  if (!diagnostics?.source_width || !diagnostics.source_height || (!showAll && !diagnostics.regions?.length)) return null;
   return <svg aria-label="검출한 바코드 위치" role="img" className="pointer-events-none absolute inset-0 h-full w-full"
     viewBox={`0 0 ${diagnostics.source_width} ${diagnostics.source_height}`} preserveAspectRatio="xMidYMid meet">
-    {diagnostics.regions.map((region, i) => <polygon key={i} points={region.quad.map(point => point.join(",")).join(" ")}
+    {showAll && diagnostics.tags?.map((tag, i) => {
+      const sx = diagnostics.source_width! / (diagnostics.detection_width || diagnostics.source_width!);
+      const sy = diagnostics.source_height! / (diagnostics.detection_height || diagnostics.source_height!);
+      const [x1,y1,x2,y2] = tag.roi;
+      return <rect key={"tag" + i} x={x1*sx} y={y1*sy} width={(x2-x1)*sx} height={(y2-y1)*sy}
+        fill="none" stroke="#2563eb" strokeWidth={2} vectorEffect="non-scaling-stroke"/>;
+    })}
+    {showAll && diagnostics.texts?.map((text, i) => <polygon key={"text" + i} points={text.quad.map(point => point.join(",")).join(" ")}
+      fill="none" stroke="#f97316" strokeWidth={2} vectorEffect="non-scaling-stroke"/>)}
+    {diagnostics.regions?.map((region, i) => <polygon key={i} points={region.quad.map(point => point.join(",")).join(" ")}
       fill="none" stroke="#16a34a" strokeWidth={2} vectorEffect="non-scaling-stroke"/>)}
   </svg>;
 }

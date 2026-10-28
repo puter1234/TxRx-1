@@ -60,11 +60,13 @@ class BatchCapture(Model):
 
 
 def install(app, controller, bench, camera, permitted, editable, production_busy, maintenance_active, workers):
+    from .inspection_views import inspection_view, view_options
+
     store = controller.store
     captures = store.root / "device-tests"
     batch = {"active": False, "completed": 0, "target": 0}
     batch_cancel = threading.Event()
-    ocr_frame = {"id": None, "image": None}
+    ocr_frame = {"id": None, "image": None, "diagnostics": {}}
     ocr_frame_lock = threading.Lock()
     sensor_ocr = SensorOcrTest(bench, camera, app.state.vision)
     app.state.sensor_ocr = sensor_ocr
@@ -149,11 +151,16 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
         return sensor_ocr.status()
 
     @app.get("/api/bench/pipeline/frames/{job_id}/{sequence}")
-    def pipeline_image(job_id: str, sequence: int, request: Request, crop: int | None = None, original: bool = False):
+    def pipeline_image(job_id: str, sequence: int, request: Request, crop: int | None = None, original: bool = False, view: str = "original", region: int = 0):
         permitted(request)
         image = sensor_ocr.image(job_id, sequence, crop)
         if image is None:
             raise HTTPException(410, "이 프레임은 메모리에서 정리되었습니다.")
+        if view != "original":
+            if crop is not None:
+                raise HTTPException(422, "문자 크롭에서는 원본 보기를 사용하세요.")
+            diagnostics = sensor_ocr.diagnostics(job_id, sequence)
+            image = inspection_view(image, diagnostics, view, region)
         import cv2
         ok, encoded = cv2.imencode(".png", image, [cv2.IMWRITE_PNG_COMPRESSION, 1])
         if not ok:
@@ -340,7 +347,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
                 raise Conflict("카메라를 먼저 연결하세요.")
             camera.verify_fixed_controls()
             with ocr_frame_lock:
-                ocr_frame.update(id=None, image=None)
+                ocr_frame.update(id=None, image=None, diagnostics={})
             started = time.perf_counter()
             # The live test uses the frame already arriving from the camera.
             # Waiting for two more frames adds hundreds of milliseconds at low FPS.
@@ -354,7 +361,8 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
             )
             ident = str(uuid.uuid4())
             with ocr_frame_lock:
-                ocr_frame.update(id=ident, image=frame)
+                ocr_frame.update(id=ident, image=frame, diagnostics=result.get("barcode_diagnostics", {}))
+            result["image_views"] = view_options(result.get("barcode_diagnostics", {}))
             result["preview_url"] = "/api/bench/ocr/frames/" + ident
             result["original_url"] = result["preview_url"] + "?original=true"
             return result
@@ -362,7 +370,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
         return await native(execute, allow_outputs=True, camera_only=True)
 
     @app.get("/api/bench/ocr/frames/{ident}")
-    def ocr_image(ident: str, request: Request, original: bool = False):
+    def ocr_image(ident: str, request: Request, original: bool = False, view: str = "original", region: int = 0):
         permitted(request)
         import cv2
 
@@ -370,6 +378,9 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
             if ident != ocr_frame["id"] or ocr_frame["image"] is None:
                 raise HTTPException(410, "이전 검사 사진은 다음 검사에서 교체됩니다.")
             image = ocr_frame["image"]
+            diagnostics = ocr_frame["diagnostics"]
+        if view != "original":
+            image = inspection_view(image, diagnostics, view, region)
         headers = {"Cache-Control": "no-store"}
         ok, encoded = cv2.imencode(".png", image, [cv2.IMWRITE_PNG_COMPRESSION, 1])
         if original:

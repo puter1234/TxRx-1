@@ -408,6 +408,15 @@ class SensorOcrTest:
                      for frame in job["frames"]]} for job in reversed(self.jobs)]
             return result
 
+    def diagnostics(self, job_id, sequence):
+        with self.lock:
+            for job in self.jobs:
+                if job["id"] == job_id:
+                    for frame in job["frames"]:
+                        if frame["seq"] == sequence:
+                            return (frame["result"] or {}).get("barcode_diagnostics", {})
+        return {}
+
     def image(self, job_id, sequence, crop=None):
         with self.lock:
             for job in self.jobs:

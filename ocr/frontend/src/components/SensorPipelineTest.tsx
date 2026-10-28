@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Play, Square } from "lucide-react";
 import { api } from "../station/shared";
+import InspectionImage from "./InspectionImage";
 import Help from "./Help";
 import type { BenchHook, BenchState } from "./DeviceTests";
-import { BarcodeOverlay, LocatorSelect, LocationSummary, type Locator, type LocationDiagnostics } from "./BarcodeLocation";
+import { LocatorSelect, LocationSummary, type Locator, type LocationDiagnostics } from "./BarcodeLocation";
 
 type Line = { text: string; confidence: number };
 type Frame = {
@@ -167,12 +168,7 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
               <button className={`btn btn-sm ${actualSize ? "btn-primary" : "btn-outline"}`} aria-pressed={actualSize} onClick={() => setActualSize(true)}>원본 크기</button>
               <a className="btn btn-sm btn-outline" href={`${frameUrl}?original=true`} download>원본 저장</a>
             </div>
-            <div className="max-h-[600px] overflow-auto rounded-xl">
-              <div className={actualSize ? "relative w-max" : "relative"}>
-                <img src={frameUrl} alt="센서 감지 후 수집한 프레임" className={actualSize ? "max-w-none" : "max-h-[600px] w-full object-contain"}/>
-                <BarcodeOverlay diagnostics={frame.result?.barcode_diagnostics}/>
-              </div>
-            </div>
+            <InspectionImage key={frameUrl} src={frameUrl} alt="센서 감지 후 수집한 프레임" diagnostics={frame.result?.barcode_diagnostics} actualSize={actualSize}/>
           </>
             : <p className="text-lg font-bold">사진이 메모리에서 정리되었습니다</p>}
           {frame.state === "skipped" && <p className="text-lg font-bold">앞 프레임에서 성공하여 OCR 생략</p>}

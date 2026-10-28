@@ -4,11 +4,12 @@ import { ArrowLeft, CreditCard, ScanText } from "lucide-react";
 import { api } from "../station/shared";
 import { useApp } from "../lib/store";
 import { cameraEditable, ended, reportError } from "../lib/station";
+import InspectionImage from "../components/InspectionImage";
 import Help from "../components/Help";
 import { DeviceSettingsPanels } from "../components/DeviceSettings";
 import { LoginGate } from "./Settings";
 import SensorPipelineTest from "../components/SensorPipelineTest";
-import { BarcodeOverlay, LocatorSelect, LocationSummary, type Locator, type LocationDiagnostics } from "../components/BarcodeLocation";
+import { LocatorSelect, LocationSummary, type Locator, type LocationDiagnostics } from "../components/BarcodeLocation";
 import { Equipment as EquipmentDetails } from "../station/StationApp";
 import { BenchHeader, CameraTest, OutputTests, SensorTest, useBench } from "../components/DeviceTests";
 
@@ -92,10 +93,7 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy, sharedPrevi
           {result.preview_url && <div className="space-y-3">
             <div className="flex items-center gap-2"><h3 className="text-xl font-bold">검사한 사진</h3>
               <Help text="이번 판독에 실제로 사용한 프레임입니다. 화면에서는 작게 표시하며 원본 사진 저장은 같은 프레임의 전체 해상도 PNG를 받습니다. 다음 검사 시 이전 사진은 교체됩니다."/></div>
-            <div className="relative">
-              <img src={result.preview_url} alt="이번 검사에 사용한 사진" className="max-h-[520px] w-full rounded-lg bg-ink-900 object-contain"/>
-              <BarcodeOverlay diagnostics={result.barcode_diagnostics}/>
-            </div>
+            <InspectionImage key={result.preview_url} src={result.preview_url} alt="이번 검사에 사용한 사진" diagnostics={result.barcode_diagnostics}/>
             <p className="text-lg font-bold">{result.frame_width} × {result.frame_height}</p>
             <a className="btn btn-outline" href={result.original_url} download>검사 원본 사진 저장</a>
           </div>}

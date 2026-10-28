@@ -95,6 +95,7 @@ it("shows the captured original, supports full-size inspection and downloads the
   const image = await screen.findByAltText("센서 감지 후 수집한 프레임");
   const url = "/api/bench/pipeline/frames/job1/42";
   expect(image.getAttribute("src")).toBe(url);
+  fireEvent.click(screen.getByRole("button", { name: "검출 결과" }));
   expect(screen.getByRole("img", { name: "검출한 바코드 위치" }).getAttribute("viewBox")).toBe("0 0 1920 1080");
   expect(screen.getByText(/탐색 1280 x 720/)).toBeTruthy();
   expect(screen.getByRole("link", { name: "원본 저장" }).getAttribute("href")).toBe(url + "?original=true");

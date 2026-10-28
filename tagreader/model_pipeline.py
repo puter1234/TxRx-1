@@ -91,6 +91,8 @@ class ModelLocator:
             detection_width=DETECTION_SIZE[0], detection_height=DETECTION_SIZE[1],
             model_commit=self.manifest["commit"], prepare_ms=resize_ms, align_ms=0., decoded=0,
             status="located" if records else "not_detected",
+            tags=[{"roi": det["roi_bbox_xyxy"]} for det in found["detections"]],
+            texts=[{"quad": region["quad_target"]} for record in records for region in record["regions"]],
             regions=[{"quad": record["quad"], "polygon": record["polygon"], "stage": "yolo26"}
                      for record in records],
             stages=[{"stage": "yolo26", "candidates": len(records), "tag_count": len(found["detections"]),
