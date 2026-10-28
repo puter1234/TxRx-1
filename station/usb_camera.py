@@ -183,13 +183,20 @@ class V4L2:
                 "controls": list(controls.values()), "current": active}
 
     def apply(self, profile):
+        return self._apply(profile, configure_mode=True)
+
+    def apply_controls(self, profile):
+        return self._apply(profile, configure_mode=False)
+
+    def _apply(self, profile, *, configure_mode):
         info = self.inspect(profile.device)
         if not any(m["width"] == profile.width and m["height"] == profile.height
                    and m["pixel_format"] == profile.pixel_format and abs(m["fps"] - profile.fps) < 0.05 for m in info["modes"]):
             raise ValueError("카메라가 지원하는 해상도와 FPS를 선택하세요.")
-        self.run("-d", profile.device, "--set-fmt-video=" +
-                 f"width={profile.width},height={profile.height},pixelformat={profile.pixel_format}",
-                 f"--set-parm={profile.fps}")
+        if configure_mode:
+            self.run("-d", profile.device, "--set-fmt-video=" +
+                     f"width={profile.width},height={profile.height},pixelformat={profile.pixel_format}",
+                     f"--set-parm={profile.fps}")
         # Automatic mode controls first; query inactive flags again before manual controls.
         for name in sorted(profile.controls, key=lambda n: ("auto" not in n, n)):
             controls = parse_controls(self.run("-d", profile.device, "--list-ctrls-menus"))
@@ -292,8 +299,11 @@ class UVCStream:
         alive = not self.closed and self.process.is_alive()
         if not alive and not self.closed:
             self.error = self.error or "카메라 처리기가 종료되었습니다."
-        return {"connected": bool(alive and seq and not self.error and age < max(2000, 3000 / self.profile.fps)),
-                "frames": seq, "last_frame_age_ms": age, "error": self.error,
+        stale = bool(alive and ns and age >= max(2000, 3000 / self.profile.fps))
+        detail = self.error or (f"카메라 새 프레임 수신 지연: {age / 1000:.1f}초" if stale else None)
+        return {"connected": bool(alive and seq and not detail),
+                "frames": seq, "last_frame_age_ms": age, "error": detail, "process_alive": alive,
+                "process_exitcode": self.process.exitcode,
                 "width": self.profile.width, "height": self.profile.height,
                 "requested_fps": self.profile.fps, "mean_received_fps": seq / max(0.001, time.monotonic() - self.started),
                 "source": self.profile.device, "dropped_frames": None, "sensor_timestamp": None}
@@ -373,12 +383,24 @@ class CameraManager:
             initial = self.backend.inspect(profile.device)
             original = initial.get("current")
             profile = fixed_camera_profile(profile, initial)
-            self._close_stream()
+            mode_keys = ("device", "width", "height", "pixel_format")
+            same_mode = bool(previous and original and self.stream and self.stream.status().get("connected")
+                             and all(previous[k] == getattr(profile, k) and original[k] == getattr(profile, k) for k in mode_keys)
+                             and abs(original["fps"] - profile.fps) < 0.05
+                             and abs(previous["fps"] - profile.fps) < 0.05)
+            values = {c["name"]: c["value"] for c in initial["controls"]}
+            unchanged = same_mode and all(values.get(k) == v for k, v in profile.controls.items())
+            reuse_stream = same_mode and (unchanged or hasattr(self.backend, "apply_controls"))
             self.error = None
             try:
-                info = self.backend.apply(profile)
-                stream = self.stream_factory(profile)
-                self.stream = stream
+                if reuse_stream:
+                    info = initial if unchanged else self.backend.apply_controls(profile)
+                else:
+                    self.store.event("CAMERA_STREAM_RESTART", {"actor": actor, "previous": previous,
+                                                              "requested": profile.model_dump()})
+                    self._close_stream()
+                    info = self.backend.apply(profile)
+                    self.stream = self.stream_factory(profile)
                 # Opening a native capture backend can renegotiate mode or reset controls.
                 current = self.backend.inspect(profile.device)
                 actual = current["current"]
@@ -399,9 +421,18 @@ class CameraManager:
                 self.profile, self.revision, self.identity = accepted, revision, info["identity"]
                 return {**self.status(), "capabilities": current}
             except Exception as exc:
+                self.error = str(exc)
+                if reuse_stream:
+                    try:
+                        if not unchanged:
+                            self.backend.apply_controls(CameraProfile.model_validate(previous))
+                    except Exception as restore:
+                        self.error += " / 이전 설정 복원 실패: " + str(restore)
+                        self._close_stream()
+                        self.profile = None
+                    raise ValueError(self.error) from exc
                 self._close_stream()
                 self.profile = None
-                self.error = str(exc)
                 try:
                     if original:
                         self.backend.apply(CameraProfile.model_validate(original))
@@ -416,6 +447,8 @@ class CameraManager:
                 raise ValueError(self.error) from exc
 
     def connect(self):
+        if self.status().get("connected"):
+            return self.status()
         if self.saved:
             return self.apply(CameraProfile.model_validate(self.saved))
         if self.config.camera_source in ("CSI0", "CSI1"):

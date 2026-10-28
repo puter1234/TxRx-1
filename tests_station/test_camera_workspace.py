@@ -162,3 +162,90 @@ def test_leaving_workspace_releases_inputs_so_next_production_job_can_be_created
     assert job.json()["session"]["phase"] == "READY"
     assert c.post("/api/bench/close", json={}).status_code == 200
     assert c.get("/api/status").json()["session"]["phase"] == "READY"
+
+
+def test_saving_same_profile_and_connecting_keeps_live_stream(rig):
+    client, app = rig
+    apply(client, app)
+    camera = app.state.camera
+    stream = camera.stream
+    apply(client, app, save=True)
+    assert camera.stream is stream and not stream.closed
+    assert client.post('/api/bench/camera/connect', json={}).status_code == 200
+    assert camera.stream is stream and not stream.closed
+
+
+def test_manual_controls_do_not_reopen_stream_and_rejection_restores_controls(rig):
+    client, app = rig
+    camera = app.state.camera
+    class LiveBackend(AutomaticBackend):
+        def apply_controls(self, profile):
+            return self.apply(profile)
+    camera.backend = LiveBackend()
+    apply(client, app)
+    stream = camera.stream
+    apply(client, app, {"focus_absolute": 25})
+    assert camera.stream is stream and not stream.closed
+    assert camera.profile['controls']['focus_absolute'] == 25
+    profile = camera.backend.profile.model_dump()
+    profile['controls']['focus_absolute'] = 77
+    result = client.post('/api/bench/camera/apply', json={"profile": profile, "save": True, "expected_revision": camera.revision})
+    assert result.status_code == 422, result.text
+    assert camera.stream is stream and not stream.closed
+    assert camera.backend.profile.controls['focus_absolute'] == 25
+    assert camera.saved['controls']['focus_absolute'] == 25
+
+
+def test_resolution_change_still_restarts_capture(rig):
+    client, app = rig
+    apply(client, app)
+    camera = app.state.camera
+    previous = camera.stream
+    profile = camera.backend.profile.model_dump()
+    profile.update(width=8000, height=6000, fps=3)
+    result = client.post('/api/bench/camera/apply', json={"profile": profile, "save": True, "expected_revision": camera.revision})
+    assert result.status_code == 200, result.text
+    assert previous.closed and camera.stream is not previous
+
+
+def test_v4l2_control_changes_never_reset_video_format():
+    from station.usb_camera import V4L2, CameraProfile
+    class Backend(V4L2):
+        value = 10
+        commands = []
+        def inspect(self, device):
+            return {"modes": [{"width":640,"height":480,"pixel_format":"YUYV","fps":30}],
+                    "current": {"width":640,"height":480,"pixel_format":"YUYV","fps":30},
+                    "controls": [{"name":"focus_absolute","value":self.value}]}
+        def run(self, *args):
+            self.commands.append(args)
+            if '--list-ctrls-menus' in args:
+                return f'focus_absolute 0x009a090a (int) : min=0 max=100 step=1 value={self.value}'
+            if args[-1].startswith('--set-ctrl=focus_absolute='):
+                self.value = int(args[-1].split('=')[-1])
+            return ''
+    backend = Backend()
+    backend.apply_controls(CameraProfile(device='/dev/video0',width=640,height=480,fps=30,controls={'focus_absolute':25}))
+    assert backend.value == 25
+    assert not any('set-fmt' in arg or 'set-parm' in arg for command in backend.commands for arg in command)
+
+
+def test_stale_frame_status_explains_loss_and_recovers_without_closing_process():
+    import queue
+    import time
+    from types import SimpleNamespace
+    from station.usb_camera import UVCStream, CameraProfile
+    stream = UVCStream.__new__(UVCStream)
+    stream.errors = queue.Queue()
+    stream.error = None
+    stream.closed = False
+    stream.metadata = [100, time.monotonic_ns() - 3_000_000_000]
+    stream.profile = CameraProfile(device='/dev/video0',width=640,height=480,fps=30)
+    stream.process = SimpleNamespace(is_alive=lambda: True, exitcode=None)
+    stream.started = time.monotonic() - 10
+    stale = stream.status()
+    assert not stale['connected'] and stale['process_alive']
+    assert '수신 지연' in stale['error']
+    stream.metadata[1] = time.monotonic_ns()
+    assert stream.status()['connected']
+    assert stream.status()['error'] is None
