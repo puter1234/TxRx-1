@@ -24,3 +24,13 @@ The user's indefinite OCR wait has not been reproduced or diagnosed. Incorrectly
 - On this cloud CPU, median copy time over ten copies was 20.979 ms for the original and 0.197 ms for the preview. These are memory-copy timings, not measured camera or browser FPS on the user's equipment.
 
 No Jetson, USB camera, GPIO output, relay, or motor was available in the cloud environment.
+
+## Follow-up: false DI2 capture failure
+
+The sensor OCR trial treated `job.collecting` at DI2 as proof that acquisition was late. This flag stays true until the parent finishes copying and registers the full-resolution image. A frame whose host receipt timestamp precedes DI2 could therefore be discarded and stop the conveyor solely because the copy had not completed.
+
+The same test was run against the previous committed implementation and the fix. With one frame already received after DI1 and before DI2, and its copy deliberately held in progress, the previous implementation reported the misleading instruction to reduce capture delay/count. The corrected implementation accepts the frame using its receipt timestamp. A separate test confirms that a frame received after DI2 is rejected and outputs stop. DI2 still switches the LED off immediately; manual stop still invalidates any pending copy result.
+
+A second defect caused the same pre-due frame to be copied on every loop while waiting for a fresh frame. The regression test counted 20 copies in a 40 ms window using tiny synthetic frames. A real 48MP BGR copy is 144 MB, so those tiny-frame timings are not hardware measurements. The capture worker now records the last checked sequence even for rejected frames, avoiding another full-resolution copy until the camera publishes a new sequence.
+
+Validation: all 35 sensor/conveyor/scheduled-capture tests passed. This includes one and two frame copy/departure races, rejected post-DI2 frames, immediate LED OFF, manual stop during copying, and single-copy handling of an old frame. Results also retain planned capture time, observed DI2 time, copy duration and registration time. These fixes address reproduced acquisition/DI2 defects; they do not establish the physical cause of the user's USB interruption or the direct cause of the separate OCR execution hang.

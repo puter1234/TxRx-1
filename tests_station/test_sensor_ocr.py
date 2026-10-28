@@ -134,3 +134,28 @@ def test_model_upgrade_preserves_timings_and_later_comparison_choice():
     trial.save_settings(trial.settings.model_copy(update={"locator": "opencv"}))
     restored = SensorOcrTest(bench, Camera(), SimpleNamespace())
     assert restored.settings.locator == "opencv"
+
+
+def test_old_frame_is_not_copied_repeatedly_while_waiting_for_due_frame():
+    bench, camera = Bench(), Camera()
+    reads = []
+    original = camera.read_latest
+    def counted():
+        reads.append(True)
+        return original()
+    camera.read_latest = counted
+    trial = SensorOcrTest(bench, camera, SimpleNamespace(test_auto=lambda *a, **k: {'reads': []}))
+    try:
+        trial.start(SensorOcrSettings(frame_count=1))
+        trigger = time.monotonic_ns()
+        trial.edge(1, 0, trigger)
+        with camera.lock:
+            camera.seq += 1
+            camera.received = trigger - 1
+        until(lambda: len(reads) > 0)
+        time.sleep(.04)
+        assert len(reads) == 1
+        camera.publish()
+        until(lambda: len(trial.status()['jobs'][0]['frames']) == 1)
+    finally:
+        trial.close()

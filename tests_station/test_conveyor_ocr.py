@@ -222,7 +222,7 @@ def test_di2_before_last_capture_stops_and_preserves_reason(trial):
     t.sensor(1, 0)
     t.sensor(2, 0)
     assert not t.state()["active"] and t.state()["count"] == 1
-    assert "촬영이 끝나기 전에 DI2" in t.state()["error"]
+    assert "DI2가 촬영 예정 시각보다 먼저" in t.state()["error"]
     assert all(t.values[pin] == 0 for pin in (50, 51, 52))
 
 
@@ -381,3 +381,81 @@ def test_sensor_trial_can_compare_existing_locator(trial):
     wait_for(lambda: trial.state()["passed"] == 1)
     assert trial.vision.locators == ["opencv"]
     assert trial.app.state.store.get("sensor_ocr_settings")["locator"] == "opencv"
+
+
+@pytest.mark.parametrize('frame_count', [1, 2])
+def test_di2_during_copy_accepts_frame_received_before_departure(trial, monkeypatch, frame_count):
+    t = trial
+    entered, release = threading.Event(), threading.Event()
+    original = t.camera.read_latest
+    def copying():
+        image, metadata = original()
+        job = t.app.state.sensor_ocr.jobs[0]
+        if metadata['host_received_ns'] >= job['trigger_ns'] and len(job['frames']) == frame_count - 1:
+            entered.set()
+            assert release.wait(2)
+        return image, metadata
+    monkeypatch.setattr(t.camera, 'read_latest', copying)
+    try:
+        t.start(capture_delay_ms=0, capture_interval_ms=0, frame_count=frame_count)
+        t.sensor(1, 0)
+        assert entered.wait(1)
+        t.sensor(2, 0)
+        assert t.values[52] == 0  # DI2 always switches the LED off immediately.
+        assert t.state()['error'] is None
+        assert t.state()['active']
+        release.set()
+        wait_for(lambda: len(t.state()['jobs'][0]['frames']) == frame_count)
+        job = t.state()['jobs'][0]
+        assert all(job['trigger_ns'] <= f['received_ns'] <= job['released_ns'] for f in job['frames'])
+        assert job['counted'] and not job['collecting']
+    finally:
+        release.set()
+
+
+def test_frame_received_after_di2_is_rejected_even_if_copy_started_earlier(trial, monkeypatch):
+    t = trial
+    entered, release = threading.Event(), threading.Event()
+    original = t.camera.read_latest
+    def waiting_for_frame():
+        entered.set()
+        assert release.wait(2)
+        # The USB read supplied a frame only after the product had departed.
+        t.camera.publish()
+        return original()
+    monkeypatch.setattr(t.camera, 'read_latest', waiting_for_frame)
+    try:
+        t.start(capture_delay_ms=0, frame_count=1)
+        t.sensor(1, 0)
+        assert entered.wait(1)
+        t.sensor(2, 0)
+        release.set()
+        wait_for(lambda: not t.state()['active'])
+        assert 'DI2 도착 전 촬영 프레임' in t.state()['error']
+        assert not t.state()['jobs'][0]['frames']
+        assert all(t.values[pin] == 0 for pin in (50, 51, 52))
+    finally:
+        release.set()
+
+
+def test_manual_stop_during_frame_copy_cannot_accept_late_result(trial, monkeypatch):
+    t = trial
+    entered, release = threading.Event(), threading.Event()
+    original = t.camera.read_latest
+    def copying():
+        result = original()
+        entered.set()
+        assert release.wait(2)
+        return result
+    monkeypatch.setattr(t.camera, 'read_latest', copying)
+    try:
+        t.start(capture_delay_ms=0, frame_count=1)
+        t.sensor(1, 0)
+        assert entered.wait(1)
+        assert t.client.post('/api/bench/stop', json={}).status_code == 200
+        assert all(t.values[pin] == 0 for pin in (50, 51, 52))
+        release.set()
+        wait_for(lambda: not t.state()['busy'])
+        assert not t.state()['jobs'][0]['frames']
+    finally:
+        release.set()

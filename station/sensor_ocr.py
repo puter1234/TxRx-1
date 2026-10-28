@@ -216,11 +216,22 @@ class SensorOcrTest:
                 return
             job = self.physical
             job.update(counted=True, released_ns=observed_ns)
+            last_due_ms = (self.settings.capture_delay_ms
+                           + (self.settings.frame_count - 1) * self.settings.capture_interval_ms)
+            job["capture_timing"] = {
+                "planned_last_ms": last_due_ms,
+                "di2_after_trigger_ms": round((observed_ns - job["trigger_ns"]) / 1e6, 2),
+            }
             self.count += 1
             self.physical = None
-            if job["collecting"]:
-                job["capture_error"] = "촬영이 끝나기 전에 DI2에 도착했습니다. 촬영 지연이나 장수를 줄이세요."
+            if job["collecting"] and observed_ns < job["trigger_ns"] + last_due_ms * 1_000_000:
+                job["capture_error"] = "DI2가 촬영 예정 시각보다 먼저 감지됐습니다."
                 self._fail(job["capture_error"])
+            # A frame received before DI2 can still be in the shared-memory
+            # copy. The capture worker checks its receipt timestamp against
+            # released_ns before accepting it. Never equate an unfinished copy
+            # with a missed acquisition, or accept a frame received after DI2.
+            self.wake.set()
             return
         self.bench.sequence_output("led", True, self.output_serial)
         self.bench.sequence_output("speed", False, self.output_serial)
@@ -283,6 +294,7 @@ class SensorOcrTest:
 
     def _capture(self):
         last_delivered = self.latest_seq
+        last_checked = last_delivered
         try:
             while not self.cancel.wait(0.002):
                 status = self.camera.status()
@@ -304,10 +316,16 @@ class SensorOcrTest:
                         job["capture_error"] = "새 프레임 수집 시간 초과"
                         self.wake.set()
                         continue
-                    if self.latest_seq <= last_delivered or time.monotonic_ns() < due_ns:
+                    if self.latest_seq <= max(last_checked, job["baseline_seq"]) or time.monotonic_ns() < due_ns:
                         continue
+                copy_started = time.monotonic_ns()
                 image, meta = self.camera.read_latest()
+                copy_finished = time.monotonic_ns()
                 seq, received = int(meta["seq"]), int(meta["host_received_ns"])
+                # A rejected pre-due frame must not be copied again every 2 ms.
+                # At 48MP that repeatedly copies 144 MB while waiting for the
+                # next camera publication and competes with the capture writer.
+                last_checked = max(last_checked, seq)
                 # A newer sequence is mandatory even on hosts whose monotonic
                 # clock gives two receipts the same timestamp.
                 if seq <= max(last_delivered, job["baseline_seq"]) or received < due_ns:
@@ -315,6 +333,12 @@ class SensorOcrTest:
                 with self.lock:
                     if not self.active or not job["collecting"]:
                         continue
+                    if self.settings.conveyor_sync and job["released_ns"] is not None and received > job["released_ns"]:
+                        job["collecting"] = False
+                        job["capture_error"] = "DI2 도착 전 촬영 프레임을 확보하지 못했습니다."
+                        job["capture_timing"].update(
+                            rejected_frame_after_trigger_ms=round((received - job["trigger_ns"]) / 1e6, 2))
+                        raise RuntimeError(job["capture_error"])
                     self._make_space(image.nbytes)
                     previous = job["frames"][-1]["seq"] if job["frames"] else job["baseline_seq"]
                     if not self.settings.conveyor_sync:
@@ -323,6 +347,8 @@ class SensorOcrTest:
                         "camera_settings_revision": meta.get("camera_settings_revision"),
                         "camera_profile": meta.get("camera_profile"),
                         "after_trigger_ms": round((received - job["trigger_ns"]) / 1e6, 2),
+                        "copy_ms": round((copy_finished - copy_started) / 1e6, 2),
+                        "registered_after_trigger_ms": round((time.monotonic_ns() - job["trigger_ns"]) / 1e6, 2),
                         "image": image, "crops": [], "result": None,
                         "state": "skipped" if job["state"] == "passed" else "waiting"})
                     self.bytes_used += image.nbytes
