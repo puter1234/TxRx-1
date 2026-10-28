@@ -10,35 +10,6 @@ import cv2
 import numpy as np
 from .infer import long_axis, map_points
 
-MAX_TEXT_ANGLE_DEGREES = 5.0
-
-
-def _parallel_line(group, labels):
-    """Measure the printed line, not the axis-aligned rectangle enclosing it.
-
-    Coordinates here have already been rotated to the barcode's long axis.
-    Fit glyph bottoms for separate characters; use ink orientation when several
-    characters touch and therefore share a connected component.
-    """
-    if len(group) >= 4:
-        points = np.float32([[x + w / 2, y + h] for x, y, w, h, _, _ in group])
-        vx, vy, x0, y0 = cv2.fitLine(points, cv2.DIST_HUBER, 0, .01, .01).ravel()
-        angle = math.degrees(math.atan2(float(vy), float(vx)))
-        residual = np.abs((points[:, 0] - x0) * vy - (points[:, 1] - y0) * vx)
-        if np.percentile(residual, 90) > max(2., .25 * np.median([c[3] for c in group])):
-            return False
-    else:
-        x0 = min(c[0] for c in group); x1 = max(c[0] + c[2] for c in group)
-        y0 = min(c[1] for c in group); y1 = max(c[1] + c[3] for c in group)
-        ys, xs = np.nonzero(np.isin(labels[y0:y1, x0:x1], [c[5] for c in group]))
-        if len(xs) < 3:
-            return False
-        _, (width, height), angle = cv2.minAreaRect(np.column_stack((xs, ys)).astype(np.float32))
-        if width < height:
-            angle += 90
-    angle = (angle + 90) % 180 - 90
-    return abs(angle) <= MAX_TEXT_ANGLE_DEGREES
-
 
 def _points(points, matrix):
     p = np.asarray(points, dtype=np.float64).reshape(-1, 2)
@@ -69,13 +40,13 @@ def _refine_angle(gray, polygon, initial):
 
 def _line_boxes(binary, barcode_width, barcode_height):
     """Group plausible dark glyph components into neighbouring horizontal lines."""
-    count, labels, stats, centres = cv2.connectedComponentsWithStats(binary, 8)
+    count, _, stats, centres = cv2.connectedComponentsWithStats(binary, 8)
     chars = []
-    for label, ((x, y, w, h, area), centre) in enumerate(zip(stats[1:], centres[1:]), 1):
+    for (x, y, w, h, area), centre in zip(stats[1:], centres[1:]):
         if (area >= 3 and max(3, barcode_height*.10) <= h <= barcode_height*.80
                 and w <= barcode_width*1.15 and h/max(w, 1) < 12
                 and area/max(w*h,1) < .92):
-            chars.append((int(x), int(y), int(w), int(h), centre[1], label))
+            chars.append((int(x), int(y), int(w), int(h), centre[1]))
     lines = []
     for c in sorted(chars, key=lambda a: a[4]):
         matches = [line for line in lines
@@ -98,8 +69,7 @@ def _line_boxes(binary, barcode_width, barcode_height):
             x0 = min(c[0] for c in group); x1 = max(c[0]+c[2] for c in group)
             y0 = min(c[1] for c in group); y1 = max(c[1]+c[3] for c in group)
             if (len(group) >= 4 or any(c[2] > .25*barcode_width for c in group)) and x1-x0 >= .28*barcode_width and (x1-x0)/max(1,y1-y0) >= 4:
-                if _parallel_line(group, labels):
-                    boxes.append(([x0, y0, x1, y1], len(group)))
+                boxes.append(([x0, y0, x1, y1], len(group)))
     return boxes
 
 
@@ -187,9 +157,7 @@ def extract_text_regions(raw_crop, instances, roi_xyxy=None, source_size=None,
             # Dark garment/background edges are not dark ink on a light label.
             candidates = [c for c in candidates
                           if np.median(local[y0+c[0][1]:y0+c[0][3],c[0][0]:c[0][2]]) > 60
-                          and np.mean(valid[y0+c[0][1]:y0+c[0][3],c[0][0]:c[0][2]]>0) > .98
-                          and max(0, min(c[0][2], margin_x+bw)-max(c[0][0], margin_x))
-                              / max(1, c[0][2]-c[0][0]) >= .7]
+                          and np.mean(valid[y0+c[0][1]:y0+c[0][3],c[0][0]:c[0][2]]>0) > .98]
             if not candidates:
                 continue
             def distance(candidate):
