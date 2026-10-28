@@ -78,7 +78,7 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
         <Play size={24}/>시험 시작</button>
       <button className="btn btn-danger !min-h-[72px] text-xl" onClick={() => bench.stop()}><Square size={24}/>시험 정지</button>
     </div>
-    <p role="status" className="text-2xl font-extrabold">{state?.active ? state.await_clear ? "센서 해제 대기" : "시험 중" : running ? "중지 중" : "대기"}</p>
+    <p role="status" className="text-2xl font-extrabold">{state?.active ? state.await_clear ? "센서 해제 대기" : "시험 중" : running ? "중지 중" : state?.error ? "시험 중지됨" : "대기"}</p>
     {(error || state?.error) && <p role="alert" className="text-lg font-bold text-danger">{error || state?.error}</p>}
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
       {[['통과 수', state?.count ?? 0], ['감지 수', state?.detected ?? 0], ['OCR 성공', state?.passed ?? 0], ['OCR 미검출', state?.failed ?? 0]].map(([label, value]) =>
@@ -91,7 +91,7 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
         {item.number}번 제품 {states[item.state] || item.state}
       </button>)}</div>
       {job && <div className="space-y-4 rounded-xl border border-line p-4">
-        <p className="text-xl font-bold">{job.counted ? "통과 계수 완료" : "센서 해제 대기"}　확보 {job.frames.length}장</p>
+        <p className="text-xl font-bold">{job.counted ? "통과 계수 완료" : job.state === "cancelled" ? "시험 중지" : "센서 해제 대기"}　확보 {job.frames.length}장</p>
         {job.capture_error && <p className="text-lg font-bold text-danger">{job.capture_error}</p>}
         {job.missed_frames > 0 && <p className="text-lg font-bold text-danger">수집하지 못한 중간 프레임 {job.missed_frames}개</p>}
         {job.matched_text && <p className="break-all text-3xl font-extrabold">{job.matched_text}</p>}

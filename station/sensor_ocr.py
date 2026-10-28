@@ -147,10 +147,16 @@ class SensorOcrTest:
         with self.lock:
             self.active = False
             self.cancel.set()
+            # A stopped run has no worker left to finish queued items. Close them
+            # so the screen does not keep showing them as waiting.
             for job in self.jobs:
                 job["collecting"] = False
                 if job["state"] in ("waiting", "reading"):
                     job["state"] = "cancelled"
+                for frame in job["frames"]:
+                    if frame["state"] in ("waiting", "reading"):
+                        frame["state"] = "cancelled"
+            self.physical = None
             self.wake.set()
 
     def _fail(self, message):

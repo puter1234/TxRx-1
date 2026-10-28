@@ -184,13 +184,27 @@ def _capture_process(settings, memory_name, metadata, lock, errors):
         cap.set(cv2.CAP_PROP_FPS, settings["fps"])
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         target = np.ndarray((settings["height"], settings["width"], 3), dtype=np.uint8, buffer=mem.buf)
+        # A single failed UVC read is a dropped or corrupt buffer, not a lost
+        # camera. Give up only after the interval at which status() already
+        # reports the stream as stale.
+        stale_ns = int(max(2.0, 3.0 / settings["fps"]) * 1e9)
+        last_good = time.monotonic_ns()
+        failures = 0
         while True:
             ok, frame = cap.read()
             received = time.monotonic_ns()
             if not ok or frame is None:
-                raise RuntimeError("카메라 영상이 끊겼습니다.")
+                failures += 1
+                metadata[2] += 1
+                if received - last_good > stale_ns:
+                    raise RuntimeError(
+                        f"카메라 영상이 끊겼습니다. {(received - last_good) / 1e9:.1f}초 동안 "
+                        f"새 영상 없음, 연속 읽기 실패 {failures}회")
+                time.sleep(0.005)
+                continue
             if frame.shape != target.shape:
                 raise RuntimeError("실제 영상 크기가 설정과 다릅니다.")
+            failures, last_good = 0, received
             with lock:
                 np.copyto(target, frame)
                 metadata[0] += 1
@@ -212,7 +226,8 @@ class UVCStream:
         self.profile = profile
         ctx = mp.get_context("spawn")
         self.lock = ctx.Lock()
-        self.metadata = ctx.Array("q", 2, lock=False)
+        # seq, host receipt time of the latest frame, total failed reads.
+        self.metadata = ctx.Array("q", 3, lock=False)
         self.errors = ctx.Queue(maxsize=1)
         self.mem = shared_memory.SharedMemory(create=True, size=profile.width * profile.height * 3)
         self.started = time.monotonic()
@@ -247,7 +262,8 @@ class UVCStream:
                 "frames": seq, "last_frame_age_ms": age, "error": self.error,
                 "width": self.profile.width, "height": self.profile.height,
                 "requested_fps": self.profile.fps, "mean_received_fps": seq / max(0.001, time.monotonic() - self.started),
-                "source": self.profile.device, "dropped_frames": None, "sensor_timestamp": None}
+                "source": self.profile.device, "dropped_frames": None, "sensor_timestamp": None,
+                "read_failures": self.metadata[2]}
 
     def read_latest(self):
         import numpy as np

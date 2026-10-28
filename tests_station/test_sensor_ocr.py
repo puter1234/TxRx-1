@@ -107,6 +107,36 @@ def test_failed_frame_advances_and_ends_after_n_distinct_frames():
         trial.close()
 
 
+def test_stop_closes_queued_frames_instead_of_leaving_them_waiting():
+    bench, camera = Bench(), Camera()
+    entered, release = threading.Event(), threading.Event()
+
+    def read(image, **kwargs):
+        entered.set()
+        assert release.wait(2)
+        return {"reads": [{"lines": [{"text": "wrong"}]}]}
+
+    trial = SensorOcrTest(bench, camera, SimpleNamespace(test_auto=read))
+    try:
+        trial.start(SensorOcrSettings(frame_count=3, pattern="[0-9]{4}"))
+        trial.edge(1, 0, time.monotonic_ns())
+        for count in (1, 2):
+            camera.publish()
+            until(lambda: len(trial.status()["jobs"][0]["frames"]) == count)
+        assert entered.wait(2)
+        bench.stop("시험 정지")
+        release.set()
+        until(lambda: not trial.busy())
+        job = trial.status()["jobs"][0]
+        assert job["state"] == "cancelled" and not job["collecting"]
+        assert [f["state"] for f in job["frames"]] == ["cancelled", "cancelled"]
+        trial.edge(1, 1, time.monotonic_ns())
+        assert trial.status()["count"] == 0
+    finally:
+        release.set()
+        trial.close()
+
+
 def test_starting_with_active_sensor_waits_for_clear_without_counting():
     trial = SensorOcrTest(Bench(raw=0), Camera(), SimpleNamespace())
     try:
