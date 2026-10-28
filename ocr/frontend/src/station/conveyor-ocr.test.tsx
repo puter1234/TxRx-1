@@ -25,6 +25,16 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+it("shows a stopped trial and its cause after the workers have exited", async () => {
+  state.stop_reason = "화면 연결 끊김";
+  state.jobs = [{ id: "job1", number: 1, state: "cancelled", frames: [], collecting: false }];
+  render(<SensorPipelineTest bench={bench} locked={false}/>);
+  await screen.findByText("1번 제품 중지");
+  expect(screen.getByRole("alert").textContent).toContain("화면 연결 끊김");
+  expect(screen.queryByText("대기")).toBeNull();
+  expect(screen.getByRole("button", { name: "시험 정지" })).toHaveProperty("disabled", false);
+});
+
 it("blocks OCR trial restart during motor wait while keeping stop available", async () => {
   bench.state.cooldown_ms = { motor: 4100 };
   const view = render(<SensorPipelineTest bench={bench} locked={false}/>);

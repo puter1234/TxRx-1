@@ -59,6 +59,7 @@ class SensorOcrTest:
         self.cancel = threading.Event()
         self.active = False
         self.error = None
+        self.stop_reason = None
         self.settings = SensorOcrSettings()
         if hasattr(bench, "store"):
             self.settings = SensorOcrSettings.model_validate(
@@ -155,6 +156,7 @@ class SensorOcrTest:
                     self.fps = float(profile.get("fps") or status.get("requested_fps") or 10)
                     self.run_id = str(uuid.uuid4())
                     self.error = None
+                    self.stop_reason = None
                     self.cancel.clear()
                     self.active = True
                     self.capture_thread = threading.Thread(target=self._capture, daemon=True, name="sensor-frame-capture")
@@ -262,6 +264,10 @@ class SensorOcrTest:
 
     def cancel_run(self, reason="시험 중지"):
         with self.lock:
+            if self.active:
+                # Preserve the first stop cause even after another STOP request
+                # or shutdown. It must survive completion of the worker threads.
+                self.stop_reason = reason
             self.active = False
             self.cancel.set()
             self.speed_deadline_ns = None
@@ -269,6 +275,9 @@ class SensorOcrTest:
                 job["collecting"] = False
                 if job["state"] in ("waiting", "reading"):
                     job["state"] = "cancelled"
+                for frame in job["frames"]:
+                    if frame["state"] in ("waiting", "reading"):
+                        frame["state"] = "cancelled"
             self.wake.set()
 
     def _fail(self, message):
@@ -421,6 +430,7 @@ class SensorOcrTest:
     def status(self, details=True):
         with self.lock:
             result = {"active": self.active, "busy": self.busy(), "error": self.error,
+                      "stop_reason": self.stop_reason,
                       "run_id": self.run_id, "settings": self.settings.model_dump(),
                       "detected": self.detected, "count": self.count, "passed": self.passed,
                       "failed": self.failed, "sensor_raw": self.sensor_raw,

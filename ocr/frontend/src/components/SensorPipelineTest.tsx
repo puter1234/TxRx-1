@@ -17,7 +17,7 @@ type Job = { id: string; number: number; state: string; counted: boolean; collec
 type Settings = { conveyor_sync: boolean; low_speed_ms: number; capture_delay_ms: number;
   capture_interval_ms: number; departure_timeout_ms: number; frame_count: number;
   sensor_channel: number; active_raw: number; pattern: string; locator: Locator };
-type State = { active: boolean; busy: boolean; error: string | null; detected: number; count: number;
+type State = { active: boolean; busy: boolean; error: string | null; stop_reason?: string | null; detected: number; count: number;
   passed: number; failed: number; sensor_raw: number | null; await_clear: boolean; jobs: Job[]; settings?: Settings };
 const states: Record<string, string> = {
   waiting: "대기", reading: "OCR 중", passed: "성공", failed: "미검출", cancelled: "중지",
@@ -140,8 +140,8 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
         <Play size={24}/>시험 시작</button>
       <button className="btn btn-danger !min-h-[72px] text-xl" onClick={() => bench.stop()}><Square size={24}/>시험 정지</button>
     </div>
-    <p role="status" className="text-2xl font-extrabold">{state?.active ? state.await_clear ? "센서 해제 대기" : "시험 중" : running ? "중지 중" : "대기"}</p>
-    {(error || state?.error) && <p role="alert" className="text-lg font-bold text-danger">{error || state?.error}</p>}
+    <p role="status" className="text-2xl font-extrabold">{state?.active ? state.await_clear ? "센서 해제 대기" : "시험 중" : running ? "중지 중" : state?.stop_reason ? "시험 중지" : "대기"}</p>
+    {(error || state?.error || state?.stop_reason) && <p role="alert" className="text-lg font-bold text-danger">{error || state?.error || state?.stop_reason}</p>}
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
       {[['통과 수', state?.count ?? 0], ['감지 수', state?.detected ?? 0], ['OCR 성공', state?.passed ?? 0], ['OCR 미검출', state?.failed ?? 0]].map(([label, value]) =>
         <div className="rounded-xl border border-line p-4" key={label}><p className="text-lg font-bold">{label}</p><p className="text-4xl font-extrabold">{value}</p></div>)}
@@ -153,7 +153,7 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
         {item.number}번 제품 {states[item.state] || item.state}
       </button>)}</div>
       {job && <div className="space-y-4 rounded-xl border border-line p-4">
-        <p className="text-xl font-bold">{job.counted ? "통과 계수 완료" : state?.settings?.conveyor_sync ? "DI2 통과 대기" : "센서 해제 대기"}, 확보 {job.frames.length}장</p>
+        <p className="text-xl font-bold">{job.counted ? "통과 계수 완료" : job.state === "cancelled" ? "계수 중지" : state?.settings?.conveyor_sync ? "DI2 통과 대기" : "센서 해제 대기"}, 확보 {job.frames.length}장</p>
         {job.capture_error && <p className="text-lg font-bold text-danger">{job.capture_error}</p>}
         {job.missed_frames > 0 && <p className="text-lg font-bold text-danger">수집하지 못한 중간 프레임 {job.missed_frames}개</p>}
         {job.matched_text && <p className="break-all text-3xl font-extrabold">{job.matched_text}</p>}

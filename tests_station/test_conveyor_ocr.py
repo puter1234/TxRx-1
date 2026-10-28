@@ -226,6 +226,24 @@ def test_di2_before_last_capture_stops_and_preserves_reason(trial):
     assert all(t.values[pin] == 0 for pin in (50, 51, 52))
 
 
+def test_heartbeat_stop_preserves_cause_after_workers_exit_and_repeated_stop(trial):
+    t = trial
+    t.start(capture_delay_ms=500, frame_count=1)
+    t.sensor(1, 0)
+    with t.app.state.bench.lock:
+        t.app.state.bench.runs["motor"]["last_heartbeat"] -= 2
+        t.app.state.bench._tick()
+    wait_for(lambda: not t.state()["busy"])
+    result = t.client.get("/api/bench/pipeline").json()
+    assert result["jobs"][0]["state"] == "cancelled"
+    assert result["stop_reason"] == "화면 연결 끊김"
+    assert not result["active"] and not result["busy"]
+    assert all(t.values[pin] == 0 for pin in (50, 51, 52))
+    t.client.post("/api/bench/stop", json={})
+    assert t.state()["stop_reason"] == "화면 연결 끊김"
+    assert t.app.state.bench.cooldown_ms("motor") > 4000
+
+
 @pytest.mark.parametrize("cause", ["extra_di1", "di2_without_di1"])
 def test_unmatched_sensor_sequence_stops_without_adding_counts(trial, cause):
     t = trial
@@ -338,6 +356,7 @@ def test_trial_restart_waits_five_seconds_without_delaying_stop(trial):
     assert t.client.post("/api/bench/motor/off", json={}).status_code == 200
     assert t.values[51] == 0
     wait_for(lambda: not t.state()["busy"])
+    assert t.state()["stop_reason"] == "모터 끄기로 파이프라인 시험 중지"
     b = t.app.state.bench
     deadline = b.next_output_at["motor"]
     assert 4500 < b.status()["cooldown_ms"]["motor"] <= 5000
@@ -350,6 +369,24 @@ def test_trial_restart_waits_five_seconds_without_delaying_stop(trial):
         b.next_output_at["motor"] = time.monotonic() - .001
     t.start(frame_count=1)
     assert t.values[51] == 1
+    assert t.state()["stop_reason"] is None
+
+
+def test_cancelled_ocr_does_not_leave_frame_label_reading(trial):
+    t = trial
+    t.vision.release.clear()
+    t.start(capture_delay_ms=0, frame_count=1)
+    t.sensor(1, 0)
+    wait_for(t.vision.entered.is_set)
+    assert t.client.post("/api/bench/pipeline/stop", json={}).status_code == 200
+    result = t.state()
+    assert result["busy"] and not result["active"]
+    assert result["stop_reason"] == "파이프라인 시험 중지"
+    assert result["jobs"][0]["frames"][0]["state"] == "cancelled"
+    assert all(t.values[pin] == 0 for pin in (50, 51, 52))
+    t.vision.release.set()
+    wait_for(lambda: not t.state()["busy"])
+    assert t.state()["jobs"][0]["frames"][0]["result"] is None
 
 
 def test_sensor_images_preserve_full_resolution_and_pixels(trial):
