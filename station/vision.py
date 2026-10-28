@@ -259,7 +259,7 @@ class Vision:
 
     @record_operation("test_auto")
     def test_auto(self, frame, *, include_previews=True, crop_images=None, locator=None):
-        """Compare selectable locators using original text crops and the existing OCR."""
+        """Run the selected locator and return the actual prepared OCR inputs."""
         if not self.lock.acquire(blocking=False):
             raise RuntimeError("이전 영상 처리가 아직 끝나지 않았습니다.")
         try:

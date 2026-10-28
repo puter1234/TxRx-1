@@ -1,4 +1,4 @@
-"""Bundled two-stage locator. Detection uses 12MP; OCR samples the same 48MP frame."""
+"""Two-stage locator with OCR crops from the preprocessed 48MP source."""
 from __future__ import annotations
 
 import hashlib
@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 from PIL import Image
 from station.vision_trace import stage
+from .preprocess import GREEN_GAIN, prepare_ocr_source
 
 SOURCE_SIZE = (8000, 6000)
 DETECTION_SIZE = (4000, 3000)
@@ -157,6 +158,15 @@ def process_frame(original, recognizer, *, diagnostics=None, decode_values=False
         locator = get_locator()
     records = locator.locate(original, diagnostics, text=recognizer is not None)
     location_ms = (time.perf_counter() - started) * 1000
+    ocr_source = None
+    preprocessing_ms = 0.
+    if recognizer is not None and any(record["regions"] for record in records):
+        t0 = time.perf_counter()
+        with stage("ocr_source_preprocess"):
+            ocr_source = prepare_ocr_source(original)
+        preprocessing_ms = (time.perf_counter() - t0) * 1000
+        diagnostics["ocr_preprocessing"] = {"mode": "green_gain", "gain": GREEN_GAIN,
+            "width": original.shape[1], "height": original.shape[0], "ms": preprocessing_ms}
     reads, ocr_ms, decode_ms, align_ms = [], 0., 0., 0.
     for record in records:
         code = fmt = None
@@ -169,7 +179,7 @@ def process_frame(original, recognizer, *, diagnostics=None, decode_values=False
         if recognizer is not None:
             for region in record["regions"]:
                 # quad_target belongs to this very source frame, never a second capture.
-                crop = crop_original(original, region["quad_target"])
+                crop = cv2.cvtColor(crop_original(ocr_source, region["quad_target"]), cv2.COLOR_GRAY2BGR)
                 for rotation in (0, 180):
                     crops.append(crop if rotation == 0 else cv2.rotate(crop, cv2.ROTATE_180))
                     metadata.append({"rotation_degrees": rotation, "quad_source": region["quad_target"],
@@ -203,6 +213,6 @@ def process_frame(original, recognizer, *, diagnostics=None, decode_values=False
         diagnostics["status"] = "decode_failed"
     diagnostics["stages"][0].update(attempted=len(records) if decode_values else 0,
                                      decoded=decoded, decode_ms=decode_ms)
-    return TaskResult(reads=reads, ms_barcode=location_ms + decode_ms + align_ms, ms_ocr=ocr_ms,
+    return TaskResult(reads=reads, ms_barcode=location_ms + preprocessing_ms + decode_ms + align_ms, ms_ocr=ocr_ms,
                       ms_total=(time.perf_counter() - started) * 1000,
                       error=None if records else "바코드 위치를 찾지 못했습니다")

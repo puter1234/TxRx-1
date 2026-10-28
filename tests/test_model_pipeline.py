@@ -13,10 +13,10 @@ from tagreader import model_pipeline as model
 @pytest.fixture
 def camera_frame():
     frame = np.full((6000, 8000, 3), 32, dtype=np.uint8)
-    # Fine color detail disappears in a 2x downsample. OCR must retain it.
+    # Alternating green detail disappears in a 2x downsample. OCR must retain it.
     region = frame[1220:1259, 1040:1399]
-    region[:, ::2] = (13, 71, 239)
-    region[:, 1::2] = (241, 113, 17)
+    region[:, ::2] = (13, 21, 239)
+    region[:, 1::2] = (241, 63, 17)
     region[0, 0] = (19, 37, 61)
     return frame
 
@@ -61,7 +61,9 @@ def locator(monkeypatch, camera_frame):
 
 def test_same_48mp_frame_supplies_full_resolution_text_and_both_orientations(camera_frame, locator, monkeypatch):
     _, calls, quad48, text_quad = locator
-    expected = camera_frame[1220:1259, 1040:1399].copy()
+    original_crop = camera_frame[1220:1259, 1040:1399].copy()
+    green = np.clip(original_crop[:, :, 1].astype(float) * 3.5, 0, 255).astype(np.uint8)
+    expected = np.repeat(green[:, :, None], 3, axis=2)
     received = []
 
     class Reader:
@@ -81,10 +83,13 @@ def test_same_48mp_frame_supplies_full_resolution_text_and_both_orientations(cam
     np.testing.assert_array_equal(received[0], expected[:, :, ::-1])
     np.testing.assert_array_equal(received[1], expected[::-1, ::-1, ::-1])
     np.testing.assert_array_equal(task.reads[0].line_crops[0], expected)
-    np.testing.assert_array_equal(camera_frame[1220:1259, 1040:1399], expected)
+    np.testing.assert_array_equal(camera_frame[1220:1259, 1040:1399], original_crop)
     assert received[0].shape == (39, 359, 3)
     assert diagnostics["source_width"] == 8000 and diagnostics["detection_width"] == 4000
     assert diagnostics["regions"][0]["quad"] == quad48
+    assert diagnostics["ocr_preprocessing"]["width"] == 8000
+    assert diagnostics["ocr_preprocessing"]["height"] == 6000
+    assert diagnostics["ocr_preprocessing"]["gain"] == 3.5
     assert task.reads[0].lines[1]["rotation_degrees"] == 180
     assert task.reads[0].lines[0]["quad_source"] == text_quad
 
@@ -133,7 +138,7 @@ def test_bundle_has_pinned_source_and_verified_weights():
     assert len(manifest["files"]) == 14
 
 
-def test_live_preview_keeps_original_text_pixels(camera_frame, locator):
+def test_live_preview_shows_the_preprocessed_pixels_sent_to_ocr(camera_frame, locator):
     import base64
     from station.vision import Vision
     vision = Vision()
@@ -144,7 +149,25 @@ def test_live_preview_keeps_original_text_pixels(camera_frame, locator):
     line = result["reads"][0]["lines"][0]
     assert line["preview"].startswith("data:image/png;base64,")
     restored = cv2.imdecode(np.frombuffer(base64.b64decode(line["preview"].split(",", 1)[1]), np.uint8), cv2.IMREAD_COLOR)
-    np.testing.assert_array_equal(restored, camera_frame[1220:1259, 1040:1399])
+    expected = np.clip(camera_frame[1220:1259, 1040:1399, 1].astype(float) * 3.5, 0, 255).astype(np.uint8)
+    np.testing.assert_array_equal(restored, np.repeat(expected[:, :, None], 3, axis=2))
+
+
+def test_ocr_preparation_precedes_interpolation_and_matches_model_gain():
+    from tagreader.preprocess import prepare_ocr_source
+    from vendor.barcode_pipeline.barcode_segmenter.barseg.common import prepare_roi
+    original = np.zeros((8, 12, 3), np.uint8)
+    original[:, 1::2, 1] = 160
+    before = original.copy()
+    prepared = prepare_ocr_source(original)
+    np.testing.assert_array_equal(prepared, prepare_roi(original)[:, :, 1])
+    assert prepared.shape == original.shape[:2]
+    quad = [[.5, 1], [8.5, 1], [8.5, 5], [.5, 5]]
+    actual = model.crop_original(prepared, quad)
+    # Saturation must happen before interpolation. Cropping raw pixels first
+    # would blend green to 80 and then saturate to 255 instead of producing 128.
+    np.testing.assert_array_equal(actual, np.full((5, 9), 128, np.uint8))
+    np.testing.assert_array_equal(original, before)
 
 
 def test_evidence_preserves_full_48mp_frame(camera_frame, tmp_path):

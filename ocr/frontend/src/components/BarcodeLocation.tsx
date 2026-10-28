@@ -4,6 +4,7 @@ export type LocationDiagnostics = {
   texts?: { quad: number[][] }[];
   locator?: Locator; source_width?: number; source_height?: number;
   detection_width?: number; detection_height?: number;
+  ocr_preprocessing?: { mode: string; gain: number; width: number; height: number; ms: number };
   regions?: { quad: number[][]; stage: string }[];
   stages: { stage: string; candidates: number; detect_ms: number;
     attempted: number; decoded: number; decode_ms: number;
@@ -23,9 +24,9 @@ export function LocatorSelect({ value, onChange, disabled = false }: {
   </label>;
 }
 
-export function BarcodeOverlay({ diagnostics, showAll = false }: { diagnostics?: LocationDiagnostics; showAll?: boolean }) {
+export function BarcodeOverlay({ diagnostics, showAll = false, selected = 0 }: { diagnostics?: LocationDiagnostics; showAll?: boolean; selected?: number }) {
   if (!diagnostics?.source_width || !diagnostics.source_height || (!showAll && !diagnostics.regions?.length)) return null;
-  return <svg aria-label="검출한 바코드 위치" role="img" className="pointer-events-none absolute inset-0 h-full w-full"
+  return <svg aria-label="검출한 바코드 위치" role="img" className="pointer-events-none absolute inset-0 z-10 h-full w-full"
     viewBox={`0 0 ${diagnostics.source_width} ${diagnostics.source_height}`} preserveAspectRatio="xMidYMid meet">
     {showAll && diagnostics.tags?.map((tag, i) => {
       const sx = diagnostics.source_width! / (diagnostics.detection_width || diagnostics.source_width!);
@@ -36,8 +37,18 @@ export function BarcodeOverlay({ diagnostics, showAll = false }: { diagnostics?:
     })}
     {showAll && diagnostics.texts?.map((text, i) => <polygon key={"text" + i} points={text.quad.map(point => point.join(",")).join(" ")}
       fill="none" stroke="#f97316" strokeWidth={2} vectorEffect="non-scaling-stroke"/>)}
-    {diagnostics.regions?.map((region, i) => <polygon key={i} points={region.quad.map(point => point.join(",")).join(" ")}
-      fill="none" stroke="#16a34a" strokeWidth={2} vectorEffect="non-scaling-stroke"/>)}
+    {diagnostics.regions?.map((region, i) => {
+      const size = Math.max(16, diagnostics.source_width! / 65);
+      const x = Math.max(0, Math.min(...region.quad.map(point => point[0])));
+      const y = Math.max(size, Math.min(...region.quad.map(point => point[1])) - size / 4);
+      return <g key={i} aria-label={`바코드 ${i + 1}`}>
+        <polygon points={region.quad.map(point => point.join(",")).join(" ")}
+          fill="#16a34a" fillOpacity={selected === i ? .2 : .06} stroke="#22c55e"
+          strokeWidth={selected === i ? 4 : 2} vectorEffect="non-scaling-stroke"/>
+        <text x={x} y={y} fontSize={size} fontWeight={600} fill="white" stroke="#14532d"
+          strokeWidth={3} paintOrder="stroke" vectorEffect="non-scaling-stroke">{i + 1}</text>
+      </g>;
+    })}
   </svg>;
 }
 

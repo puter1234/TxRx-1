@@ -17,10 +17,28 @@ def view_options(diagnostics):
         return []
     return [{"view": "tag_input", "region": 0, "label": "택 검출 입력"}] + [
         {"view": "barcode_input", "region": i, "label": f"바코드 입력 {i + 1}"}
-        for i, _ in enumerate(diagnostics.get("tags", []))]
+        for i, _ in enumerate(diagnostics.get("tags", []))] + (
+            [{"view": "ocr_input", "region": 0, "label": "OCR 전처리"}]
+            if diagnostics.get("ocr_preprocessing") else [])
 
 
 def inspection_view(image, diagnostics, view, region=0):
+    if view == "barcode_crop":
+        regions = diagnostics.get("regions", [])
+        if not 0 <= region < len(regions):
+            raise HTTPException(422, "선택한 바코드 영역이 없습니다.")
+        from tagreader.model_pipeline import crop_original
+        from tagreader.preprocess import prepare_ocr_source
+        source = prepare_ocr_source(image) if diagnostics.get("locator") == "yolo26" else image
+        crop = crop_original(source, regions[region]["quad"])
+        # Segmentation quads may start on the short edge. Display the barcode
+        # along its long edge so a tall crop is not reduced to a thin sliver.
+        return cv2.rotate(crop, cv2.ROTATE_90_CLOCKWISE) if crop.shape[0] > crop.shape[1] else crop
+    if view == "ocr_input":
+        if region != 0 or not diagnostics.get("ocr_preprocessing"):
+            raise HTTPException(422, "OCR 전처리 결과가 없습니다.")
+        from tagreader.preprocess import prepare_ocr_source
+        return prepare_ocr_source(image)
     if diagnostics.get("locator") != "yolo26" or view not in ("tag_input", "barcode_input") or region < 0:
         raise HTTPException(422, "선택한 전처리 화면이 없습니다.")
     from tagreader.model_pipeline import DETECTION_SIZE

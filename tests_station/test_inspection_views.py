@@ -31,7 +31,30 @@ def test_unavailable_views_rejected(view, region):
     assert error.value.status_code == 422
 
 
-def test_ocr_views_retain_same_frame_without_reading_or_closing_camera(rig):
+def test_barcode_crop_and_full_resolution_ocr_preparation_use_retained_pixels():
+    source = np.full((48, 64, 3), (10, 20, 30), np.uint8)
+    source[12:21, 10:31] = (90, 60, 40)
+    original = source.copy()
+    diagnostics = {"locator": "yolo26", "ocr_preprocessing": {"mode": "green_gain", "gain": 3.5},
+                   "regions": [{"quad": [[10, 12], [30, 12], [30, 20], [10, 20]]}]}
+    cropped = inspection_view(source, diagnostics, "barcode_crop", 0)
+    np.testing.assert_array_equal(cropped, np.full((9, 21), 210, np.uint8))
+    turned = {**diagnostics, "regions": [{"quad": [[10, 20], [10, 12], [30, 12], [30, 20]]}]}
+    np.testing.assert_array_equal(inspection_view(source, turned, "barcode_crop"), cropped)
+    raw_crop = inspection_view(source, {**diagnostics, "locator": "stripes"}, "barcode_crop")
+    np.testing.assert_array_equal(raw_crop, source[12:21, 10:31])
+    prepared = inspection_view(source, diagnostics, "ocr_input")
+    assert prepared.shape == source.shape[:2]
+    assert prepared[0, 0] == 70 and prepared[12, 10] == 210
+    np.testing.assert_array_equal(source, original)
+    with pytest.raises(HTTPException):
+        inspection_view(source, diagnostics, "barcode_crop", 1)
+    with pytest.raises(HTTPException):
+        inspection_view(source, {}, "ocr_input")
+
+
+@pytest.mark.parametrize("kind", ["ocr", "pipeline"])
+def test_ocr_views_retain_same_frame_without_reading_or_closing_camera(rig, kind):
     client, app = rig
     image = np.full((480, 640, 3), (10, 20, 30), np.uint8)
     camera = app.state.camera
@@ -39,10 +62,19 @@ def test_ocr_views_retain_same_frame_without_reading_or_closing_camera(rig):
     assert client.post('/api/bench/camera/apply', json={"profile": profile, "save": True, "expected_revision": 0}).status_code == 200
     stream = camera.stream
     camera.read_latest = lambda: (image, {"seq": 101})
-    app.state.vision.test_auto = lambda frame, **kw: {"barcode_diagnostics": {"locator": "yolo26", "tags": []}, "reads": []}
+    diagnostics = {"locator": "yolo26", "tags": [],
+                   "ocr_preprocessing": {"mode": "green_gain", "gain": 3.5},
+                   "regions": [{"quad": [[10, 12], [30, 12], [30, 20], [10, 20]]}]}
+    app.state.vision.test_auto = lambda frame, **kw: {"barcode_diagnostics": diagnostics, "reads": []}
     response = client.post('/api/bench/ocr/read', json={"locator": "yolo26"})
     assert response.status_code == 200, response.text
     url = response.json()['preview_url']
+    if kind == "pipeline":
+        with app.state.sensor_ocr.lock:
+            app.state.sensor_ocr.jobs.append({"id": "saved", "state": "passed", "frames": [
+                {"seq": 101, "state": "passed", "image": image, "crops": [],
+                 "result": {"barcode_diagnostics": diagnostics}}]})
+        url = '/api/bench/pipeline/frames/saved/101'
     camera.read_latest = lambda: pytest.fail('display must not acquire another frame')
     preprocessed = client.get(url + '?view=tag_input')
     assert preprocessed.status_code == 200, preprocessed.text
@@ -51,5 +83,13 @@ def test_ocr_views_retain_same_frame_without_reading_or_closing_camera(rig):
     assert (rendered[480, 480] == 70).all()
     original = cv2.imdecode(np.frombuffer(client.get(url + '?original=true').content, np.uint8), cv2.IMREAD_COLOR)
     np.testing.assert_array_equal(original, image)
+    prepared = client.get(url + '?view=ocr_input')
+    assert prepared.status_code == 200
+    rendered = cv2.imdecode(np.frombuffer(prepared.content, np.uint8), cv2.IMREAD_GRAYSCALE)
+    np.testing.assert_array_equal(rendered, np.full((480, 640), 70, np.uint8))
+    cropped = client.get(url + '?view=barcode_crop&region=0')
+    assert cropped.status_code == 200
+    rendered = cv2.imdecode(np.frombuffer(cropped.content, np.uint8), cv2.IMREAD_COLOR)
+    np.testing.assert_array_equal(rendered, np.full((9, 21, 3), 70, np.uint8))
     assert camera.stream is stream and not stream.closed
     assert client.get(url + '?view=barcode_input&region=4').status_code == 422
