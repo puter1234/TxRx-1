@@ -260,6 +260,8 @@ function OptionStep({
 }) {
   const [query, setQuery] = useState("");
   const values = option.values.filter((v) => v.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+  // Columns are as wide as the longest value so codes such as HUTS6C612 stay on one line.
+  const longest = Math.max(3, ...option.values.map((v) => v.length));
   return (
     <div className="space-y-6 pt-2">
       {option.values.length > 24 && (
@@ -268,7 +270,12 @@ function OptionStep({
           <input className="field !min-h-[84px] pl-20 !text-[32px]" aria-label={option.label + " 검색"} value={query} onChange={(e) => setQuery(e.target.value)} />
         </label>
       )}
-      <div role="group" aria-label={option.label} className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-5">
+      <div
+        role="group"
+        aria-label={option.label}
+        className="grid gap-5 text-[44px]"
+        style={{ gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, max(220px, calc(${longest * 1.2}ch + 4rem))), 1fr))` }}
+      >
         {values.map((v) => (
           <button
             key={v}
