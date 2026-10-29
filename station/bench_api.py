@@ -45,7 +45,12 @@ class OcrRead(Model):
 class CameraApply(Model):
     profile: CameraProfile
     save: bool = True
-    expected_revision: int = Field(ge=0)
+    # Omitted by the settings screen, which saves every change as it is made.
+    expected_revision: int | None = Field(default=None, ge=0)
+
+
+class VisionStart(Model):
+    preset_id: str = Field(min_length=1, max_length=48)
 
 
 class BatchCapture(Model):
@@ -70,8 +75,13 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
     ocr_frame_lock = threading.Lock()
     sensor_ocr = SensorOcrTest(bench, camera, app.state.vision)
     app.state.sensor_ocr = sensor_ocr
+    from .vision_trial import VisionTrial
+    vision_trial = VisionTrial(camera, store)
+    app.state.vision_trial = vision_trial
+    # The test emergency stop also ends a wappen counting trial.
+    bench.stop_listeners.append(lambda reason: vision_trial.cancel.set())
 
-    def available(allow_led=False, allow_outputs=False, camera_only=False):
+    def available(allow_led=False, allow_outputs=False, camera_only=False, allow_test=False):
         state = controller.snapshot()
         session = state["session"]
         # Camera adjustment is allowed before the first product without ending
@@ -83,14 +93,14 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
             io_state = controller.io.snapshot()
             if io_state.get("motor_requested") is True or io_state.get("km2_on") is True:
                 raise Conflict("컨베이어를 정지한 뒤 카메라를 조정하세요.")
-        if sensor_ocr.busy():
+        if sensor_ocr.busy() and not allow_test:
             raise Conflict("파이프라인 시험을 먼저 정지하세요.")
         if production_busy() or maintenance_active.is_set() or bench.native_busy or bench.rfid_busy:
             raise Conflict("진행 중인 점검이 끝난 후 다시 시도하세요.")
         if bench.runs and not allow_outputs and not (allow_led and set(bench.runs) == {"led"}):
             raise Conflict("출력 시험을 먼저 정지하세요.")
 
-    async def native(function, *, allow_led=False, allow_outputs=False, camera_only=False):
+    async def native(function, *, allow_led=False, allow_outputs=False, camera_only=False, allow_test=False):
         busy_field = "rfid_busy" if allow_outputs and not camera_only else "native_busy"
         generation = bench.stop_serial
 
@@ -99,7 +109,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
             with controller.lock, bench.lock:
                 if generation != bench.stop_serial:
                     raise Conflict("정지 요청 이후에는 다시 실행하세요.")
-                available(allow_led, allow_outputs, camera_only)
+                available(allow_led, allow_outputs, camera_only, allow_test)
                 setattr(bench, busy_field, True)
                 bench.cancel.clear()
             try:
@@ -122,8 +132,24 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
 
     @app.get("/api/bench")
     def state():
+        trial = vision_trial.status()
         return {**bench.status(), "camera": camera.status(), "batch": dict(batch),
-                "sensor_ocr": sensor_ocr.status(details=False)}
+                "sensor_ocr": sensor_ocr.status(details=False),
+                "vision_trial": {k: trial[k] for k in ("active", "total", "error")}}
+
+    @app.get("/api/bench/vision")
+    def vision_state():
+        return vision_trial.status()
+
+    @app.post("/api/bench/vision/start")
+    async def vision_start(body: VisionStart, request: Request):
+        permitted(request)
+        return await native(lambda: vision_trial.start(body.preset_id), allow_outputs=True, camera_only=True)
+
+    @app.post("/api/bench/vision/stop")
+    def vision_stop(request: Request):
+        permitted(request)
+        return vision_trial.stop()
 
     @app.get("/api/bench/pipeline")
     def pipeline_state():
@@ -225,6 +251,9 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
     @app.put("/api/bench/setup")
     async def setup(body: BenchSetup, request: Request):
         actor = permitted(request, ("admin",))
+        if bench.runs:
+            # Wiring changes need the outputs off; turn them off instead of refusing.
+            bench.stop("연결 설정 저장")
         return await native(lambda: bench.save_setup(body, actor))
 
     @app.post("/api/bench/io/connect")
@@ -252,6 +281,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
         # Normal workspace exit releases the commissioning GPIO owner. Keeping
         # its input handle open would block the next production job. Unlike the
         # emergency stop route, this must not fault a prepared READY job.
+        vision_trial.stop()
         return await native(bench.disconnect, allow_outputs=True, camera_only=True)
 
     @app.post("/api/bench/output")
@@ -396,22 +426,30 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
     @app.post("/api/bench/camera/inspect")
     async def inspect(body: Device, request: Request):
         permitted(request)
+        # Reading the camera's controls is allowed during a trial so it can be tuned live.
         return await native(lambda: {**camera.inspect(body.device), "revision": camera.revision,
-                                     "saved_profile": camera.saved}, allow_led=True, camera_only=True)
+                                     "saved_profile": camera.saved}, allow_outputs=True, camera_only=True,
+                            allow_test=True)
 
     @app.post("/api/bench/camera/apply")
     async def apply(body: CameraApply, request: Request):
         actor = permitted(request, ("admin",))
         def execute():
-            if body.expected_revision != camera.revision:
+            if body.expected_revision is not None and body.expected_revision != camera.revision:
                 raise Conflict("다른 화면에서 카메라 설정을 변경했습니다. 다시 불러오세요.")
             return camera.apply(body.profile, persist=body.save, actor=actor)
-        return await native(execute, allow_led=True, camera_only=True)
+        current = camera.profile or {}
+        # Control changes keep the capture running, so they are allowed during a
+        # pipeline trial; a resolution or device change waits until it stops.
+        same_mode = bool(current) and all(current.get(k) == getattr(body.profile, k)
+                                          for k in ("device", "width", "height", "pixel_format")) \
+            and abs(current.get("fps", 0) - body.profile.fps) < 0.05
+        return await native(execute, allow_outputs=True, camera_only=True, allow_test=same_mode)
 
     @app.post("/api/bench/camera/connect")
     async def camera_connect(request: Request):
         permitted(request)
-        return await native(camera.connect, allow_led=True, camera_only=True)
+        return await native(camera.connect, allow_outputs=True, camera_only=True)
 
     @app.post("/api/bench/camera/disconnect")
     async def camera_disconnect(request: Request):
@@ -419,7 +457,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
         def execute():
             camera.close()
             return camera.status()
-        return await native(execute, allow_led=True, camera_only=True)
+        return await native(execute, allow_outputs=True, camera_only=True)
 
     @app.post("/api/bench/camera/capture")
     async def capture(request: Request):

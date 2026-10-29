@@ -12,6 +12,8 @@ export function useCameraSwitch() {
   const online = useApp((s) => s.connected);
   const [busy, setBusy] = useState(false);
   const on = cameraOn(equipment);
+  // A camera that was on comes back by itself; there is nothing to press meanwhile.
+  const reconnecting = !on && equipment?.camera?.reconnecting === true;
   const turnOn = async () => {
     if (busy) return;
     setBusy(true);
@@ -24,11 +26,12 @@ export function useCameraSwitch() {
       setBusy(false);
     }
   };
-  return { on, busy, turnOn, allowed: online && cameraChangeAllowed(snapshot) };
+  return { on, reconnecting, busy, turnOn, allowed: online && cameraChangeAllowed(snapshot) };
 }
 
 export function CameraOnButton({ className = "btn-lg" }: { className?: string }) {
   const camera = useCameraSwitch();
+  if (camera.reconnecting) return null;
   return (
     <button className={"btn btn-primary " + className} disabled={camera.busy || !camera.allowed} onClick={camera.turnOn}>
       <Camera size={44} />
@@ -54,6 +57,8 @@ export default function CameraBox({
         <img src={url} alt="카메라 영상" className="h-full w-full object-contain" />
       ) : camera.on ? (
         <p className="text-[32px] font-extrabold text-white">영상 받는 중</p>
+      ) : camera.reconnecting ? (
+        <p className="text-[36px] font-black text-white">카메라 연결 중</p>
       ) : (
         <div className="flex flex-col items-center gap-6">
           <p className="text-[36px] font-black text-white">카메라 꺼짐</p>

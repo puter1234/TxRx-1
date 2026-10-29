@@ -1,7 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../station/shared";
-import { reportError } from "../lib/station";
 import RoiEditor from "./RoiEditor";
 import { useApp } from "../lib/store";
 
@@ -58,8 +57,8 @@ const fresh = (): Preset => ({
 
 const retainedDrafts = new Map<string, Preset>();
 
-export default function WorkPresets({ brandId }: { brandId?: string }) {
-  const [kind, setKind] = useState<"simple" | "vision">("simple");
+export default function WorkPresets({ brandId, initialKind = "simple" }: { brandId?: string; initialKind?: "simple" | "vision" }) {
+  const [kind, setKind] = useState<"simple" | "vision">(initialKind);
   if (brandId)
     return <PresetEditor key={brandId} brandId={brandId} kind="condition" />;
   return (
@@ -120,7 +119,10 @@ function PresetEditor({
       retainedDrafts.get(cacheKey) || null,
     );
   const [busy, setBusy] = useState(false),
-    [message, setMessage] = useState("");
+    [message, setMessage] = useState(""),
+    [saveError, setSaveError] = useState("");
+  const timer = useRef<ReturnType<typeof setTimeout>>();
+  const mode = useApp((s) => s.snapshot?.mode);
   const [loading, setLoading] = useState(true),
     [loadError, setLoadError] = useState(""),
     [attempt, setAttempt] = useState(0);
@@ -146,6 +148,7 @@ function PresetEditor({
   }, [draft]);
   const changed = (next: Partial<Preset>) => {
     setMessage("");
+    setSaveError("");
     setDraft((d) => d && { ...d, ...next });
   };
   const flow = (key: string, value: any) =>
@@ -155,6 +158,7 @@ function PresetEditor({
   const save = async () => {
     if (!draft || busy) return;
     setBusy(true);
+    setMessage("저장 중");
     try {
       const result = await api<Preset>("/presets", {
         preset: brandId
@@ -176,14 +180,27 @@ function PresetEditor({
         expected_revision: original ? draft.revision : null,
       });
       setRows((r) => [...r.filter((x) => x.id !== result.id), result]);
-      setDraft(result);
+      // Keep edits made while this save was on its way; they are saved next.
+      setDraft((d) => (d && d.id === result.id && JSON.stringify({ ...d, revision: 0 }) !== JSON.stringify({ ...draft, revision: 0 })
+        ? { ...d, revision: result.revision } : result));
       setMessage("저장됨");
     } catch (e) {
-      reportError(e);
+      setMessage("");
+      setSaveError((e as Error).message);
     } finally {
       setBusy(false);
     }
   };
+  // Every complete change is saved shortly after it is made; nothing waits for a save button.
+  // Only numeric fields can be left blank; the model path may stay empty.
+  const complete = !!draft?.name.trim() && Object.entries(draft?.flow ?? {}).every(([key, v]) =>
+    typeof (defaults as Record<string, unknown>)[key] !== "number" || (typeof v === "number" && Number.isFinite(v)));
+  useEffect(() => {
+    clearTimeout(timer.current);
+    if (!dirty || !complete || busy || saveError) return;
+    timer.current = setTimeout(() => void save(), 700);
+    return () => clearTimeout(timer.current);
+  }, [draft, busy, saveError]);
   const number = (key: string, label: string, step = 1, min = 0, max?: number) => (
     <label key={key} className="block text-xl font-extrabold">
       {label}
@@ -220,8 +237,6 @@ function PresetEditor({
                 value={original ? draft.id : ""}
                 disabled={busy}
                 onChange={(e) => {
-                  if (dirty && !window.confirm("저장하지 않은 변경을 버릴까요?"))
-                    return;
                   const row = rows.find((r) => r.id === e.target.value);
                   if (row) {
                     setDraft(row);
@@ -283,7 +298,6 @@ function PresetEditor({
             className="btn btn-outline ml-auto"
             disabled={busy}
             onClick={() => {
-              if (dirty && !window.confirm("저장하지 않은 변경을 버릴까요?")) return;
               setDraft({ ...initial(), name: "" });
               setMessage("");
             }}
@@ -292,7 +306,7 @@ function PresetEditor({
           </button>
           <button
             className="btn btn-outline"
-            disabled={dirty || busy || !original}
+            disabled={busy || !original}
             onClick={() => {
               setDraft({ ...draft, id: fresh().id, name: draft.name + " 복사", revision: 1 });
               setMessage("");
@@ -468,33 +482,17 @@ function PresetEditor({
         </div>
       </section>
       <footer className="sticky bottom-0 z-10 flex items-center gap-4 rounded-2xl border-2 border-line bg-white p-5 shadow-lg">
-        <p role="status" className="mr-auto text-[26px] font-extrabold">
-          {dirty ? "변경됨" : message || "저장됨"}
+        <p role="status" className={"mr-auto text-[26px] font-extrabold " + (saveError || !complete ? "text-danger" : "")}>
+          {saveError || (!draft.name.trim() ? "설정 이름 필요" : !complete ? "빈 칸 있음" : dirty ? "저장 중" : message || "저장됨")}
         </p>
-        <button
-          className="btn btn-outline btn-lg"
-          disabled={!dirty || busy}
-          onClick={() => setDraft(original || rows[0] || initial())}
-        >
-          변경 취소
-        </button>
-        <button
-          className="btn btn-primary btn-lg"
-          disabled={!dirty || busy || !draft.name.trim()}
-          onClick={save}
-        >
-          저장
-        </button>
         <button
           className="btn btn-outline btn-lg"
           disabled={dirty || busy || !draft.enabled}
           onClick={() =>
-            nav(
-              (draft.kind === "condition" ? "/condition" : "/simple") +
-                "?preset=" +
-                encodeURIComponent(draft.id) +
-                "&test=1",
-            )
+            // The bench has no conveyor flow engine: wappen settings are tried on the live camera there.
+            nav(draft.kind === "vision" && mode === "REPLAY"
+              ? "/settings?section=test&mode=wappen&preset=" + encodeURIComponent(draft.id)
+              : (draft.kind === "condition" ? "/condition" : "/simple") + "?preset=" + encodeURIComponent(draft.id) + "&test=1")
           }
         >
           시험 계수

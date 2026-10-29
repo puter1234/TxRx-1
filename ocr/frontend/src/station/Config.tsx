@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Plus, Trash2, Save, Upload, Download } from "lucide-react";
 import OptionValues from "../components/OptionValues";
 import { isColorOption } from "../lib/optionColors";
@@ -48,6 +48,35 @@ export default function Config({
   useEffect(() => {
     if (embedded) brandDrafts.set(draft.id, draft);
   }, [draft, embedded]);
+  // In the brand screen every complete change is saved by itself.
+  const [saved, setSaved] = useState(() => JSON.stringify(initialBrand ?? null));
+  const [saveState, setSaveState] = useState<"" | "saving" | "saved">("");
+  const [saveError, setSaveError] = useState("");
+  const timer = useRef<ReturnType<typeof setTimeout>>();
+  const complete = !!draft.id && !!draft.name.trim() && !draft.options.some((o) => !o.values.length);
+  useEffect(() => setSaveError(""), [draft]);
+  useEffect(() => {
+    clearTimeout(timer.current);
+    if (!embedded || locked || !complete || saveState === "saving" || saveError || JSON.stringify(draft) === saved) return;
+    timer.current = setTimeout(async () => {
+      setSaveState("saving");
+      const sent = draft;
+      try {
+        const updated = await api<Brand>("/brands", {
+          brand: sent, expected_revision: existing ? sent.revision : null, reason: "브랜드 설정 변경",
+        });
+        setSaved(JSON.stringify(updated));
+        setExisting(true);
+        setDraft((d) => (JSON.stringify(d) === JSON.stringify(sent) ? updated : { ...d, revision: updated.revision }));
+        setSaveState("saved");
+        await refresh();
+      } catch (e) {
+        setSaveState("");
+        setSaveError((e as Error).message);
+      }
+    }, 800);
+    return () => clearTimeout(timer.current);
+  }, [draft, locked, saveState, saveError]);
   const optionKey =
     (
       {
@@ -150,6 +179,12 @@ export default function Config({
           </Field>
         )}
         <fieldset disabled={role !== "admin"} className="card relative p-6">
+          {embedded ? (
+            <p role="status" className={"mb-2 text-[24px] font-extrabold " + (saveError || !complete ? "text-danger" : "text-ink-700")}>
+              {saveError || (!draft.name.trim() ? "브랜드 이름 필요" : !complete ? "값 없는 항목 있음"
+                : saveState === "saving" || JSON.stringify(draft) !== saved ? "저장 중" : saveState === "saved" ? "저장됨" : "")}
+            </p>
+          ) : (
           <div className="sticky top-0 z-10 -mx-6 -mt-6 mb-4 flex justify-end rounded-t-[1.25rem] border-b-2 border-line bg-white px-6 py-4">
             <button
               className="btn btn-primary"
@@ -177,6 +212,7 @@ export default function Config({
               설정 저장
             </button>
           </div>
+          )}
           <div className="divide-y divide-line">
             {draft.options.map((o, i) => (
               <section

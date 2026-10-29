@@ -30,8 +30,7 @@ export default function BatchCapture({ bench, locked }: { bench: BenchHook; lock
     catch (e) { setError((e as Error).message); }
     finally { setPending(false); active.current = false; }
   });
-  return <div className="space-y-3 rounded-xl border border-line p-4">
-    <div className="flex items-center gap-3"><h3 className="text-xl font-bold">연속 촬영</h3></div>
+  return <div className="space-y-3">
     <label className="block text-lg font-bold">촬영 장수<input className="field mt-2" type="number" min="1" max="500" step="1" disabled={pending || batch?.active} value={count} onChange={e => setCount(Number(e.target.value))}/></label>
     <label className="block text-lg font-bold">촬영 간격 (ms)<input className="field mt-2" type="number" min="0" max="10000" step="1" disabled={pending || batch?.active} value={interval} onChange={e => setInterval(Number(e.target.value))}/></label>
     <p className="text-lg font-bold tabular-nums">최소 {((count - 1) * interval / 1000).toFixed(1)}초</p>

@@ -202,6 +202,8 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
         recovery = None
         if config.mode == "REPLAY" and isinstance(camera, CameraManager):
             from .camera_recovery import CameraRecovery
+            # A saved camera comes on by itself after a restart, like in HARDWARE mode.
+            camera.wanted = camera.wanted or bool(camera.saved)
             recovery = CameraRecovery(camera)
             recovery.start()
         task = asyncio.create_task(watch())

@@ -496,3 +496,35 @@ def test_manual_stop_during_frame_copy_cannot_accept_late_result(trial, monkeypa
         assert not t.state()['jobs'][0]['frames']
     finally:
         release.set()
+
+
+def test_trial_opens_inputs_and_turns_on_saved_camera_itself(trial):
+    t = trial
+    assert t.client.post("/api/bench/io/disconnect", json={}).status_code == 200
+    camera = t.camera
+    camera.connected = False
+    camera.saved = {"device": "/dev/video0"}
+    camera.connect = lambda: setattr(camera, "connected", True)
+    t.start(frame_count=1)
+    assert t.app.state.bench.io is not None and camera.connected
+    assert t.values[51] == 1 and t.state()["active"]
+
+
+def test_trial_takes_over_manual_led_and_keeps_running_motor(trial):
+    t = trial
+    def manual(target):
+        state = t.client.get("/api/bench").json()
+        response = t.client.post("/api/bench/output", json={
+            "target": target, "seconds": None, "generation": state["generation"],
+            "request_id": f"manual-{target}-request", "issued_at": time.time()})
+        assert response.status_code == 200, response.text
+    manual("motor")
+    with t.app.state.bench.lock:
+        t.app.state.bench.next_output_at["led"] = time.monotonic() - .001
+    manual("led")
+    motor = t.app.state.bench.runs["motor"]["id"]
+    t.start(frame_count=1)
+    runs = t.app.state.bench.runs
+    assert set(runs) == {"motor"} and runs["motor"]["id"] == motor
+    # The sensor sequence now owns the LED: off until DI1.
+    assert t.values[52] == 0 and t.state()["active"]

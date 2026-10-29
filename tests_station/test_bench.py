@@ -456,12 +456,20 @@ def test_clear_motor_error_allows_retry_without_reconnect_or_cooldown_bypass(rig
     assert pulse(c, target, 10).status_code == 200
 
 
-@pytest.mark.parametrize("condition", ["disconnected", "feedback_on", "output_on", "fault", "running"])
+def test_clear_error_opens_the_inputs_itself(rig):
+    c, app = rig
+    b = app.state.bench
+    b.error = "시험 오류"
+    response = c.post("/api/bench/error/clear", json={})
+    assert response.status_code == 200, response.text
+    assert b.io is not None and b.error is None
+
+
+@pytest.mark.parametrize("condition", ["feedback_on", "output_on", "fault", "running"])
 def test_clear_error_rejects_unresolved_conditions(rig, condition):
     c, app = rig
     b = app.state.bench
-    if condition != "disconnected":
-        c.post("/api/bench/io/connect", json={})
+    c.post("/api/bench/io/connect", json={})
     if condition == "running":
         assert pulse(c, "led", 10).status_code == 200
     with b.lock:
@@ -844,3 +852,110 @@ def test_output_off_precedes_blocked_ocr_cleanup(rig):
         release.set()
         worker.join(2)
         app.state.bench.stop_listeners.remove(cleanup)
+
+
+def test_motor_switch_opens_inputs_without_a_separate_connection(rig):
+    c, app = rig
+    assert app.state.bench.io is None
+    assert pulse(c, "led", None).status_code == 200
+    assert app.state.bench.io is not None and app.state.bench.io.led
+
+
+def test_saving_wiring_while_inputs_are_open_reopens_them(rig):
+    c, app = rig
+    assert pulse(c, "led", None).status_code == 200
+    old = app.state.bench.io
+    body = setup(c)
+    bench = app.state.bench
+    assert bench.io is not None and bench.io is not old
+    assert not bench.runs and not old.led
+    assert bench.setup.permit_line == body["permit_line"]
+
+
+def test_rfid_finds_the_reader_without_setup(rig, monkeypatch):
+    c, app = rig
+    from station import bench as bench_module
+    plugged = {"port": "/dev/ttyUSB1", "reply": True}
+
+    class Reader:
+        def __init__(self, port):
+            if port != plugged["port"]:
+                raise OSError("could not open port")
+
+        def initialize(self, power):
+            if not plugged["reply"]:
+                raise TimeoutError("RFID response timeout: 08")
+
+        def inventory_bench(self, window_ms, cancel):
+            return [{"epc": "E200", "count": 3, "max_rssi": -41}]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("station.rfid.Reader", Reader)
+    monkeypatch.setattr(bench_module, "serial_ports", lambda: [
+        {"device": "/dev/ttyTHS1", "name": "n/a", "usb": False},
+        {"device": "/dev/ttyUSB1", "name": "CP2102", "usb": True}])
+    response = c.post("/api/bench/rfid", json={})
+    assert response.status_code == 200 and response.json()["ok"], response.text
+    assert app.state.bench.setup.rfid_port == "/dev/ttyUSB1"
+    # Plugged in again under another name: the reader is found again.
+    plugged["port"] = "/dev/ttyUSB0"
+    monkeypatch.setattr(bench_module, "serial_ports", lambda: [
+        {"device": "/dev/ttyTHS1", "name": "n/a", "usb": False},
+        {"device": "/dev/ttyUSB0", "name": "CP2102", "usb": True}])
+    assert c.post("/api/bench/rfid", json={}).status_code == 200
+    assert app.state.bench.setup.rfid_port == "/dev/ttyUSB0"
+    plugged["reply"] = False
+    response = c.post("/api/bench/rfid", json={})
+    assert response.status_code == 422 and "RFID 응답이 없습니다" in response.text
+    assert "timeout" not in response.text
+    # Still plugged in but held by another program: no port search, no rename.
+    plugged["port"] = None
+    monkeypatch.setattr(bench_module, "serial_ports", lambda: [
+        {"device": "/dev/ttyUSB0", "name": "CP2102", "usb": True},
+        {"device": "/dev/ttyUSB1", "name": "CH340", "usb": True}])
+    response = c.post("/api/bench/rfid", json={})
+    assert response.status_code == 409 and "RFID 리더를 열 수 없습니다" in response.text
+    assert app.state.bench.setup.rfid_port == "/dev/ttyUSB0"
+    monkeypatch.setattr(bench_module, "serial_ports", lambda: [])
+    app.state.bench.setup = app.state.bench.setup.model_copy(update={"rfid_port": ""})
+    response = c.post("/api/bench/rfid", json={})
+    assert response.status_code == 409 and "연결되지 않았습니다" in response.text
+
+
+def test_wappen_trial_counts_on_live_camera_and_stops_with_emergency_stop(rig):
+    c, app = rig
+    from station.schema import FlowSettings, WorkPreset
+    preset = WorkPreset(id="wappen", name="와펜", kind="vision", flow=FlowSettings(counter="cvzone")).model_dump()
+    app.state.store.put("work_presets", {"wappen": preset})
+    camera = app.state.camera
+    camera.backend = FakeBackend()
+    c.post("/api/bench/camera/apply", json={"profile": camera.backend.profile.model_dump(), "save": True})
+    class Counter:
+        def __init__(self, flow):
+            self.total = 0
+        def update(self, frame, now=None):
+            self.total += 1
+            return {"boxes": [[.1, .1, .2, .2]], "total": self.total, "width": frame.shape[1],
+                    "height": frame.shape[0], "inference_ms": 1.0}
+    trial = app.state.vision_trial
+    trial.counter_factory = Counter
+    stream = camera.stream
+    seq = {"n": 100}
+    def status():
+        seq["n"] += 1
+        return {"connected": True, "frames": seq["n"], "width": 640, "height": 480}
+    stream.status = status
+    response = c.post("/api/bench/vision/start", json={"preset_id": "wappen"})
+    assert response.status_code == 200, response.text
+    deadline = time.monotonic() + 2
+    while c.get("/api/bench/vision").json()["total"] < 2 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    state = c.get("/api/bench/vision").json()
+    assert state["active"] and state["total"] >= 2 and state["boxes"]
+    c.post("/api/bench/stop", json={})
+    deadline = time.monotonic() + 2
+    while c.get("/api/bench/vision").json()["active"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not c.get("/api/bench/vision").json()["active"]

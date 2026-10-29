@@ -1,0 +1,235 @@
+import { useEffect, useRef, useState } from "react";
+import { Image as ImageIcon, Play, Square } from "lucide-react";
+import { api } from "../../station/shared";
+import type { BenchHook, BenchState } from "../DeviceTests";
+import type { Locator, LocationDiagnostics } from "../BarcodeLocation";
+import type { Shown } from "./ResultView";
+
+type Line = { text: string; confidence: number };
+type Frame = {
+  seq: number; after_trigger_ms: number; state: string; image_available: boolean; crop_count: number;
+  result: null | { error: string | null; reads: { lines: Line[] }[]; barcode_diagnostics?: LocationDiagnostics };
+};
+type Job = { id: string; number: number; state: string; counted: boolean; frames: Frame[];
+  missed_frames: number; capture_error: string | null; matched_text: string | null };
+export type ProcessSettings = { conveyor_sync: boolean; low_speed_ms: number; capture_delay_ms: number;
+  capture_interval_ms: number; departure_timeout_ms: number; frame_count: number;
+  sensor_channel: number; active_raw: number; pattern: string; locator: Locator };
+type State = { active: boolean; busy: boolean; error: string | null; stop_reason?: string | null; detected: number;
+  count: number; passed: number; failed: number; await_clear: boolean; jobs: Job[]; settings?: ProcessSettings };
+
+// Stops the user asked for need no message.
+const USER_STOPS = new Set(["정지", "파이프라인 시험 중지", "점검 종료"]);
+
+const JOB_STATE: Record<string, string> = {
+  waiting: "대기", reading: "읽는 중", passed: "읽음", failed: "못 읽음", cancelled: "중지", skipped: "생략", no_match: "형식 다름",
+};
+
+const validSettings = (s: ProcessSettings) =>
+  Number.isInteger(s.frame_count) && s.frame_count >= 1 && s.frame_count <= 100 && (!s.conveyor_sync || (
+    [s.low_speed_ms, s.capture_delay_ms, s.capture_interval_ms, s.departure_timeout_ms].every(Number.isInteger) &&
+    s.low_speed_ms >= 0 && s.low_speed_ms <= 60000 && s.capture_delay_ms >= 0 && s.capture_delay_ms <= 60000 &&
+    s.capture_interval_ms >= 0 && s.capture_interval_ms <= 10000 && s.departure_timeout_ms >= 100 &&
+    s.departure_timeout_ms <= 120000 && s.capture_delay_ms + (s.frame_count - 1) * s.capture_interval_ms < s.departure_timeout_ms));
+
+// Sensor-linked OCR test on the conveyor. One button starts it; the server opens
+// the inputs, turns the camera on and takes over manual outputs by itself.
+export default function ProcessTest({ bench, locked, onShow, onSettings }: {
+  bench: BenchHook; locked: boolean; onShow: (shown: Shown | null) => void; onSettings: (s: ProcessSettings) => void;
+}) {
+  const [state, setState] = useState<State | null>(null);
+  const [draft, setDraft] = useState<ProcessSettings | null>(null);
+  const [saved, setSaved] = useState<"" | "saving" | "saved">("");
+  const [selected, setSelected] = useState<string | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => {
+    let alive = true;
+    let poll: ReturnType<typeof setTimeout>;
+    const tick = async () => {
+      try {
+        const next = await api<State>("/bench/pipeline");
+        if (!alive) return;
+        setState(next);
+        setDraft((d) => d || next.settings || null);
+      } catch {
+        // The device poll in the header already shows connection problems.
+      }
+      if (alive) poll = setTimeout(tick, 500);
+    };
+    void tick();
+    return () => {
+      alive = false;
+      clearTimeout(poll);
+      clearTimeout(timer.current);
+    };
+  }, []);
+  useEffect(() => {
+    if (draft) onSettings(draft);
+  }, [draft]);
+
+  const running = !!state?.busy;
+  const change = (patch: Partial<ProcessSettings>) => {
+    if (!draft) return;
+    const next = { ...draft, ...patch };
+    setDraft(next);
+    setSaved("");
+    clearTimeout(timer.current);
+    if (!validSettings(next)) return;
+    timer.current = setTimeout(async () => {
+      setSaved("saving");
+      try {
+        await api("/bench/pipeline/settings", next, "PUT");
+        setSaved("saved");
+      } catch {
+        setSaved("");
+      }
+    }, 500);
+  };
+
+  // The latest product follows automatically until the user picks one.
+  const jobs = state?.jobs ?? [];
+  const job = jobs.find((j) => j.id === selected) ?? [...jobs].reverse().find((j) => j.frames.length) ?? null;
+  const show = (job: Job, frame: Frame) => {
+    const url = `/api/bench/pipeline/frames/${job.id}/${frame.seq}`;
+    const lines = frame.result?.reads.flatMap((r) => r.lines) ?? [];
+    onShow({
+      title: `${job.number}번 제품, ${job.frames.indexOf(frame) + 1}번 사진`,
+      url: frame.image_available ? url : "",
+      download: frame.image_available ? url + "?original=true" : undefined,
+      diagnostics: frame.result?.barcode_diagnostics,
+      lines: frame.result ? lines.map((line, i) => ({ text: line.text, confidence: line.confidence,
+        image: frame.image_available && i < frame.crop_count ? `${url}?crop=${i}` : undefined })) : undefined,
+      note: frame.result?.error || job.capture_error || undefined,
+      report: frame.result ? { after_trigger_ms: frame.after_trigger_ms, ...frame.result } : undefined,
+    });
+  };
+
+  if (!draft) return <p role="status" className="text-[24px] font-extrabold">불러오는 중</p>;
+  const di = (channel: number) => bench.state?.sensors.find((s) => s.channel === channel)?.raw;
+  const occupied = draft.conveyor_sync && bench.state?.connected && (di(1) === 0 || di(2) === 0);
+  const motorWait = Math.ceil((bench.state?.cooldown_ms?.motor || 0) / 1000);
+  const valid = validSettings(draft);
+  const blocked = locked ? "작업 진행 중" : occupied ? "센서 앞 제품 치우기" : motorWait > 0 ? `모터 재시작 ${motorWait}초` : !valid ? "시험 설정 확인" : "";
+  const start = () =>
+    bench.action(async () => {
+      const next = await api<BenchState>("/bench/pipeline/start", draft);
+      await bench.adoptRuns(next);
+      setSelected(null);
+      setState(await api<State>("/bench/pipeline"));
+    }, true);
+  const summary = [draft.conveyor_sync ? "컨베이어 연동" : "센서 촬영", `사진 ${draft.frame_count}장`,
+    draft.conveyor_sync ? `촬영 지연 ${draft.capture_delay_ms}ms` : ""].filter(Boolean).join(", ");
+  const number = (key: keyof ProcessSettings, label: string, min: number, max: number) => (
+    <label className="block space-y-2 text-[22px] font-extrabold">
+      {label}
+      <input className="field" type="number" min={min} max={max} disabled={running} value={draft[key] as number}
+        onChange={(e) => change({ [key]: Number(e.target.value) } as Partial<ProcessSettings>)} />
+    </label>
+  );
+  return (
+    <div className="space-y-6">
+      {running ? (
+        <button className="btn btn-danger btn-xl w-full" onClick={() => bench.stop()}>
+          <Square size={40} fill="currentColor" />
+          시험 정지
+        </button>
+      ) : (
+        <button className="btn btn-go btn-xl w-full" disabled={!!blocked || bench.busy} onClick={start}>
+          <Play size={40} strokeWidth={3} />
+          {blocked || "시험 시작"}
+        </button>
+      )}
+      {(state?.error || (state?.stop_reason && !USER_STOPS.has(state.stop_reason))) && !running && (
+        <p role="alert" className="text-[24px] font-extrabold text-danger">{state.error || state.stop_reason}</p>
+      )}
+      <p role="status" className="text-[26px] font-black">
+        {state?.active ? (state.await_clear ? "센서 해제 대기" : "시험 중") : running ? "멈추는 중" : "대기"}
+      </p>
+      <div className="grid grid-cols-4 gap-3">
+        {([["통과", state?.count], ["감지", state?.detected], ["읽음", state?.passed], ["못 읽음", state?.failed]] as const).map(([label, value]) => (
+          <div key={label} className="rounded-2xl border-2 border-line bg-white p-3 text-center">
+            <p className="text-[20px] font-extrabold text-ink-700">{label}</p>
+            <p className="text-[40px] font-black tabular-nums leading-tight">{value ?? 0}</p>
+          </div>
+        ))}
+      </div>
+      {!!jobs.length && (
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            {[...jobs].reverse().map((item) => (
+              <button key={item.id} className={"btn " + (job?.id === item.id ? "btn-primary" : "btn-outline")}
+                aria-pressed={job?.id === item.id} onClick={() => setSelected(item.id)}>
+                {item.number}번 {JOB_STATE[item.state] || item.state}
+              </button>
+            ))}
+          </div>
+          {job?.matched_text && <p className="break-all text-[40px] font-black">{job.matched_text}</p>}
+          {job && (
+            <div className="flex flex-wrap gap-2" aria-label="사진">
+              {job.frames.map((item, i) => (
+                <button key={item.seq} className="btn btn-outline" onClick={() => show(job, item)}>
+                  <ImageIcon size={26} />
+                  {i + 1}번 사진 {JOB_STATE[item.state] || item.state}
+                </button>
+              ))}
+            </div>
+          )}
+          {!!job?.missed_frames && <p className="text-[22px] font-extrabold text-danger">놓친 사진 {job.missed_frames}장</p>}
+        </div>
+      )}
+      <details className="rounded-2xl border-2 border-line bg-white p-4">
+        <summary className="cursor-pointer text-[24px] font-extrabold">
+          시험 설정 <span className="text-[20px] text-ink-700">{summary}</span>
+          {saved && <span className="ml-3 text-[20px] text-ok">{saved === "saving" ? "저장 중" : "저장됨"}</span>}
+        </summary>
+        <div className="mt-5 space-y-5">
+          <div role="group" aria-label="시험 방식" className="grid grid-cols-2 gap-3">
+            {([[true, "컨베이어 연동"], [false, "센서 촬영"]] as const).map(([value, label]) => (
+              <button key={label} className={"btn btn-lg " + (draft.conveyor_sync === value ? "btn-primary" : "btn-outline")}
+                aria-pressed={draft.conveyor_sync === value} disabled={running} onClick={() => change({ conveyor_sync: value })}>{label}</button>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            {draft.conveyor_sync && number("low_speed_ms", "저속 유지 (ms)", 0, 60000)}
+            {draft.conveyor_sync && number("capture_delay_ms", "촬영 지연 (ms)", 0, 60000)}
+            {number("frame_count", "사진 장수", 1, 100)}
+            {draft.frame_count > 1 && number("capture_interval_ms", "사진 간격 (ms)", 0, 10000)}
+            {draft.conveyor_sync && number("departure_timeout_ms", "DI2 도착 제한 (ms)", 100, 120000)}
+          </div>
+          {!draft.conveyor_sync && (
+            <div className="grid grid-cols-2 gap-4">
+              <label className="block space-y-2 text-[22px] font-extrabold">
+                센서
+                <select className="field" disabled={running} value={draft.sensor_channel} onChange={(e) => change({ sensor_channel: Number(e.target.value) })}>
+                  <option value={1}>DI1</option>
+                  <option value={2}>DI2</option>
+                </select>
+              </label>
+              <label className="block space-y-2 text-[22px] font-extrabold">
+                감지 신호
+                <select className="field" disabled={running} value={draft.active_raw} onChange={(e) => change({ active_raw: Number(e.target.value) })}>
+                  <option value={0}>0</option>
+                  <option value={1}>1</option>
+                </select>
+              </label>
+            </div>
+          )}
+          <label className="block space-y-2 text-[22px] font-extrabold">
+            바코드 위치 찾기
+            <select className="field" disabled={running} value={draft.locator} onChange={(e) => change({ locator: e.target.value as Locator })}>
+              <option value="yolo26">모델</option>
+              <option value="stripes">줄무늬</option>
+              <option value="opencv">기존 방식</option>
+            </select>
+          </label>
+          <label className="block space-y-2 text-[22px] font-extrabold">
+            상품코드 형식
+            <input className="field" disabled={running} value={draft.pattern} placeholder="[A-Z]{4}[0-9]{3}"
+              onChange={(e) => change({ pattern: e.target.value })} />
+          </label>
+          {!valid && <p role="alert" className="text-[22px] font-extrabold text-danger">마지막 사진 시각이 DI2 도착 제한보다 늦음</p>}
+        </div>
+      </details>
+    </div>
+  );
+}

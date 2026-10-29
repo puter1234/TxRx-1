@@ -337,6 +337,8 @@ class WindowsCameraManager(CameraManager):
                         self.store.event("CAMERA_SETTINGS_SAVED", {"actor": actor, "profile": actual, "revision": revision}, c)
                     self.saved = actual
                 self.profile, self.revision, self.identity = actual, revision, info["identity"]
+                self.wanted = True
+                self.reconnect_attempts = 0
                 return {**self.status(), "capabilities": info}
             except Exception as exc:
                 self._close_stream()

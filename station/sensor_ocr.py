@@ -100,11 +100,15 @@ class SensorOcrTest:
 
     def start(self, settings):
         serial = getattr(self.bench, "stop_serial", None)
+        status = self.camera.status()
+        if not status.get("connected") and getattr(self.camera, "saved", None):
+            # Turn the saved camera on instead of sending the user elsewhere.
+            self.camera.connect()
+            status = self.camera.status()
+        if not status.get("connected"):
+            raise Conflict("카메라가 연결되지 않았습니다.")
         if hasattr(self.camera, "verify_fixed_controls"):
             self.camera.verify_fixed_controls()
-        status = self.camera.status()
-        if not status.get("connected"):
-            raise Conflict("카메라를 먼저 연결하세요.")
         profile = status.get("profile") or {}
         width, height = status.get("width") or profile.get("width"), status.get("height") or profile.get("height")
         if not width or not height:
@@ -121,7 +125,7 @@ class SensorOcrTest:
             if self.bench.cancel.is_set():
                 raise Conflict("시험 시작이 취소되었습니다.")
             if not self.bench.io:
-                raise Conflict("센서 입력 연결을 먼저 시작하세요.")
+                self.bench.connect()
             raw = self.bench.io.snapshot().get("di_raw")
             if not raw or len(raw) < 2:
                 raise Conflict("센서 입력값을 읽을 수 없습니다.")
@@ -130,8 +134,10 @@ class SensorOcrTest:
                     raise Conflict("이 장비의 DO4 연결 정보가 없습니다.")
                 if raw[:2] != [1, 1]:
                     raise Conflict("DI1과 DI2 앞의 제품을 정리한 뒤 시작하세요.")
-                if self.bench.runs:
-                    raise Conflict("수동 출력 시험을 정지한 뒤 연동 시험을 시작하세요.")
+                # The trial takes over manual tests: a running motor keeps
+                # running, LED and speed follow the sensor sequence from here.
+                for target in [t for t in self.bench.runs if t != "motor"]:
+                    self.bench.runs.pop(target)
             try:
                 for target in (("motor",) if settings.conveyor_sync else ("motor", "led")):
                     if target not in self.bench.runs:

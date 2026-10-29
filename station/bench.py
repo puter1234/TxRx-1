@@ -25,7 +25,7 @@ class BenchSetup(Model):
     rfid_port: str = Field(default="", max_length=200)
     rfid_window_ms: int = Field(default=5000, ge=100, le=10000)
     rfid_power: int = Field(default=2600, ge=0, le=2600)
-    rfid_protocol_confirmed: bool = False
+    rfid_protocol_confirmed: bool = False  # No longer asked; kept so saved setups still load.
 
     @model_validator(mode="after")
     def polarity(self):
@@ -222,11 +222,16 @@ class Bench:
         if len(pins) != len(set(pins)) or setup.permit_line in pins:
             raise ValueError("입출력 핀을 중복 지정할 수 없습니다.")
         with self.lock:
-            if self.io or self.run:
-                raise Conflict("입력 연결을 종료한 후 저장하세요.")
             if "rfid_power" not in setup.model_fields_set:
                 setup = setup.model_copy(update={"rfid_power": self.setup.rfid_power})
+            # New wiring needs a fresh input request. Outputs go off first; the
+            # inputs reopen with the new settings when they were open before.
+            reopen = self.io is not None
+            if reopen:
+                self.disconnect()
         self._save_setup(setup, "BENCH_SETUP_SAVED", actor, setup.model_dump())
+        if reopen:
+            self.connect()
         return self.status()
 
     def save_rfid_setup(self, fields, actor):
@@ -393,6 +398,8 @@ class Bench:
                 raise Conflict("현재 시험이 끝난 후 다시 시도하세요.")
             if target not in self.next_output_at:
                 raise ValueError("모터 또는 LED를 선택하세요.")
+            if not self.io:
+                self.connect()
             remaining = self.cooldown_ms(target)
             if remaining:
                 raise Conflict(restart_message(remaining) if target == "motor" else "신호 변경 후 1초 뒤 다시 조작하세요.")
@@ -439,7 +446,7 @@ class Bench:
             if self.run or self.native_busy:
                 raise Conflict("진행 중인 시험을 종료하세요.")
             if not self.io:
-                raise Conflict("입력 연결을 먼저 시작하세요.")
+                self.connect()
             snap = self.io.snapshot()
             if not snap.get("connected") or snap.get("fault"):
                 raise Conflict("입력 연결 상태를 확인하세요.")
@@ -601,21 +608,19 @@ class Bench:
                     "events": list(self.events), "output_blockers": self.output_blockers(), "led_blockers": self.led_blockers(),
                     "pins": {"motor": self.config.do_lines[0], "led": self.config.do_lines[1], "speed": self.config.speed_line,
                              "feedback": self.config.di_lines[2], "chip": self.config.gpio_chip},
+                    # The documented board needs no wiring choices; other boards set them once.
+                    "wiring_fixed": self.document_motor_test(),
                     "setup": self.setup.model_dump(), "rfid": self.last_rfid}
 
     def rfid_test(self):
         from .rfid import Reader
-        s = self.setup
-        if not s.rfid_port:
-            raise Conflict("RFID 포트를 선택하세요.")
-        if not s.rfid_protocol_confirmed:
-            raise Conflict("리더의 명령 규격을 확인한 후 RFID 설정을 저장하세요.")
         reader = None
         try:
             if self.cancel.is_set():
                 raise Conflict("RFID 시험을 중지했습니다.")
             prod = self.production_io.snapshot()
             if prod.get("rfid_connected"):
+                s = self.setup
                 if s.rfid_port != self.config.rfid_port:
                     raise Conflict("생산 설정과 RFID 포트가 다릅니다.")
                 if not prod.get("rfid_ready"):
@@ -624,7 +629,8 @@ class Bench:
                         raise Conflict("RFID 초기화를 확인하세요.")
                 tags = self.production_io.inventory_bench(s.rfid_window_ms, self.cancel)
             else:
-                reader = Reader(s.rfid_port)
+                reader = self._open_reader(Reader)
+                s = self.setup
                 reader.initialize(s.rfid_power)
                 if self.cancel.is_set():
                     raise Conflict("RFID 시험을 중지했습니다.")
@@ -636,9 +642,36 @@ class Bench:
             self.last_rfid = result
             self.store.event("BENCH_RFID_RESULT", result)
             return result
+        except (Conflict, ValueError):
+            raise
+        except Exception as exc:
+            # Reader replies are English protocol details; keep them in the log only.
+            self.store.event("BENCH_RFID_ERROR", {"port": self.setup.rfid_port, "error": str(exc)})
+            if self.cancel.is_set():
+                raise Conflict("RFID 시험을 중지했습니다.") from exc
+            raise ValueError("RFID 응답이 없습니다." if isinstance(exc, TimeoutError) else "RFID 리더 오류") from exc
         finally:
             if reader:
                 reader.close()
+
+    def _open_reader(self, Reader):
+        # A reader that was never set up, or came back under another name after
+        # being plugged in again, is found among the serial ports and remembered.
+        saved = self.setup.rfid_port
+        if saved:
+            try:
+                return Reader(saved)
+            except OSError as exc:
+                # A port that is still plugged in failed to open; it was not renamed.
+                if any(p["device"] == saved for p in serial_ports()):
+                    raise Conflict("RFID 리더를 열 수 없습니다.") from exc
+        port = reader_port()
+        try:
+            reader = Reader(port)
+        except OSError as exc:
+            raise Conflict("RFID 리더를 열 수 없습니다.") from exc
+        self.save_rfid_setup({"rfid_port": port}, "rfid-auto-port")
+        return reader
 
     def close(self):
         self.closed.set()
@@ -653,4 +686,13 @@ class Bench:
 
 def serial_ports():
     from serial.tools.list_ports import comports
-    return [{"device": p.device, "name": p.description} for p in comports()]
+    return [{"device": p.device, "name": p.description, "usb": p.vid is not None} for p in comports()]
+
+
+def reader_port():
+    """The only USB serial port, or the only serial port when none is USB."""
+    ports = serial_ports()
+    choices = [p for p in ports if p["usb"]] or ports
+    if len(choices) == 1:
+        return choices[0]["device"]
+    raise Conflict("RFID 리더가 연결되지 않았습니다." if not choices else "RFID 포트를 선택하세요.")

@@ -447,6 +447,10 @@ class CameraManager:
         self.identity = None
         self._health_state = None
         self.revision = int(store.get("camera_settings_revision", 0))
+        # The camera stays on once it was turned on, until someone turns it off.
+        # Recovery keeps bringing a wanted camera back with its last settings.
+        self.wanted = False
+        self.reconnect_attempts = 0
 
     def status(self):
         # Do not block the UI or output STOP while a configuration operation is running.
@@ -464,7 +468,10 @@ class CameraManager:
             self._health_state = health
         return {**status, "error": self.error or status.get("error"),
                 "profile": self.profile, "saved_profile": self.saved,
-                "revision": self.revision, "identity": self.identity}
+                "revision": self.revision, "identity": self.identity,
+                "wanted": self.wanted,
+                "reconnecting": self.wanted and not status.get("connected"),
+                "reconnect_attempts": self.reconnect_attempts}
 
     def inspect(self, device):
         return self.backend.inspect(device)
@@ -499,10 +506,22 @@ class CameraManager:
                 if not actual or any(actual[k] != getattr(profile, k) for k in ("width", "height", "pixel_format")) or abs(actual["fps"] - profile.fps) > 0.05:
                     raise ValueError("영상 연결 후 해상도 또는 FPS가 달라졌습니다.")
                 values = {c["name"]: c["value"] for c in current["controls"]}
+                if any(values.get(k) != v for k, v in profile.controls.items()) and hasattr(self.backend, "apply_controls"):
+                    # UVC drivers can reset focus and white balance when the capture
+                    # opens. Put the requested values back once, then verify again.
+                    self.backend.apply_controls(profile)
+                    current = self.backend.inspect(profile.device)
+                    actual = current["current"] or actual
+                    values = {c["name"]: c["value"] for c in current["controls"]}
                 if any(values.get(k) != v for k, v in profile.controls.items()):
                     raise ValueError("영상 연결 후 카메라 설정이 달라졌습니다.")
                 accepted = {**profile.model_dump(), "controls": actual["controls"]}
-                revision = self.revision + 1
+                # Reconnecting with the same settings keeps the settings revision,
+                # so a settings screen opened before a reconnect stays valid.
+                same = bool(previous) and all(previous.get(k) == accepted[k] for k in mode_keys) \
+                    and abs(previous.get("fps", 0) - accepted["fps"]) < 0.05 \
+                    and all(previous["controls"].get(k) == v for k, v in profile.controls.items())
+                revision = self.revision if same and not persist else self.revision + 1
                 if persist:
                     import json
                     with self.store.transaction() as c:
@@ -511,6 +530,8 @@ class CameraManager:
                         self.store.event("CAMERA_SETTINGS_SAVED", {"actor": actor, "profile": accepted, "revision": revision}, c)
                     self.saved = accepted
                 self.profile, self.revision, self.identity = accepted, revision, info["identity"]
+                self.wanted = True
+                self.reconnect_attempts = 0
                 return {**self.status(), "capabilities": current}
             except Exception as exc:
                 self.error = str(exc)
@@ -542,6 +563,8 @@ class CameraManager:
         if self.status().get("connected"):
             return self.status()
         if self.saved:
+            # A failed attempt still counts as a request; recovery keeps trying.
+            self.wanted = True
             return self.apply(CameraProfile.model_validate(self.saved))
         if self.config.camera_source in ("CSI0", "CSI1"):
             from .hardware import Camera
@@ -567,6 +590,19 @@ class CameraManager:
             return image, {**metadata, "camera_settings_revision": self.revision,
                            "camera_profile": self.profile}
 
+    def ensure(self):
+        """Reconnect a wanted camera with its last settings. Returns True when it tried."""
+        with self.lock:
+            if not self.wanted or self.status().get("connected"):
+                return False
+            profile = self.profile or self.saved
+            if not profile:
+                return False
+            self.reconnect_attempts += 1
+            self.apply(CameraProfile.model_validate(profile), persist=False, actor="camera-recovery")
+            self.store.event("CAMERA_RECOVERED", {"device": profile["device"]})
+            return True
+
     def recover(self, expected_stream):
         with self.lock:
             # A manual disconnect or another apply invalidates the pending retry.
@@ -578,18 +614,38 @@ class CameraManager:
             self.apply(profile, persist=False, actor="camera-recovery")
             self.store.event("CAMERA_RECOVERED", {"device": profile.device})
 
+    def _fixed_drift(self):
+        info = self.inspect(self.profile["device"])
+        actual = {c["name"]: c["value"] for c in info["controls"]}
+        expected = self.profile["controls"]
+        return {name: actual.get(name) for aliases, manual in FIXED_CAMERA_CONTROLS
+                for name in (*aliases, manual) if name in expected and actual.get(name) != expected[name]}
+
     def verify_fixed_controls(self):
-        """Check actual driver controls before a test capture; never silently correct drift."""
+        """Before a capture, put drifted focus and white balance back to the applied values.
+
+        The driver can reset them on its own (USB re-enumeration, capture reopen).
+        The restore is recorded; a capture is refused only when it does not stick.
+        """
         with self.lock:
             if not self.profile:
                 return
-            info = self.inspect(self.profile["device"])
-            actual = {c["name"]: c["value"] for c in info["controls"]}
-            expected = self.profile["controls"]
-            for aliases, manual in FIXED_CAMERA_CONTROLS:
-                for name in (*aliases, manual):
-                    if name in expected and actual.get(name) != expected[name]:
-                        raise Conflict("카메라 초점 또는 화이트밸런스가 적용값과 다릅니다. 실제 설정을 다시 읽고 적용하세요.")
+            drift = self._fixed_drift()
+            if not drift:
+                return
+            message = "카메라 초점 또는 화이트밸런스를 저장값으로 되돌리지 못했습니다."
+            profile = CameraProfile.model_validate(self.profile)
+            try:
+                if hasattr(self.backend, "apply_controls"):
+                    self.backend.apply_controls(profile)
+                else:
+                    self.apply(profile, persist=False, actor="camera-restore")
+            except Exception as exc:
+                raise Conflict(f"{message} {exc}") from exc
+            self.store.event("CAMERA_CONTROLS_RESTORED", {"device": profile.device, "drift": drift})
+            if self.profile and not self._fixed_drift():
+                return
+            raise Conflict(message)
 
     def after(self, minimum_ns, timeout):
         with self.lock:
@@ -606,4 +662,5 @@ class CameraManager:
 
     def close(self):
         with self.lock:
+            self.wanted = False
             self._close_stream()

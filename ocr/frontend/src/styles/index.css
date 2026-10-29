@@ -50,6 +50,8 @@
   }
   .btn:active { transform: scale(.98); }
   .btn:disabled { opacity: .35; pointer-events: none; }
+  /* The current choice stays readable while it cannot be pressed again. */
+  .btn[aria-pressed="true"]:disabled { opacity: 1; }
   .btn-primary { background: var(--color-brand-600); color: #fff; }
   .btn-primary:hover { background: var(--color-brand-700); }
   .btn-go { background: var(--color-ok); color: #fff; }

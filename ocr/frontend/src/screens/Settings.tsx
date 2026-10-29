@@ -1,17 +1,17 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Lock, Tags, SlidersHorizontal, Camera, Wrench, FileClock, Settings as Gear, Download, Power } from "lucide-react";
+import { Lock, Tags, SlidersHorizontal, FlaskConical, Cpu, FileClock, Settings as Gear, Download } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { api } from "../station/shared";
 import BrandSettings from "../components/BrandSettings";
 import WorkPresets from "../components/WorkPresets";
 import Statistics from "../components/Statistics";
-import { CameraView, useBench } from "../components/DeviceTests";
-import { DeviceSettingsPanels } from "../components/DeviceSettings";
-import Equipment from "./Equipment";
+import { useBench } from "../components/DeviceTests";
+import { WiringPanel } from "../components/DeviceSettings";
+import TestBench from "./TestBench";
+import { Equipment as EquipmentDetails } from "../station/StationApp";
 import { useApp } from "../lib/store";
-import { ended, refreshBrands, refreshEquipment, reportError } from "../lib/station";
-import { cameraChangeAllowed } from "../lib/jobs";
+import { ended, refreshBrands, reportError } from "../lib/station";
 import { Keypad, Notice } from "../ui/kit";
 
 export function LoginGate({ onOk }: { onOk: () => void }) {
@@ -98,24 +98,24 @@ export function LoginGate({ onOk }: { onOk: () => void }) {
 }
 
 const SECTIONS: { id: string; label: string; icon: LucideIcon }[] = [
+  { id: "test", label: "시험", icon: FlaskConical },
   { id: "brands", label: "브랜드", icon: Tags },
   { id: "presets", label: "계수 설정", icon: SlidersHorizontal },
-  { id: "camera", label: "카메라", icon: Camera },
-  { id: "devices", label: "장비", icon: Wrench },
   { id: "records", label: "기록", icon: FileClock },
+  { id: "devices", label: "장비 정보", icon: Cpu },
   { id: "general", label: "일반", icon: Gear },
 ];
-const DEVICE_TABS = ["sensors", "ocr", "rfid", "connections", "details"];
-const LEGACY: Record<string, string> = { general: "general", brands: "brands", presets: "presets", logs: "records", devices: "devices" };
+// Addresses of the old device, camera and tab screens open the matching place.
+const LEGACY: Record<string, string> = {
+  general: "general", brands: "brands", presets: "presets", logs: "records", camera: "test",
+  sensors: "test", ocr: "test", rfid: "test", connections: "devices", details: "devices",
+};
 
 export default function Settings() {
   const nav = useNavigate();
   const [params, setParams] = useSearchParams();
-  const legacy = params.get("tab") || "";
-  const section =
-    params.get("section") ||
-    (legacy === "camera" ? "camera" : DEVICE_TABS.includes(legacy) ? "devices" : LEGACY[legacy]) ||
-    "brands";
+  const requested = params.get("section") || LEGACY[params.get("tab") || ""] || "test";
+  const section = SECTIONS.some((x) => x.id === requested) ? requested : "test";
   const [authed, setAuthed] = useState<boolean | null>(null);
   const brands = useApp((s) => s.brands);
   const snapshot = useApp((s) => s.snapshot);
@@ -131,7 +131,7 @@ export default function Settings() {
       window.removeEventListener("txrx-login-required", expired);
     };
   }, []);
-  const go = (id: string) => setParams(id === "devices" ? { section: id, tab: "sensors" } : { section: id }, { replace: true });
+  const go = (id: string) => setParams({ section: id }, { replace: true });
   const lock = async () => {
     try {
       await api("/auth/logout", {});
@@ -177,9 +177,9 @@ export default function Settings() {
             {section === "brands" && (
               <BrandSettings brands={brands.map((b) => b.source)} refresh={async () => { await refreshBrands(); }} locked={!ended(snapshot?.session)} />
             )}
-            {section === "presets" && <WorkPresets />}
-            {section === "camera" && <CameraAdmin />}
-            {section === "devices" && <Equipment embedded />}
+            {section === "test" && <TestBench />}
+            {section === "presets" && <WorkPresets initialKind={params.get("kind") === "vision" ? "vision" : "simple"} />}
+            {section === "devices" && <Devices />}
             {section === "records" && <Records />}
             {section === "general" && <General />}
           </section>
@@ -189,37 +189,12 @@ export default function Settings() {
   );
 }
 
-function CameraAdmin() {
+function Devices() {
   const bench = useBench();
-  const snapshot = useApp((s) => s.snapshot);
-  const camera = bench.state?.camera;
-  const connected = camera?.connected === true;
-  const profile = camera?.profile;
-  const allowed = cameraChangeAllowed(snapshot) && !bench.busy && !bench.state?.native_busy && !bench.state?.runs?.motor;
-  const toggle = () =>
-    bench.action(async () => {
-      await api("/bench/camera/" + (connected ? "disconnect" : "connect"), {});
-      await refreshEquipment().catch(() => {});
-    });
   return (
     <div className="space-y-6">
-      <section className="card flex flex-wrap items-center gap-6 p-6">
-        <span className={"rounded-2xl px-6 py-3 text-[34px] font-black text-white " + (connected ? "bg-ok" : "bg-ink-500")}>
-          {connected ? "켜짐" : "꺼짐"}
-        </span>
-        {profile && (
-          <span className="text-[30px] font-extrabold tabular-nums">
-            {profile.width} × {profile.height}, {profile.fps}fps
-          </span>
-        )}
-        <button className={"btn btn-xl ml-auto " + (connected ? "btn-outline" : "btn-primary")} disabled={!allowed} onClick={toggle}>
-          <Power size={40} />
-          {connected ? "끄기" : "켜기"}
-        </button>
-      </section>
-      {(bench.error || camera?.error) && <Notice>{bench.error || camera?.error}</Notice>}
-      <CameraView connected={connected} />
-      <DeviceSettingsPanels bench={bench} tab="camera" />
+      <WiringPanel bench={bench} />
+      <EquipmentDetails action={async (fn) => { try { await fn(); } catch (e) { reportError(e); } }} role="operator" />
     </div>
   );
 }

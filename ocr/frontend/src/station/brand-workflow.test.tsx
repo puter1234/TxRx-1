@@ -125,6 +125,8 @@ it("keeps product edits while opening the same brand's timing settings and saves
         ...JSON.parse(options.body as string).preset,
         revision: 2,
       });
+    if (path === "/api/brands" && options?.method === "POST")
+      return response({ ...JSON.parse(options.body as string).brand, revision: 2 });
     return response([preset]);
   });
   vi.stubGlobal("fetch", fetcher);
@@ -145,10 +147,12 @@ it("keeps product edits while opening the same brand's timing settings and saves
     await user.clear(screen.getByLabelText(label));
     await user.type(screen.getByLabelText(label), value);
   }
-  await user.click(screen.getByRole("button", { name: "저장" }));
-  const call = fetcher.mock.calls.find(
+  // Settings save by themselves once the edits stop.
+  const posts = () => fetcher.mock.calls.filter(
     ([path, options]) => path === "/api/presets" && options?.method === "POST",
-  )!;
+  );
+  await waitFor(() => expect(posts()).toHaveLength(1), { timeout: 3000 });
+  const call = posts()[0];
   const saved = JSON.parse(call[1]!.body as string).preset;
   expect(saved.brand_id).toBe("brand");
   expect(saved.flow.capture_delay_ms).toBe(380);
@@ -306,8 +310,7 @@ it("uses the existing RFID field names when adding product options in Korean", a
     await user.type(screen.getByLabelText(`${label} 추가값`), value);
     await user.click(screen.getByRole("button", {name: `${label} 값 추가`}));
   }
-  await user.click(screen.getByRole("button", {name: "설정 저장"}));
-  expect(saved?.options.map(o => o.key)).toEqual(["style", "color", "size"]);
+  await waitFor(() => expect(saved?.options.map(o => o.key)).toEqual(["style", "color", "size"]), { timeout: 3000 });
 });
 
 it("waits for the initial released-sensor debounce before issuing one start", async () => {

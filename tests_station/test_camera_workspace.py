@@ -60,18 +60,55 @@ def test_preview_capture_and_reconnect_share_fixed_settings(rig):
     assert reconnected.json()["profile"]["controls"] == controls
 
 
-def test_capture_rejects_actual_control_drift_without_discarding_saved_profile(rig):
+def test_capture_puts_drifted_controls_back_without_touching_saved_profile(rig):
     c, app = rig
     app.state.camera.backend = AutomaticBackend()
     saved = copy.deepcopy(apply(c, app)["saved_profile"])
+    # The driver switched autofocus back on by itself.
     app.state.camera.backend.profile.controls["focus_auto"] = 1
-    for route in ("capture", "batch"):
-        result = c.post("/api/bench/camera/" + route, json={"count": 2} if route == "batch" else {})
-        assert result.status_code == 409, result.text
-        assert "화이트밸런스" in result.json()["detail"]
+    result = c.post("/api/bench/camera/capture", json={})
+    assert result.status_code == 200, result.text
+    assert app.state.camera.backend.profile.controls["focus_auto"] == 0
     assert app.state.store.get("usb_camera_profile") == saved
-    assert c.get("/api/bench/captures/latest").json() is None
+    restored = [e for e in app.state.store.events() if e["kind"] == "CAMERA_CONTROLS_RESTORED"]
+    assert len(restored) == 1 and restored[0]["body"]["drift"] == {"focus_auto": 1}
     assert not app.state.bench.native_busy
+
+
+def test_capture_refuses_when_drifted_controls_do_not_stick(rig):
+    c, app = rig
+    backend = AutomaticBackend()
+    app.state.camera.backend = backend
+    apply(c, app)
+    backend.profile.controls["focus_auto"] = 1
+    stuck = backend.apply
+    def ignores_focus(profile):
+        result = stuck(profile)
+        backend.profile.controls["focus_auto"] = 1
+        return result
+    backend.apply = ignores_focus
+    result = c.post("/api/bench/camera/capture", json={})
+    assert result.status_code == 409, result.text
+    assert "되돌리지 못했습니다" in result.json()["detail"]
+    assert c.get("/api/bench/captures/latest").json() is None
+
+
+def test_controls_reset_by_opening_the_capture_are_put_back(rig):
+    c, app = rig
+    camera = app.state.camera
+    class LiveBackend(AutomaticBackend):
+        def apply_controls(self, profile):
+            return self.apply(profile)
+    camera.backend = LiveBackend()
+    def reset_controls(profile):
+        stream = FakeStream(profile)
+        camera.backend.profile.controls["focus_auto"] = 1
+        return stream
+    camera.stream_factory = reset_controls
+    result = c.post("/api/bench/camera/apply", json={"profile": camera.backend.profile.model_dump(), "save": True})
+    assert result.status_code == 200, result.text
+    assert camera.backend.profile.controls["focus_auto"] == 0
+    assert camera.saved["controls"]["focus_auto"] == 0 and camera.status()["connected"]
 
 
 def test_driver_reset_after_open_is_not_reported_as_success(rig):
@@ -122,18 +159,19 @@ def test_camera_adjustment_never_bypasses_an_active_or_held_product(rig, phase, 
     assert c.post("/api/bench/close", json={}).status_code == 409
 
 
-def test_photo_and_ocr_can_run_with_motor_and_led_but_settings_cannot(rig):
+def test_photo_ocr_and_camera_settings_work_while_motor_and_led_run(rig):
     c, app = rig
     apply(c, app)
-    c.post("/api/bench/io/connect", json={})
     assert pulse(c, "motor", None).status_code == 200
     assert pulse(c, "led", None).status_code == 200
     before = {key: run["id"] for key, run in app.state.bench.runs.items()}
     assert c.post("/api/bench/camera/capture", json={}).status_code == 200
     app.state.vision.test_auto = lambda frame, **kwargs: {"ok": True, "reads": []}
     assert c.post("/api/bench/ocr/read", json={}).status_code == 200
-    assert c.post("/api/bench/camera/inspect", json={"device": "/dev/video0"}).status_code == 409
-    assert c.post("/api/bench/camera/disconnect", json={}).status_code == 409
+    assert c.post("/api/bench/camera/inspect", json={"device": "/dev/video0"}).status_code == 200
+    # Focus can be tuned while products move; the outputs keep running.
+    apply(c, app, {"focus_absolute": 33})
+    assert app.state.camera.saved["controls"]["focus_absolute"] == 33
     assert {key: run["id"] for key, run in app.state.bench.runs.items()} == before
     assert app.state.bench.io.motor and app.state.bench.io.led
     assert c.get("/api/history").json()["inspections"] == []
@@ -307,3 +345,68 @@ def test_camera_recovery_restores_current_profile_and_respects_manual_disconnect
     camera.recover(replacement)
     recovery.tick(105)
     assert camera.stream is None
+
+
+def test_saved_camera_comes_on_after_restart_and_retries_until_it_works(tmp_path):
+    import time
+    from fastapi.testclient import TestClient
+    from station.app import create_app
+    from station.bench import Bench
+    from tests_station.test_bench import FakeGPIO
+    first = create_app(tmp_path, bench_factory=lambda c, io, s: Bench(c, io, s, gpio_factory=FakeGPIO))
+    first.state.camera.backend, first.state.camera.stream_factory = FakeBackend(), FakeStream
+    with TestClient(first) as client:
+        client.post("/api/auth/setup", json={"password": "123456"})
+        apply(client, first)
+    app = create_app(tmp_path, bench_factory=lambda c, io, s: Bench(c, io, s, gpio_factory=FakeGPIO))
+    camera = app.state.camera
+    backend = FakeBackend()
+    absent = {"count": 2}
+    def unplugged(device):
+        if absent["count"]:
+            absent["count"] -= 1
+            raise ValueError("카메라 연결을 확인하세요.")
+        return FakeBackend.inspect(backend, device)
+    backend.inspect = unplugged
+    camera.backend, camera.stream_factory = backend, FakeStream
+    from station.camera_recovery import CameraRecovery
+    recovery = CameraRecovery(camera, interval=0.01, longest=0.02)
+    camera.wanted = bool(camera.saved)
+    deadline = time.monotonic() + 3
+    while not camera.status()["connected"] and time.monotonic() < deadline:
+        try:
+            recovery.tick(time.monotonic())
+        except ValueError:
+            pass
+        time.sleep(0.005)
+    assert camera.status()["connected"] and absent["count"] == 0
+    assert camera.profile["controls"] == camera.saved["controls"]
+    with TestClient(app):
+        pass
+
+
+def test_reconnecting_with_same_settings_keeps_the_revision(rig):
+    from station.camera_recovery import CameraRecovery
+    client, app = rig
+    result = apply(client, app)
+    camera = app.state.camera
+    camera.stream.closed = True
+    recovery = CameraRecovery(camera)
+    recovery.tick(100)
+    recovery.tick(102)
+    assert camera.status()["connected"]
+    assert camera.revision == result["revision"]
+    apply(client, app, {"focus_absolute": 20})
+    assert camera.saved["controls"]["focus_absolute"] == 20
+
+
+def test_explicit_off_stops_reconnecting(rig):
+    from station.camera_recovery import CameraRecovery
+    client, app = rig
+    apply(client, app)
+    camera = app.state.camera
+    assert client.post("/api/bench/camera/disconnect", json={}).status_code == 200
+    recovery = CameraRecovery(camera)
+    recovery.tick(100)
+    recovery.tick(200)
+    assert camera.stream is None and not camera.wanted
