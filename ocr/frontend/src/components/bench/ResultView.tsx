@@ -88,7 +88,7 @@ function ReadDetails({ report }: { report: Record<string, any> }) {
           .filter(([, v]) => typeof v === "number").map(([name, v]) => `${name} ${ms(v)}`).join(", ")}</p>
       )}
       {report.ocr_device && <p>{String(report.ocr_device).startsWith("cuda") ? `OCR GPU 사용: ${report.ocr_gpu_name || report.ocr_device}` : "OCR CPU 사용 중"}</p>}
-      <LocationSummary diagnostics={diagnostics} />
+      {diagnostics?.stages && <LocationSummary diagnostics={diagnostics} />}
       {!!diagnostics?.stages?.length && (
         <table className="w-full text-left">
           <thead><tr><th>단계</th><th>위치 후보</th><th>위치 검출</th></tr></thead>

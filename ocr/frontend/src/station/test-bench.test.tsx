@@ -5,6 +5,7 @@ import TestBench from "../screens/TestBench";
 import ProcessTest from "../components/bench/ProcessTest";
 import { WiringPanel } from "../components/DeviceSettings";
 import CameraBox from "../ui/CameraBox";
+import ResultView from "../components/bench/ResultView";
 import { useApp } from "../lib/store";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
@@ -310,6 +311,15 @@ it("keeps quiet about a stop the user asked for, reports one the test made, and 
   }));
   pipeline.stop_reason = "화면 연결 끊김";
   expect((await screen.findByRole("alert")).textContent).toBe("화면 연결 끊김");
+});
+
+it("opens a product photo whose reading has no location details", () => {
+  const url = "/api/bench/pipeline/frames/job1/42";
+  render(<ResultView shown={{ title: "1번 제품, 1번 사진", url, diagnostics: {} as any, lines: [{ text: "AB12" }],
+    report: { after_trigger_ms: 112.4, error: null, reads: [], barcode_diagnostics: {} } }} />);
+  expect(screen.getByText("AB12")).toBeTruthy();
+  expect(screen.getByText("감지 후 112 ms")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "판독 정보 저장" })).toBeTruthy();
 });
 
 it("lists the documented wiring without choices and saves another board's choices by themselves", async () => {
