@@ -35,7 +35,7 @@ it("does not show the previous date range or allow CSV for reversed dates", asyn
   fireEvent.change(screen.getByLabelText("시작일"), { target: { value: "2099-01-01" } });
   expect(screen.queryByText("첫 조회 결과")).toBeNull();
   expect(screen.getByText("CSV 내보내기").hasAttribute("href")).toBe(false);
-  expect(screen.getByText("시작일과 종료일을 확인하세요.")).toBeTruthy();
+  expect(screen.getByText("기간 확인")).toBeTruthy();
 });
 
 it("ignores a failed old request after a newer filter has succeeded", async () => {

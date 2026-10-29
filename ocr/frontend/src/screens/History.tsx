@@ -1,21 +1,97 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft, FolderOpen, RefreshCw } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { RotateCcw, ListChecks } from "lucide-react";
+import { api, errorText, type Result, type Session } from "../station/shared";
 import { useApp } from "../lib/store";
-import { api } from "../lib/api";
-import type { Job } from "../lib/types";
-import { api as request, ResultCard, type Result } from "../station/shared";
-import { reportError } from "../lib/station";
-import Modal from "../components/Modal";
-import Statistics from "../components/Statistics";
+import { ended, reportError } from "../lib/station";
+import { jobTitle, useRedo } from "../lib/jobs";
+import { optionColorStyle } from "../lib/optionColors";
+import { Screen, Sheet } from "../ui/kit";
 
-function InspectionHistory({
-  job,
-  onClose,
-}: {
-  job: Job;
-  onClose: () => void;
-}) {
+const PAGE = 100;
+const day = (iso: string) => new Date(iso).toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" });
+const time = (iso: string) =>
+  new Date(iso).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+
+export default function History() {
+  const nav = useNavigate();
+  const again = useRedo();
+  const active = !ended(useApp((s) => s.snapshot?.session));
+  const [rows, setRows] = useState<Session[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [more, setMore] = useState(false);
+  const [selected, setSelected] = useState<Session | null>(null);
+
+  const load = async (offset: number) => {
+    setLoading(true);
+    try {
+      const page = await api<{ sessions: Session[] }>("/history?offset=" + offset);
+      setRows((old) => (offset ? [...old, ...page.sessions] : page.sessions));
+      setMore(page.sessions.length === PAGE);
+    } catch (e) {
+      reportError(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    void load(0);
+  }, []);
+
+  let lastDay = "";
+  return (
+    <Screen title="작업 기록" onBack={() => nav("/")}>
+      <div className="space-y-4">
+        {rows.map((s) => {
+          const heading = day(s.created_at) !== lastDay ? (lastDay = day(s.created_at)) : null;
+          return (
+            <div key={s.id}>
+              {heading && <h2 className="mb-3 mt-6 text-[32px] font-black">{heading}</h2>}
+              <article className="card flex items-center gap-8 p-6">
+                <span className="w-40 shrink-0 text-[36px] font-black tabular-nums">{time(s.created_at)}</span>
+                <div className="min-w-0 flex-1 space-y-2">
+                  <p className="truncate text-[36px] font-black">{jobTitle(s)}</p>
+                  {s.recipe.kind !== "simple" && s.recipe.kind !== "vision" && (
+                    <div className="flex flex-wrap gap-3">
+                      {s.brand.options.map((o) => (
+                        <span key={o.key} className="rounded-xl border-2 border-ink-700 px-4 py-1 text-[26px] font-extrabold"
+                          style={optionColorStyle(o, s.recipe.targets[o.key])}>
+                          {s.recipe.targets[o.key]}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <span className="shrink-0 text-[48px] font-black tabular-nums">
+                  {s.count}
+                  <span className="text-[32px] text-ink-700">개</span>
+                </span>
+                <button className="btn btn-outline btn-lg" onClick={() => setSelected(s)}>
+                  <ListChecks size={34} />
+                  검사 내역
+                </button>
+                <button className="btn btn-primary btn-lg" disabled={active} onClick={() => again(s)}>
+                  <RotateCcw size={34} />
+                  다시 하기
+                </button>
+              </article>
+            </div>
+          );
+        })}
+        {!loading && !rows.length && <p className="py-16 text-center text-[40px] font-black text-ink-700">기록 없음</p>}
+        {loading && <p role="status" className="py-8 text-center text-[32px] font-extrabold">불러오는 중</p>}
+        {more && !loading && (
+          <button className="btn btn-outline btn-lg w-full" onClick={() => load(rows.length)}>
+            더 보기
+          </button>
+        )}
+      </div>
+      {selected && <Inspections session={selected} onClose={() => setSelected(null)} />}
+    </Screen>
+  );
+}
+
+function Inspections({ session, onClose }: { session: Session; onClose: () => void }) {
   const [rows, setRows] = useState<Result[]>([]);
   const [offset, setOffset] = useState(0);
   const [more, setMore] = useState(false);
@@ -23,256 +99,60 @@ function InspectionHistory({
   useEffect(() => {
     let alive = true;
     setBusy(true);
-    request<{ inspections: Result[] }>(
-      `/history?session_id=${encodeURIComponent(job.id)}&offset=${offset}`,
-    )
+    api<{ inspections: Result[] }>(`/history?session_id=${encodeURIComponent(session.id)}&offset=${offset}`)
       .then((r) => {
-        if (alive) {
-          setRows((old) =>
-            offset ? [...old, ...r.inspections] : r.inspections,
-          );
-          setMore(r.inspections.length === 100);
-        }
+        if (!alive) return;
+        setRows((old) => (offset ? [...old, ...r.inspections] : r.inspections));
+        setMore(r.inspections.length === PAGE);
       })
       .catch(reportError)
-      .finally(() => {
-        if (alive) setBusy(false);
-      });
+      .finally(() => alive && setBusy(false));
     return () => {
       alive = false;
     };
-  }, [job.id, offset]);
+  }, [session.id, offset]);
+  const label = (key: string) => session.brand.options.find((o) => o.key === key)?.label || key;
   return (
-    <Modal title="검사 기록" width="max-w-4xl" onClose={onClose}>
+    <Sheet title={`${jobTitle(session)} 검사`} onClose={onClose} wide>
       <div className="space-y-4">
-        {rows.map((row) => (
-          <div key={row.id}>
-            <p className="mb-2 text-lg font-bold">
-              {new Date(row.created_at).toLocaleString("ko-KR")}
-            </p>
-            <ResultCard result={row} />
-          </div>
-        ))}
-        {!busy && !rows.length && (
-          <p className="py-6 text-lg font-bold">검사 기록 없음</p>
-        )}
-        {busy && (
-          <p role="status" className="text-lg font-bold">
-            불러오는 중
-          </p>
-        )}
-        {more && (
-          <button
-            className="btn btn-outline w-full"
-            disabled={busy}
-            onClick={() => setOffset(rows.length)}
-          >
-            검사 기록 더 보기
+        {rows.map((r) => {
+          const pass = r.status === "PASS";
+          const read = Object.values(r.observations || {}).reduce((all, fields) => ({ ...all, ...fields }), {} as Record<string, string>);
+          const order = session.brand.options.map((o) => o.key);
+          const keys = Object.keys(read).sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99));
+          return (
+            <article key={r.id} className={"flex gap-6 rounded-2xl border-4 p-5 " + (pass ? "border-ok" : "border-danger")}>
+              {r.evidence?.url && <img src={r.evidence.url} alt="검사 사진" className="h-40 w-56 shrink-0 rounded-xl bg-ink-900 object-contain" />}
+              <div className="min-w-0 flex-1 space-y-2">
+                <div className="flex items-center gap-4">
+                  <span className={"rounded-xl px-4 py-1 text-[30px] font-black text-white " + (pass ? "bg-ok" : r.status === "FAIL" ? "bg-danger" : "bg-ink-500")}>
+                    {pass ? "합격" : r.status === "FAIL" ? "불합격" : "중단"}
+                  </span>
+                  <span className="text-[30px] font-extrabold tabular-nums">{time(r.created_at)}</span>
+                </div>
+                {!!Object.keys(read).length && (
+                  <p className="text-[28px] font-extrabold">
+                    {keys.map((k) => `${label(k)} ${read[k]}`).join("   ")}
+                  </p>
+                )}
+                {r.failures.map((f, i) => (
+                  <p key={i} className="text-[28px] font-extrabold text-danger">
+                    {errorText(f.code)}
+                    {f.field ? `  ${label(f.field)} 목표 ${f.expected ?? ""} 읽음 ${f.actual ?? "없음"}` : ""}
+                  </p>
+                ))}
+              </div>
+            </article>
+          );
+        })}
+        {!busy && !rows.length && <p className="py-8 text-center text-[32px] font-black text-ink-700">검사 기록 없음</p>}
+        {busy && <p role="status" className="text-[28px] font-extrabold">불러오는 중</p>}
+        {more && !busy && (
+          <button className="btn btn-outline btn-lg w-full" onClick={() => setOffset(rows.length)}>
+            더 보기
           </button>
         )}
       </div>
-    </Modal>
-  );
-}
-
-export default function History() {
-  const nav = useNavigate();
-  const [params] = useSearchParams();
-  const loadMode = params.get("load") === "1";
-  const setW = useApp((s) => s.setWizard);
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [more, setMore] = useState(false);
-  const [selected, setSelected] = useState<Job | null>(null);
-
-  const refresh = () => {
-    setLoading(true);
-    api<Job[]>("/api/jobs")
-      .then((rows) => {
-        setJobs(rows);
-        setMore(rows.length === 100);
-      })
-      .catch(reportError)
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(refresh, []);
-
-  const loadMore = async () => {
-    if (loading) return;
-    setLoading(true);
-    try {
-      const rows = await api<Job[]>(`/api/jobs?offset=${jobs.length}`);
-      setJobs((old) => [...old, ...rows]);
-      setMore(rows.length === 100);
-    } catch (e) {
-      reportError(e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadJob = (job: Job) => {
-    const cfg = job.config;
-    if (job.mode === "condition" && cfg) {
-      setW({
-        step: 3,
-        presetId: cfg.presetId || "",
-        testRun: cfg.testRun || false,
-        brandId: cfg.brandId ?? null,
-        checks: cfg.checks ?? { rfid: false, ocr: false, barcode_tag: false, barcode_poly: false },
-        countMode: cfg.countMode ?? "target",
-        target: cfg.target ?? 40,
-        sku: cfg.item?.sku ?? "",
-        color: cfg.item?.color ?? "",
-        size: cfg.item?.size ?? "",
-        targets: cfg.targets || { style: cfg.item?.sku || "", color: cfg.item?.color || "", size: cfg.item?.size || "" },
-      });
-      nav("/condition/setup");
-    } else {
-      nav(job.mode === "vision" ? "/vision" : "/simple", {
-        state: { presetId: cfg?.presetId, targets: cfg?.targets || {}, target: cfg?.target || null, testRun: cfg?.testRun || false },
-      });
-    }
-  };
-
-  return (
-    <div className="flex h-full flex-col">
-      <div className="flex shrink-0 items-center gap-4 px-6 pt-5">
-        <button className="btn btn-outline btn-sm" onClick={() => nav("/")}>
-          <ArrowLeft size={20} /> 처음 화면
-        </button>
-        <h1 className="text-2xl font-extrabold">
-          {loadMode ? "이전 작업 불러오기" : "작업 기록"}
-        </h1>
-        <button
-          className="btn btn-outline btn-sm ml-auto"
-          disabled={loading}
-          onClick={refresh}
-        >
-          <RefreshCw size={18} /> 새로고침
-        </button>
-      </div>
-
-      <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-6">
-        <Statistics />
-        <div className="mx-auto max-w-6xl space-y-4">
-          <div className="card overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b-2 border-line bg-panel text-left">
-                  <th className="px-5 py-3.5 text-base font-extrabold">날짜</th>
-                  <th className="px-4 py-3.5 text-base font-extrabold">시각</th>
-                  <th className="px-4 py-3.5 text-base font-extrabold">방식</th>
-                  <th className="px-4 py-3.5 text-base font-extrabold">
-                    브랜드
-                  </th>
-                  <th className="px-4 py-3.5 text-base font-extrabold">품번</th>
-                  <th className="px-4 py-3.5 text-right text-base font-extrabold">
-                    수량
-                  </th>
-                  <th className="px-4 py-3.5 text-base font-extrabold">
-                    저장 위치
-                  </th>
-                  <th className="px-4 py-3.5" />
-                </tr>
-              </thead>
-              <tbody>
-                {loading && (
-                  <tr>
-                    <td
-                      colSpan={8}
-                      className="px-5 py-10 text-center text-lg font-semibold text-ink-700"
-                    >
-                      불러오는 중…
-                    </td>
-                  </tr>
-                )}
-                {!loading && jobs.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={8}
-                      className="px-5 py-10 text-center text-lg font-semibold text-ink-700"
-                    >
-                      저장된 작업이 없습니다
-                    </td>
-                  </tr>
-                )}
-                {jobs.map((job) => (
-                  <tr
-                    key={job.id}
-                    className="border-b border-line last:border-b-0 hover:bg-panel/60"
-                  >
-                    <td className="px-5 py-3.5 text-base font-bold tabular-nums">
-                      {job.date}
-                    </td>
-                    <td className="px-4 py-3.5 text-base font-semibold tabular-nums">
-                      {job.time}
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <span
-                        className={
-                          "rounded-md px-2.5 py-1 text-lg font-bold " +
-                          (job.mode === "condition"
-                            ? "bg-brand-50 text-brand-700"
-                            : "bg-panel text-ink-700")
-                        }
-                      >
-                        {{ condition: "조건 계수", simple: "단순 계수", vision: "와펜 계수" }[job.mode]}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3.5 text-base font-bold">
-                      {job.config?.brandName ?? "없음"}
-                    </td>
-                    <td className="px-4 py-3.5 text-base font-semibold">
-                      {job.config?.item?.sku || "없음"}
-                    </td>
-                    <td className="px-4 py-3.5 text-right text-lg font-extrabold tabular-nums">
-                      {job.count}개
-                    </td>
-                    <td
-                      className="max-w-[220px] truncate px-4 py-3.5 text-lg font-semibold text-ink-700"
-                      title={job.dir}
-                    >
-                      {job.dir}
-                    </td>
-                    <td className="px-4 py-3.5 text-right">
-                      <button
-                        className="btn btn-outline btn-sm mb-2"
-                        onClick={() => setSelected(job)}
-                      >
-                        검사 기록
-                      </button>
-                      <button
-                        className="btn btn-outline btn-sm"
-                        onClick={() => loadJob(job)}
-                      >
-                        <FolderOpen size={18} /> 불러오기
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {more && (
-            <button
-              className="btn btn-outline w-full"
-              disabled={loading}
-              onClick={loadMore}
-            >
-              작업 더 보기
-            </button>
-          )}
-        </div>
-      </div>
-      {selected && (
-        <InspectionHistory
-          key={selected.id}
-          job={selected}
-          onClose={() => setSelected(null)}
-        />
-      )}
-    </div>
+    </Sheet>
   );
 }

@@ -42,7 +42,6 @@ export default function Config({
         : empty();
     }),
     [existing, setExisting] = useState(!!initialBrand),
-    [advanced, setAdvanced] = useState(!initialBrand?.options.length),
     [key, setKey] = useState("option_" + uuid().slice(0, 8)),
     [label, setLabel] = useState(""),
     [reason, setReason] = useState(embedded ? "브랜드 상품 설정 변경" : "");
@@ -79,25 +78,24 @@ export default function Config({
     if (!file) return;
     action(async () => {
       if (file.size > 8 * 1024 * 1024)
-        throw new Error("설정 파일은 8MB 이하여야 합니다.");
+        throw new Error("파일 크기 8MB 초과");
       const parsed = await api<Brand>(
         "/brands/validate",
         JSON.parse(await file.text()),
       );
       setDraft(parsed);
       setExisting(brands.some((b) => b.id === parsed.id));
-    }, "파일을 불러왔습니다. 내용을 확인한 후 저장하세요.");
+    }, "불러옴, 저장 전");
   };
   return (
     <div
       className={
-        "settings-compact brand-product-settings " +
-        (embedded ? "space-y-5" : "grid gap-5 xl:grid-cols-[250px_1fr]")
+        embedded ? "space-y-5" : "grid gap-5 xl:grid-cols-[250px_1fr]"
       }
     >
       {!embedded && (
         <aside className="card space-y-3 self-start p-5">
-          <h2 className="text-base font-semibold">브랜드 설정</h2>
+          <h2 className="text-[28px] font-black">브랜드 설정</h2>
           {brands.map((b) => (
             <button
               className={
@@ -138,8 +136,8 @@ export default function Config({
       )}
       <div className="space-y-4">
         {locked && (
-          <p role="alert" className="rounded-md bg-warn-bg p-3">
-            작업 종료 후 설정을 저장하세요.
+          <p role="alert" className="rounded-2xl bg-warn-bg p-5 text-[26px] font-extrabold">
+            작업 진행 중
           </p>
         )}
         {!embedded && (
@@ -151,8 +149,8 @@ export default function Config({
             />
           </Field>
         )}
-        <fieldset disabled={role !== "admin"} className="card p-6">
-          <div className="mb-2 flex justify-end">
+        <fieldset disabled={role !== "admin"} className="card relative p-6">
+          <div className="sticky top-0 z-10 -mx-6 -mt-6 mb-4 flex justify-end rounded-t-[1.25rem] border-b-2 border-line bg-white px-6 py-4">
             <button
               className="btn btn-primary"
               disabled={
@@ -172,10 +170,10 @@ export default function Config({
                   setDraft(updated);
                   setExisting(true);
                   await refresh();
-                }, "브랜드 설정을 저장했습니다.")
+                }, "저장됨")
               }
             >
-              <Save size={20} />
+              <Save size={28} />
               설정 저장
             </button>
           </div>
@@ -183,9 +181,9 @@ export default function Config({
             {draft.options.map((o, i) => (
               <section
                 key={`${draft.id}:${o.key}`}
-                className="grid gap-3 py-5 sm:grid-cols-[100px_minmax(0,1fr)]"
+                className="grid gap-4 py-6 sm:grid-cols-[160px_minmax(0,1fr)]"
               >
-                <h3 className="pt-2 text-lg font-semibold">{o.label}</h3>
+                <h3 className="pt-3 text-[28px] font-black">{o.label}</h3>
                 <OptionValues
                   option={o}
                   onChange={(patch) => option(i, patch)}
@@ -193,15 +191,8 @@ export default function Config({
               </section>
             ))}
           </div>
-          <details
-            className="mt-3 border-t border-line pt-4"
-            open={advanced}
-            onToggle={(e) => setAdvanced(e.currentTarget.open)}
-          >
-            <summary className="w-fit cursor-pointer py-2 text-sm text-ink-500">
-              추가 설정
-            </summary>
-            <div className="mt-5 space-y-6">
+          <div className="mt-4 border-t-2 border-line pt-6">
+            <div className="space-y-8">
               <div className="grid gap-4 md:grid-cols-2">
                 <Field label="브랜드 이름">
                   <input
@@ -216,12 +207,12 @@ export default function Config({
               <div className="grid gap-6 lg:grid-cols-3">
                 {draft.options.map((o, i) => (
                   <div className="min-w-0 self-start" key={o.key}>
-                    <div className="mb-1 flex items-center justify-between gap-3 border-b border-line pb-1">
-                      <strong className="text-base font-medium">
+                    <div className="mb-1 flex items-center justify-between gap-3 border-b-2 border-line pb-2">
+                      <strong className="text-[24px] font-black">
                         {o.label}
                       </strong>
                       <button
-                        className="btn btn-quiet btn-sm"
+                        className="btn btn-outline btn-sm text-danger"
                         onClick={() =>
                           setDraft({
                             ...draft,
@@ -243,10 +234,10 @@ export default function Config({
                           onChange={(e) => option(i, { label: e.target.value })}
                         />
                       </Field>
-                      <label className="mt-3 flex items-center gap-2 text-sm">
+                      <label className="mt-3 flex items-center gap-3 text-xl font-bold">
                         <input
                           type="checkbox"
-                          className="h-5 w-5 accent-brand-600"
+                          className="h-8 w-8 accent-brand-600"
                           checked={isColorOption(o)}
                           onChange={(e) =>
                             option(i, {
@@ -292,7 +283,7 @@ export default function Config({
                 </button>
               </div>
               <div className="space-y-4 border-t border-line pt-5">
-                <h3 className="text-base font-semibold">RFID 설정</h3>
+                <h3 className="text-[28px] font-black">RFID 설정</h3>
                 <Field label="RFID 해독 방식">
                   <select
                     className="field"
@@ -340,7 +331,7 @@ export default function Config({
                       action(async () => {
                         if (
                           !window.confirm(
-                            `${draft.name} 설정을 삭제할까요? 검사 이력은 보존됩니다.`,
+                            `${draft.name} 설정을 삭제할까요?`,
                           )
                         )
                           return;
@@ -361,7 +352,7 @@ export default function Config({
                 )}
               </div>
             </div>
-          </details>
+          </div>
         </fieldset>
       </div>
     </div>

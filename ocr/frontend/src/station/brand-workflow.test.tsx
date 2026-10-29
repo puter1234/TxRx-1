@@ -186,11 +186,11 @@ it("shows counting settings by function without mixing saved names with action b
     </MemoryRouter>,
   );
   expect(
-    await screen.findByRole("heading", { name: "단순 계수 설정" }),
+    await screen.findByRole("heading", { name: "옷 계수 설정" }),
   ).toBeTruthy();
   expect(screen.queryByRole("button", { name: "새 작업" })).toBeNull();
   expect(screen.queryByRole("button", { name: "카메라 테스트" })).toBeNull();
-  await user.click(screen.getByRole("tab", { name: "와펜 계수" }));
+  await user.click(screen.getByRole("tab", { name: "와펜" }));
   expect(await screen.findByLabelText("계수 방법")).toBeTruthy();
   expect(screen.queryByLabelText("기능")).toBeNull();
 });
@@ -231,18 +231,18 @@ it("starts the chosen brand with its saved timing and selected checks in one act
   });
   vi.stubGlobal("fetch", fetcher);
   render(
-    <MemoryRouter initialEntries={["/condition/setup"]}>
+    <MemoryRouter initialEntries={["/condition"]}>
       <App />
     </MemoryRouter>,
   );
   await user.click(await screen.findByRole("button", { name: "브랜드 A" }));
-  await user.click(screen.getByRole("button", { name: "OCR 문자 인식" }));
-  await user.click(screen.getByRole("button", { name: "바코드" }));
-  await user.click(screen.getByRole("button", { name: "다음: 수량 설정" }));
-  await user.click(screen.getByRole("button", { name: "다음: 조건 설정" }));
   await user.click(screen.getByRole("button", { name: "095" }));
-  await user.click(screen.getByRole("button", { name: "검사 시작" }));
-  await screen.findByRole("heading", { name: "조건 계수 브랜드 A" });
+  for (const check of ["문자", "가격택 바코드", "폴리백 바코드"])
+    await user.click(screen.getByRole("button", { name: check }));
+  // The last remaining check cannot be switched off.
+  expect(screen.getByRole("button", { name: "RFID" })).toHaveProperty("disabled", true);
+  await user.click(screen.getByRole("button", { name: "시작" }));
+  await screen.findByRole("heading", { name: "브랜드 A 조건 계수" });
   const call = fetcher.mock.calls.find(
     ([path]) => path === "/api/presets/brand-work/start",
   )!;

@@ -185,7 +185,7 @@ export async function sendCommand(name: string, reason = "", delta?: number) {
     s = state?.session;
   if (!s) {
     if (name === "stop" && active.has("create")) return;
-    throw new Error("진행 중인 작업이 없습니다.");
+    throw new Error("진행 중인 작업 없음");
   }
   const key = name;
   if (active.has(key)) return;
@@ -240,7 +240,7 @@ export async function sendCommand(name: string, reason = "", delta?: number) {
 export async function startSession(config: SessionConfig, run = false) {
   if (active.has("create")) return;
   if (!ended(useApp.getState().snapshot?.session))
-    throw new Error("진행 중인 작업을 먼저 종료하세요.");
+    throw new Error("진행 중인 작업 있음");
   let recipe: Recipe | undefined;
   let path = "/sessions";
   let body: unknown;
@@ -249,7 +249,7 @@ export async function startSession(config: SessionConfig, run = false) {
     (config.checks?.barcode_tag || config.checks?.barcode_poly) && "barcode"].filter(Boolean) as string[];
   const barcodeTargets = [config.checks?.barcode_tag && "tag", config.checks?.barcode_poly && "poly"].filter(Boolean) as ("tag" | "poly")[];
   if (config.presetId) {
-    if (!config.presetRevision) throw new Error("작업 설정을 다시 선택하세요.");
+    if (!config.presetRevision) throw new Error("작업 설정 다시 선택");
     const brand = useApp.getState().brands.find((b) => b.id === config.brandId)?.source;
     path = `/presets/${encodeURIComponent(config.presetId)}/start`;
     body = {
@@ -261,7 +261,7 @@ export async function startSession(config: SessionConfig, run = false) {
       ...(config.mode === "condition" && config.checks ? { channels, barcode_targets: barcodeTargets } : {}),
     };
   } else {
-  if (config.mode === "vision") throw new Error("와펜 계수 작업을 선택하세요.");
+  if (config.mode === "vision") throw new Error("와펜 계수 설정 없음");
   if (config.mode === "simple") {
     recipe = {
       kind: "simple",
@@ -278,7 +278,7 @@ export async function startSession(config: SessionConfig, run = false) {
     const b = useApp
       .getState()
       .brands.find((b) => b.id === config.brandId)?.source;
-    if (!b) throw new Error("브랜드를 선택하세요.");
+    if (!b) throw new Error("브랜드 선택 필요");
     recipe = {
       kind: "condition",
       brand_id: b.id,

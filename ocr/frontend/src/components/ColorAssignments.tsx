@@ -1,6 +1,5 @@
 import { useState } from "react";
 import Modal from "./Modal";
-import Help from "./Help";
 import type { Option } from "../station/shared";
 import { colorInk, validColor, optionColorStyle } from "../lib/optionColors";
 
@@ -42,7 +41,7 @@ export default function ColorAssignments({
     <div className={onlyCode === undefined ? "mt-4" : ""}>
       {onlyCode === undefined && <div className="mb-3 flex items-center">
         <h4 className="text-lg font-extrabold">코드별 색상</h4>
-        <Help text="코드 버튼을 눌러 실제 색상을 지정하세요. 작업 화면의 버튼에 반영됩니다. 판정에는 원래 코드를 사용합니다." />
+
       </div>}
       <div className={onlyCode === undefined ? "flex max-h-80 flex-wrap gap-3 overflow-y-auto p-1" : "flex p-1"}>
         {codes.map((v) => (
@@ -76,7 +75,7 @@ export default function ColorAssignments({
               <button
                 type="button"
                 key={hex}
-                className="min-h-12 rounded-md border border-line px-3 text-base font-medium"
+                className="min-h-20 rounded-2xl border-2 border-ink-500 px-3 text-2xl font-extrabold"
                 style={{ backgroundColor: hex, color: colorInk(hex) }}
                 onClick={() => assign(hex)}
               >
@@ -85,11 +84,11 @@ export default function ColorAssignments({
             ))}
           </div>
           <div className="mt-6 flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-3 text-sm font-medium">
+            <label className="flex items-center gap-3 text-xl font-extrabold">
               직접 지정
               <input
                 aria-label={code + " 직접 색상"}
-                className="h-11 w-14 cursor-pointer rounded-md border border-line bg-white p-1"
+                className="h-16 w-20 cursor-pointer rounded-xl border-2 border-ink-500 bg-white p-1"
                 type="color"
                 value={validColor(custom) ? custom : "#FFFFFF"}
                 onChange={(e) => setCustom(e.target.value.toUpperCase())}

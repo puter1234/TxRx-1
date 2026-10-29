@@ -34,7 +34,7 @@
     font-family: var(--font-sans);
     background: var(--color-panel);
     color: var(--color-ink-900);
-    font-size: 16px;
+    font-size: 18px;
     -webkit-font-smoothing: antialiased;
   }
   input, button, select { font-family: inherit; }
@@ -42,73 +42,77 @@
 
 @layer components {
   .btn {
-    display: inline-flex; align-items: center; justify-content: center; gap: .5rem;
-    border-radius: .9rem; font-weight: 700; min-height: 56px; padding: 0 1.3rem;
-    font-size: 1.05rem; user-select: none; cursor: pointer;
-    border: 2px solid transparent;
+    display: inline-flex; align-items: center; justify-content: center; gap: .6rem;
+    border-radius: 1rem; font-weight: 800; min-height: 64px; padding: 0 1.5rem;
+    font-size: 1.3rem; line-height: 1.2; user-select: none; cursor: pointer;
+    border: 2px solid transparent; text-align: center;
     transition: transform .05s, background-color .15s, border-color .15s, color .15s;
   }
   .btn:active { transform: scale(.98); }
-  .btn:disabled { opacity: .4; pointer-events: none; }
+  .btn:disabled { opacity: .35; pointer-events: none; }
   .btn-primary { background: var(--color-brand-600); color: #fff; }
   .btn-primary:hover { background: var(--color-brand-700); }
-  .btn-outline { background: #fff; color: var(--color-ink-900); border-color: var(--color-line); }
-  .btn-outline:hover { border-color: var(--color-brand-500); color: var(--color-brand-700); }
+  .btn-go { background: var(--color-ok); color: #fff; }
+  .btn-go:hover { background: #0d7a40; }
+  .btn-outline { background: #fff; color: var(--color-ink-900); border-color: var(--color-ink-500); }
+  .btn-outline:hover { border-color: var(--color-brand-600); color: var(--color-brand-700); }
   .btn-danger { background: var(--color-danger); color: #fff; }
   .btn-danger:hover { background: #b91c1c; }
-  .btn-warn { background: var(--color-warn); color: #fff; }
-  .btn-lg { min-height: 64px; font-size: 1.15rem; padding: 0 1.6rem; }
-  .btn-sm { min-height: 48px; font-size: 1rem; padding: 0 1rem; }
+  .btn-warn { background: var(--color-warn); color: var(--color-ink-900); }
+  .btn-quiet { background: transparent; color: var(--color-ink-900); }
+  .btn-quiet:hover { background: var(--color-panel); }
+  .btn-lg { min-height: 84px; font-size: 1.75rem; padding: 0 2rem; border-radius: 1.25rem; }
+  .btn-xl { min-height: 116px; font-size: 2.4rem; padding: 0 2.5rem; border-radius: 1.5rem; }
+  .btn-sm { min-height: 56px; font-size: 1.15rem; padding: 0 1.1rem; }
+  .btn svg { flex-shrink: 0; }
 
-  .card { background: #fff; border: 1px solid var(--color-line); border-radius: 1.1rem; }
+  .card { background: #fff; border: 1px solid var(--color-line); border-radius: 1.25rem; }
 
   .field {
-    width: 100%; min-height: 56px; padding: 0 1rem; font-size: 1.1rem; font-weight: 600;
-    background: #fff; border: 2px solid var(--color-line); border-radius: .8rem; outline: none;
+    width: 100%; min-height: 64px; padding: 0 1.1rem; font-size: 1.3rem; font-weight: 700;
+    background: #fff; border: 2px solid var(--color-ink-500); border-radius: .9rem; outline: none;
+    color: var(--color-ink-900);
   }
-  .field:focus { border-color: var(--color-brand-500); }
+  .field:focus { border-color: var(--color-brand-600); box-shadow: 0 0 0 3px var(--color-brand-100); }
 
-  .settings-compact .btn {
-    min-height: 44px; padding: 0 .85rem; border-width: 1px;
-    border-radius: 6px; font-size: 15px; font-weight: 500;
+  .tile {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.25rem;
+    background: #fff; border: 3px solid var(--color-line); border-radius: 2rem; cursor: pointer;
+    color: var(--color-ink-900); transition: border-color .15s, background-color .15s, transform .05s;
   }
-  .settings-compact .btn svg { width: 16px; height: 16px; stroke-width: 1.75; }
-  .settings-compact .btn-quiet { background: transparent; color: var(--color-ink-500); }
-  .settings-compact .btn-quiet:hover { background: var(--color-panel); color: var(--color-ink-900); }
-  .settings-compact .field {
-    min-height: 44px; padding-inline: .75rem; border-width: 1px;
-    border-radius: 6px; font-size: 15px; font-weight: 400;
+  .tile:hover { border-color: var(--color-brand-500); }
+  .tile:active { transform: scale(.99); }
+  .tile[aria-pressed="true"] { border-color: var(--color-brand-700); background: var(--color-brand-50); }
+  .tile:disabled { opacity: .45; pointer-events: none; }
+
+  .choice {
+    display: inline-flex; align-items: center; justify-content: center; gap: .75rem;
+    min-height: 96px; min-width: 150px; padding: .75rem 1.75rem; border-radius: 1.25rem;
+    border: 3px solid var(--color-ink-500); background: #fff; color: var(--color-ink-900);
+    font-size: 2rem; font-weight: 800; overflow-wrap: anywhere; cursor: pointer;
   }
-  .settings-compact .card { border-radius: 8px; }
-  .brand-product-settings label > span { font-size: 14px; font-weight: 500; }
-  .settings-tab {
-    display: inline-flex; align-items: center; min-height: 44px; padding: 0 .35rem;
-    border-bottom: 2px solid transparent; font-size: 15px; font-weight: 400;
-    color: var(--color-ink-500); cursor: pointer;
-  }
-  .settings-tab[aria-selected="true"], .settings-tab[aria-current="page"] {
-    border-bottom-color: var(--color-brand-600); color: var(--color-brand-700); font-weight: 500;
-  }
-  .settings-tab:hover { color: var(--color-brand-700); }
+  .choice[aria-pressed="true"] { outline: 6px solid var(--color-brand-600); outline-offset: 3px; }
+  .choice:disabled { opacity: .35; pointer-events: none; }
+
   .value-action {
     display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center;
-    width: 40px; height: 40px; border-radius: 4px; color: var(--color-ink-500); cursor: pointer;
+    width: 56px; height: 56px; border-radius: .75rem; color: var(--color-ink-900); cursor: pointer;
   }
   .value-action:hover { background: var(--color-panel); }
   .option-value {
-    display: inline-flex; align-items: center; gap: .5rem; min-height: 44px;
-    max-width: 100%; padding: .5rem .85rem; border: 1px solid transparent;
-    border-radius: 5px; background: var(--color-panel); color: var(--color-ink-900);
-    font-size: 16px; font-weight: 500; overflow-wrap: anywhere; cursor: pointer;
+    display: inline-flex; align-items: center; gap: .6rem; min-height: 60px;
+    max-width: 100%; padding: .5rem 1.1rem; border: 2px solid var(--color-line);
+    border-radius: .9rem; background: #fff; color: var(--color-ink-900);
+    font-size: 1.35rem; font-weight: 800; overflow-wrap: anywhere; cursor: pointer;
   }
   .option-value:hover, .option-value[aria-expanded="true"] {
-    border-color: var(--color-brand-200); background: var(--color-brand-50);
+    border-color: var(--color-brand-600); background: var(--color-brand-50);
   }
   .value-color-button {
-    width: 32px; height: 32px; border: 1px solid var(--color-line); border-radius: 4px; cursor: pointer;
+    width: 48px; height: 48px; border: 2px solid var(--color-ink-500); border-radius: .5rem; cursor: pointer;
   }
-  .settings-compact button:focus-visible {
-    outline: 2px solid var(--color-brand-500); outline-offset: 2px;
+  button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible {
+    outline: 4px solid var(--color-brand-500); outline-offset: 3px;
   }
 }
 

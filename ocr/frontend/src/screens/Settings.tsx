@@ -1,16 +1,23 @@
 import { useEffect, useState } from "react";
-import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Lock, Delete, KeyRound, Download } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { Lock, Tags, SlidersHorizontal, Camera, Wrench, FileClock, Settings as Gear, Download, Power } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { api } from "../station/shared";
 import BrandSettings from "../components/BrandSettings";
 import WorkPresets from "../components/WorkPresets";
+import Statistics from "../components/Statistics";
+import { CameraView, useBench } from "../components/DeviceTests";
+import { DeviceSettingsPanels } from "../components/DeviceSettings";
+import Equipment from "./Equipment";
 import { useApp } from "../lib/store";
-import { ended, refreshBrands, reportError } from "../lib/station";
-import Help from "../components/Help";
+import { ended, refreshBrands, refreshEquipment, reportError } from "../lib/station";
+import { cameraChangeAllowed } from "../lib/jobs";
+import { Keypad, Notice } from "../ui/kit";
 
 export function LoginGate({ onOk }: { onOk: () => void }) {
   const [pw, setPw] = useState(""),
     [again, setAgain] = useState(""),
+    [field, setField] = useState<"pw" | "again">("pw"),
     [configured, setConfigured] = useState<boolean | null>(null),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
@@ -19,8 +26,8 @@ export function LoginGate({ onOk }: { onOk: () => void }) {
       .then((r) => setConfigured(r.configured))
       .catch((e) => setError(e.message));
   }, []);
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const submit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
     if (busy || configured === null) return;
     setBusy(true);
     setError("");
@@ -29,30 +36,32 @@ export function LoginGate({ onOk }: { onOk: () => void }) {
       onOk();
     } catch (e) {
       setError((e as Error).message);
+      setPw("");
+      setAgain("");
+      setField("pw");
     } finally {
       setBusy(false);
     }
   };
+  const ready = !!pw && configured !== null && (configured || (pw.length >= 6 && pw === again));
   return (
     <div className="flex min-h-full items-center justify-center p-6">
-      <form className="card w-full max-w-md p-8" onSubmit={submit}>
-        <div className="flex items-center gap-4">
-          <Lock size={32} />
-          <h2 className="text-2xl font-extrabold">
-            {configured === false ? "비밀번호 설정" : "환경 설정 잠금"}
-          </h2>
-          <Help text="환경 설정을 열 때만 비밀번호를 입력합니다. 계수 화면은 비밀번호 없이 사용할 수 있습니다." />
-        </div>
-        <label className="mt-6 block text-lg font-bold">
-          {configured === false ? "새 비밀번호 (6자 이상)" : "비밀번호"}
+      <form className="card w-full max-w-xl space-y-6 p-10" onSubmit={submit}>
+        <h2 className="flex items-center gap-4 text-[44px] font-black">
+          <Lock size={48} strokeWidth={2.5} />
+          {configured === false ? "비밀번호 만들기" : "설정 잠금"}
+        </h2>
+        <label className="block text-[28px] font-extrabold">
+          {configured === false ? "새 비밀번호 6자리 이상" : "비밀번호"}
           <input
-            className="field mt-2"
+            className="field mt-3 !min-h-[84px] text-center !text-[48px] tracking-[0.4em]"
             type="password"
             autoComplete={configured ? "current-password" : "new-password"}
             autoFocus
             value={pw}
             maxLength={64}
             disabled={busy}
+            onFocus={() => setField("pw")}
             onChange={(e) => {
               setPw(e.target.value);
               setError("");
@@ -60,164 +69,169 @@ export function LoginGate({ onOk }: { onOk: () => void }) {
           />
         </label>
         {configured === false && (
-          <label className="mt-4 block text-lg font-bold">
+          <label className="block text-[28px] font-extrabold">
             비밀번호 확인
             <input
               type="password"
-              className="field mt-2"
+              className="field mt-3 !min-h-[84px] text-center !text-[48px] tracking-[0.4em]"
               value={again}
               disabled={busy}
+              onFocus={() => setField("again")}
               onChange={(e) => setAgain(e.target.value)}
             />
           </label>
         )}
-        {error && (
-          <p role="alert" className="mt-3 text-lg font-bold text-danger">
-            {error}
-          </p>
-        )}
-        <div className="mt-5 grid grid-cols-3 gap-3">
-          {[
-            "1",
-            "2",
-            "3",
-            "4",
-            "5",
-            "6",
-            "7",
-            "8",
-            "9",
-            "clear",
-            "0",
-            "back",
-          ].map((k) => (
-            <button
-              key={k}
-              type="button"
-              aria-label={
-                k === "back"
-                  ? "한 글자 지우기"
-                  : k === "clear"
-                    ? "모두 지우기"
-                    : k
-              }
-              disabled={busy}
-              className="btn btn-outline !min-h-[60px] text-2xl font-black"
-              onClick={() => {
-                setError("");
-                setPw((p) =>
-                  k === "clear"
-                    ? ""
-                    : k === "back"
-                      ? p.slice(0, -1)
-                      : (p + k).slice(0, 64),
-                );
-              }}
-            >
-              {k === "clear" ? "지움" : k === "back" ? <Delete size={26} /> : k}
-            </button>
-          ))}
-        </div>
-        <button
-          className="btn btn-primary btn-lg mt-4 w-full"
-          disabled={
-            busy ||
-            configured === null ||
-            !pw ||
-            (configured === false && (pw.length < 6 || pw !== again))
-          }
-        >
+        {error && <Notice>{error}</Notice>}
+        <Keypad
+          disabled={busy}
+          onKey={(k) => {
+            setError("");
+            (field === "pw" ? setPw : setAgain)((v) => (k === "clear" ? "" : k === "back" ? v.slice(0, -1) : (v + k).slice(0, 64)));
+          }}
+        />
+        <button className="btn btn-primary btn-xl w-full" disabled={busy || !ready}>
           {busy ? "확인 중" : "확인"}
         </button>
       </form>
     </div>
   );
 }
-function GeneralTab() {
-  const [savePhotos, setSavePhotos] = useState<boolean | null>(null),
-    [saving, setSaving] = useState(false);
+
+const SECTIONS: { id: string; label: string; icon: LucideIcon }[] = [
+  { id: "brands", label: "브랜드", icon: Tags },
+  { id: "presets", label: "계수 설정", icon: SlidersHorizontal },
+  { id: "camera", label: "카메라", icon: Camera },
+  { id: "devices", label: "장비", icon: Wrench },
+  { id: "records", label: "기록", icon: FileClock },
+  { id: "general", label: "일반", icon: Gear },
+];
+const DEVICE_TABS = ["sensors", "ocr", "rfid", "connections", "details"];
+const LEGACY: Record<string, string> = { general: "general", brands: "brands", presets: "presets", logs: "records", devices: "devices" };
+
+export default function Settings() {
+  const nav = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const legacy = params.get("tab") || "";
+  const section =
+    params.get("section") ||
+    (legacy === "camera" ? "camera" : DEVICE_TABS.includes(legacy) ? "devices" : LEGACY[legacy]) ||
+    "brands";
+  const [authed, setAuthed] = useState<boolean | null>(null);
+  const brands = useApp((s) => s.brands);
+  const snapshot = useApp((s) => s.snapshot);
   useEffect(() => {
-    api("/settings")
-      .then((s) => setSavePhotos(s.save_photos))
-      .catch(reportError);
+    const expired = () => setAuthed(false);
+    let alive = true;
+    api("/auth")
+      .then((result) => { if (alive) setAuthed(result.authenticated && result.user?.role === "admin"); })
+      .catch(() => alive && setAuthed(false));
+    window.addEventListener("txrx-login-required", expired);
+    return () => {
+      alive = false;
+      window.removeEventListener("txrx-login-required", expired);
+    };
   }, []);
-  const [current, setCurrent] = useState(""),
-    [next, setNext] = useState(""),
-    [confirm, setConfirm] = useState(""),
-    [message, setMessage] = useState(""),
-    [busy, setBusy] = useState(false);
-  const equipment = useApp((s) => s.equipment),
-    snapshot = useApp((s) => s.snapshot);
-  const change = async () => {
-    if (busy) return;
-    setBusy(true);
-    setMessage("");
+  const go = (id: string) => setParams(id === "devices" ? { section: id, tab: "sensors" } : { section: id }, { replace: true });
+  const lock = async () => {
     try {
-      await api("/auth/password", { current, next });
-      setCurrent("");
-      setNext("");
-      setConfirm("");
-      setMessage("비밀번호를 변경했습니다.");
+      await api("/auth/logout", {});
+      setAuthed(false);
     } catch (e) {
       reportError(e);
-    } finally {
-      setBusy(false);
     }
   };
   return (
-    <div className="grid max-w-5xl grid-cols-2 gap-5">
-      <div className="card space-y-5 p-6">
-        <div className="flex items-center">
-          <h2 className="text-xl font-extrabold">검사 기록</h2>
-          <Help text="검사 결과와 사진은 이 컴퓨터에 저장합니다. 백업 버튼은 검사 기록 데이터베이스를 저장합니다. 전체 사진 백업은 운영 문서의 절차를 사용합니다." />
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="text-lg font-bold">통과 사진 저장</span>
-          <Help text="끄면 실물 검사의 합격 사진은 저장하지 않습니다. 불합격 사진과 판독 결과는 저장합니다. 새 작업부터 적용됩니다." />
-          <button
-            type="button"
-            role="switch"
-            aria-label="통과 사진 저장"
-            aria-checked={savePhotos === true}
-            disabled={
-              savePhotos === null || saving || !ended(snapshot?.session)
-            }
-            className={
-              "btn min-w-24 " + (savePhotos ? "btn-primary" : "btn-outline")
-            }
-            onClick={async () => {
-              if (saving) return;
-              setSaving(true);
-              try {
-                const next = await api(
-                  "/settings",
-                  { save_photos: !savePhotos },
-                  "PUT",
-                );
-                setSavePhotos(next.save_photos);
-              } catch (e) {
-                reportError(e);
-              } finally {
-                setSaving(false);
-              }
-            }}
-          >
-            {savePhotos === null ? "확인 중" : savePhotos ? "켜짐" : "꺼짐"}
+    <div className="flex h-full flex-col">
+      <header className="flex shrink-0 items-center gap-6 px-8 pb-4 pt-6">
+        <button className="btn btn-outline btn-lg" onClick={() => nav("/")}>
+          처음
+        </button>
+        <h1 className="text-[44px] font-black">설정</h1>
+        {authed && (
+          <button className="btn btn-outline btn-lg ml-auto" onClick={lock}>
+            <Lock size={32} />
+            잠그기
           </button>
+        )}
+      </header>
+      {authed === null ? null : !authed ? (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <LoginGate onOk={() => setAuthed(true)} />
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-lg font-bold">계수 방식</span>
-          <span className="text-lg font-bold">관리자 설정</span>
-          <Help text="브랜드별 검사 설정은 브랜드 설정에서, 단순 계수와 와펜 계수는 계수 설정에서 변경합니다." />
+      ) : (
+        <div className="flex min-h-0 flex-1 gap-6 px-8 pb-6">
+          <nav aria-label="설정 항목" className="flex w-[300px] shrink-0 flex-col gap-3">
+            {SECTIONS.map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                aria-current={section === id ? "page" : undefined}
+                className={"btn btn-lg w-full !justify-start " + (section === id ? "btn-primary" : "btn-outline")}
+                onClick={() => go(id)}
+              >
+                <Icon size={34} />
+                {label}
+              </button>
+            ))}
+          </nav>
+          <section className="min-h-0 min-w-0 flex-1 overflow-y-auto pr-1">
+            {section === "brands" && (
+              <BrandSettings brands={brands.map((b) => b.source)} refresh={async () => { await refreshBrands(); }} locked={!ended(snapshot?.session)} />
+            )}
+            {section === "presets" && <WorkPresets />}
+            {section === "camera" && <CameraAdmin />}
+            {section === "devices" && <Equipment embedded />}
+            {section === "records" && <Records />}
+            {section === "general" && <General />}
+          </section>
         </div>
-        <div>
-          <strong className="text-lg">저장 위치</strong>
-          <p className="mt-3 break-all rounded-xl bg-panel p-4 text-lg font-semibold">
-            {equipment?.data_dir || "확인 중"}
-          </p>
-        </div>
+      )}
+    </div>
+  );
+}
+
+function CameraAdmin() {
+  const bench = useBench();
+  const snapshot = useApp((s) => s.snapshot);
+  const camera = bench.state?.camera;
+  const connected = camera?.connected === true;
+  const profile = camera?.profile;
+  const allowed = cameraChangeAllowed(snapshot) && !bench.busy && !bench.state?.native_busy && !bench.state?.runs?.motor;
+  const toggle = () =>
+    bench.action(async () => {
+      await api("/bench/camera/" + (connected ? "disconnect" : "connect"), {});
+      await refreshEquipment().catch(() => {});
+    });
+  return (
+    <div className="space-y-6">
+      <section className="card flex flex-wrap items-center gap-6 p-6">
+        <span className={"rounded-2xl px-6 py-3 text-[34px] font-black text-white " + (connected ? "bg-ok" : "bg-ink-500")}>
+          {connected ? "켜짐" : "꺼짐"}
+        </span>
+        {profile && (
+          <span className="text-[30px] font-extrabold tabular-nums">
+            {profile.width} × {profile.height}, {profile.fps}fps
+          </span>
+        )}
+        <button className={"btn btn-xl ml-auto " + (connected ? "btn-outline" : "btn-primary")} disabled={!allowed} onClick={toggle}>
+          <Power size={40} />
+          {connected ? "끄기" : "켜기"}
+        </button>
+      </section>
+      {(bench.error || camera?.error) && <Notice>{bench.error || camera?.error}</Notice>}
+      <CameraView connected={connected} />
+      <DeviceSettingsPanels bench={bench} tab="camera" />
+    </div>
+  );
+}
+
+function Records() {
+  return (
+    <div className="space-y-6">
+      <Statistics />
+      <section className="card flex items-center gap-6 p-6">
+        <h2 className="text-[32px] font-black">백업</h2>
         <button
-          className="btn btn-outline w-full"
+          className="btn btn-outline btn-lg ml-auto"
           onClick={async () => {
             try {
               const b = await api("/backup", {});
@@ -230,71 +244,36 @@ function GeneralTab() {
             }
           }}
         >
-          <Download size={22} />
+          <Download size={32} />
           검사 기록 백업
         </button>
-      </div>
-      <div className="card space-y-4 p-6">
-        <h2 className="flex items-center gap-3 text-xl font-extrabold">
-          <KeyRound size={24} />
-          비밀번호 변경
-        </h2>
-        <label className="block text-lg font-bold">
-          현재 비밀번호
-          <input
-            className="field mt-2"
-            type="password"
-            autoComplete="current-password"
-            value={current}
-            onChange={(e) => setCurrent(e.target.value)}
-          />
-        </label>
-        <label className="block text-lg font-bold">
-          새 비밀번호
-          <input
-            className="field mt-2"
-            type="password"
-            autoComplete="new-password"
-            value={next}
-            onChange={(e) => setNext(e.target.value)}
-          />
-        </label>
-        <label className="block text-lg font-bold">
-          비밀번호 확인
-          <input
-            className="field mt-2"
-            type="password"
-            autoComplete="new-password"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-          />
-        </label>
-        <button
-          className="btn btn-primary w-full"
-          disabled={
-            busy ||
-            !ended(snapshot?.session) ||
-            !current ||
-            next.length < 6 ||
-            next !== confirm
-          }
-          onClick={change}
-        >
-          변경
-        </button>
-        {message && (
-          <p role="status" className="text-lg font-bold">
-            {message}
-          </p>
-        )}
-      </div>
+      </section>
+      <EventLog />
     </div>
   );
 }
-function LogTab() {
+
+const EVENT_LABEL: Record<string, string> = {
+  COMMAND: "작업 조작",
+  INSPECTION_FINAL: "검사 완료",
+  SESSION_CREATED: "작업 시작",
+  MANUAL_ADJUSTMENT: "수량 보정",
+  BRAND_SAVED: "브랜드 저장",
+  BRAND_DELETED: "브랜드 삭제",
+  PRESET_SAVED: "계수 설정 저장",
+  PROCESS_RESTART: "서버 재시작",
+  LOGIN: "설정 잠금 해제",
+  ADMIN_INITIALIZED: "비밀번호 설정",
+  CAMERA_SETTINGS_SAVED: "카메라 설정 저장",
+  CAMERA_RECOVERED: "카메라 재연결",
+  FAULT: "장비 오류",
+  BACKUP_CREATED: "백업",
+};
+
+function EventLog() {
   const [date, setDate] = useState(new Date().toLocaleDateString("sv-SE")),
-    [events, setEvents] = useState<any[]>([]);
-  const [before, setBefore] = useState<number | null>(null),
+    [events, setEvents] = useState<any[]>([]),
+    [before, setBefore] = useState<number | null>(null),
     [busy, setBusy] = useState(false),
     [more, setMore] = useState(false);
   useEffect(() => {
@@ -303,46 +282,29 @@ function LogTab() {
     const start = new Date(date + "T00:00:00"),
       end = new Date(start);
     end.setDate(end.getDate() + 1);
-    const params = new URLSearchParams({
-      since: start.toISOString(),
-      until: end.toISOString(),
-    });
+    const params = new URLSearchParams({ since: start.toISOString(), until: end.toISOString() });
     if (before !== null) params.set("before_seq", String(before));
     setBusy(true);
     api("/event-history?" + params)
       .then((r) => {
-        if (alive) {
-          setEvents((old) =>
-            before === null ? r.events : [...old, ...r.events],
-          );
-          setMore(r.events.length === 200);
-        }
+        if (!alive) return;
+        setEvents((old) => (before === null ? r.events : [...old, ...r.events]));
+        setMore(r.events.length === 200);
       })
       .catch(reportError)
-      .finally(() => {
-        if (alive) setBusy(false);
-      });
+      .finally(() => alive && setBusy(false));
     return () => {
       alive = false;
     };
   }, [date, before]);
-  const labels: Record<string, string> = {
-    COMMAND: "작업 조작",
-    INSPECTION_FINAL: "검사 완료",
-    SESSION_CREATED: "작업 시작",
-    MANUAL_ADJUSTMENT: "수량 보정",
-    BRAND_SAVED: "브랜드 저장",
-    PROCESS_RESTART: "서버 재시작",
-    LOGIN: "설정 잠금 해제",
-    ADMIN_INITIALIZED: "비밀번호 설정",
-  };
   return (
-    <div className="max-w-5xl space-y-4">
-      <label className="flex items-center gap-4 text-lg font-bold">
-        날짜 선택
+    <section className="card space-y-5 p-6">
+      <div className="flex flex-wrap items-center gap-6">
+        <h2 className="text-[32px] font-black">작업 로그</h2>
         <input
           type="date"
-          className="field !w-56"
+          aria-label="로그 날짜"
+          className="field !w-72"
           value={date}
           onChange={(e) => {
             setDate(e.target.value);
@@ -350,107 +312,117 @@ function LogTab() {
             setEvents([]);
           }}
         />
-      </label>
-      <div className="card space-y-4 p-5">
+      </div>
+      <div className="divide-y-2 divide-line">
         {events.map((e) => (
-          <details key={e.seq} className="border-b border-line pb-4">
-            <summary className="cursor-pointer text-lg font-bold">
-              {new Date(e.created_at).toLocaleTimeString("ko-KR")}{" "}
-              {labels[e.kind] || e.kind}
+          <details key={e.seq} className="py-3">
+            <summary className="cursor-pointer text-[26px] font-extrabold">
+              <span className="tabular-nums">{new Date(e.created_at).toLocaleTimeString("ko-KR")}</span> {EVENT_LABEL[e.kind] || e.kind}
             </summary>
-            <pre className="mt-3 overflow-auto whitespace-pre-wrap text-base">
-              {JSON.stringify(e.body, null, 2)}
-            </pre>
+            <pre className="mt-3 overflow-auto whitespace-pre-wrap rounded-xl bg-panel p-4 text-[18px]">{JSON.stringify(e.body, null, 2)}</pre>
           </details>
         ))}
-        {!busy && !events.length && (
-          <p className="text-lg font-bold">기록 없음</p>
-        )}
-        {busy && (
-          <p role="status" className="text-lg font-bold">
-            불러오는 중
-          </p>
-        )}
-        {more && (
-          <button
-            className="btn btn-outline w-full"
-            disabled={busy}
-            onClick={() => setBefore(events[events.length - 1].seq)}
-          >
-            이전 기록 더 보기
-          </button>
-        )}
       </div>
-    </div>
+      {!busy && !events.length && <p className="text-[26px] font-extrabold text-ink-700">기록 없음</p>}
+      {busy && <p role="status" className="text-[26px] font-extrabold">불러오는 중</p>}
+      {more && (
+        <button className="btn btn-outline btn-lg w-full" disabled={busy} onClick={() => setBefore(events[events.length - 1].seq)}>
+          더 보기
+        </button>
+      )}
+    </section>
   );
 }
-export default function Settings() {
-  const [params] = useSearchParams();
-  const nav = useNavigate(),
-    [authed, setAuthed] = useState(false),
-    [tab, setTab] = useState(params.get("tab") || "general");
-  const brands = useApp((s) => s.brands),
+
+function General() {
+  const [savePhotos, setSavePhotos] = useState<boolean | null>(null),
+    [saving, setSaving] = useState(false),
+    [current, setCurrent] = useState(""),
+    [next, setNext] = useState(""),
+    [confirm, setConfirm] = useState(""),
+    [message, setMessage] = useState(""),
+    [busy, setBusy] = useState(false);
+  const equipment = useApp((s) => s.equipment),
     snapshot = useApp((s) => s.snapshot);
+  const idle = ended(snapshot?.session);
   useEffect(() => {
-    const expired = () => setAuthed(false);
-    let alive = true;
-    api("/auth").then(result => { if (alive) setAuthed(result.authenticated && result.user?.role === "admin"); }).catch(() => {});
-    window.addEventListener("txrx-login-required", expired);
-    return () => { alive = false; window.removeEventListener("txrx-login-required", expired); };
+    api("/settings")
+      .then((s) => setSavePhotos(s.save_photos))
+      .catch(reportError);
   }, []);
-  if (params.get("tab") === "devices") return <Navigate to={"/equipment?tab=" + (window.location.hash === "#io" ? "connections" : "camera")} replace/>;
-  const home = async () => {
-    nav("/");
+  const change = async () => {
+    if (busy) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      await api("/auth/password", { current, next });
+      setCurrent("");
+      setNext("");
+      setConfirm("");
+      setMessage("변경됨");
+    } catch (e) {
+      reportError(e);
+    } finally {
+      setBusy(false);
+    }
   };
   return (
-    <div className="flex h-full flex-col">
-      <div className="settings-compact flex shrink-0 flex-wrap items-center gap-3 px-6 pt-4">
-        <button className="btn btn-outline btn-sm" onClick={home}>
-          <ArrowLeft size={20} />
-          처음 화면
+    <div className="grid max-w-6xl grid-cols-2 gap-6">
+      <section className="card space-y-6 p-6">
+        <h2 className="text-[32px] font-black">통과 사진 저장</h2>
+        <div role="group" aria-label="통과 사진 저장" className="grid grid-cols-2 gap-4">
+          {[true, false].map((on) => (
+            <button
+              key={String(on)}
+              className={"btn btn-xl " + (savePhotos === on ? "btn-primary" : "btn-outline")}
+              aria-pressed={savePhotos === on}
+              disabled={savePhotos === null || saving || !idle}
+              onClick={async () => {
+                if (saving || savePhotos === on) return;
+                setSaving(true);
+                try {
+                  const result = await api("/settings", { save_photos: on }, "PUT");
+                  setSavePhotos(result.save_photos);
+                } catch (e) {
+                  reportError(e);
+                } finally {
+                  setSaving(false);
+                }
+              }}
+            >
+              {on ? "저장" : "저장 안 함"}
+            </button>
+          ))}
+        </div>
+        <div>
+          <h3 className="text-[26px] font-extrabold">저장 위치</h3>
+          <p className="mt-2 break-all rounded-xl bg-panel p-4 text-[22px] font-bold">{equipment?.data_dir || "확인 중"}</p>
+        </div>
+      </section>
+      <section className="card space-y-5 p-6">
+        <h2 className="text-[32px] font-black">비밀번호 바꾸기</h2>
+        {[
+          ["현재 비밀번호", current, setCurrent, "current-password"],
+          ["새 비밀번호", next, setNext, "new-password"],
+          ["새 비밀번호 확인", confirm, setConfirm, "new-password"],
+        ].map(([label, value, set, auto]) => (
+          <label key={label as string} className="block text-[26px] font-extrabold">
+            {label as string}
+            <input
+              className="field mt-2"
+              type="password"
+              autoComplete={auto as string}
+              value={value as string}
+              onChange={(e) => (set as (v: string) => void)(e.target.value)}
+            />
+          </label>
+        ))}
+        <button className="btn btn-primary btn-lg w-full" disabled={busy || !idle || !current || next.length < 6 || next !== confirm} onClick={change}>
+          바꾸기
         </button>
-        <h1 className="text-xl font-semibold">환경 설정</h1>
-        {authed && <button className="btn btn-outline btn-sm" onClick={async () => { try { await api("/auth/logout", {}); setAuthed(false); } catch(e) { reportError(e); } }}>설정 잠금</button>}
-        {authed && (
-          <div className="ml-3 flex flex-wrap gap-4">
-            {[
-              { id: "general", label: "일반" },
-              { id: "brands", label: "브랜드 관리" },
-              { id: "presets", label: "계수 설정" },
-              { id: "devices", label: "장비 테스트" },
-              { id: "logs", label: "작업 로그" },
-            ].map((t) => (
-              <button
-                key={t.id}
-                className="settings-tab"
-                aria-current={tab === t.id ? "page" : undefined}
-                onClick={() => t.id === "devices" ? nav("/equipment?tab=camera") : setTab(t.id)}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-6">
-        {!authed ? (
-          <LoginGate onOk={() => setAuthed(true)} />
-        ) : tab === "general" ? (
-          <GeneralTab />
-        ) : tab === "presets" ? (
-          <WorkPresets />
-        ) : tab === "brands" ? (
-          <BrandSettings
-            brands={brands.map((b) => b.source)}
-            refresh={async () => {
-              await refreshBrands();
-            }}
-            locked={!ended(snapshot?.session)}
-          />
-        ) : (
-          <LogTab />
-        )}
-      </div>
+        {message && <Notice tone="ok">{message}</Notice>}
+      </section>
     </div>
   );
 }
+

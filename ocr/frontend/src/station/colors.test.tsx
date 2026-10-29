@@ -120,7 +120,7 @@ it("assigns a code color in settings and persists its exact code separately from
   await user.click(screen.getByRole("button", { name: "색상 N3 수정" }));
   await user.clear(screen.getByLabelText("색상 N3 수정값"));
   await user.type(screen.getByLabelText("색상 N3 수정값"), "BK{Enter}");
-  expect(screen.getByRole("alert").textContent).toBe("이미 등록된 값입니다.");
+  expect(screen.getByRole("alert").textContent).toBe("이미 있는 값");
   await user.clear(screen.getByLabelText("색상 N3 수정값"));
   await user.type(screen.getByLabelText("색상 N3 수정값"), "NV{Enter}");
   await user.click(screen.getByRole("button", { name: "색상 NV 수정" }));

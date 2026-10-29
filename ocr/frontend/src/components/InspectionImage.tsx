@@ -51,7 +51,7 @@ export default function InspectionImage({ src, diagnostics, actualSize = false, 
           onError={() => setFailed(true)} className="mx-auto max-h-64 max-w-full object-contain"/>
       </div>
     </figure>}
-    {failed && <p role="alert">사진을 불러오지 못했습니다.</p>}
-    {mode === "detections" && !regions.length && <p>검출된 바코드가 없습니다.</p>}
+    {failed && <p role="alert">사진 없음</p>}
+    {mode === "detections" && !regions.length && <p>검출된 바코드 없음</p>}
   </div>;
 }

@@ -10,7 +10,6 @@ import {
   RefreshCw,
 } from "lucide-react";
 import Work from "./Work";
-import Help from "../components/Help";
 import Config from "./Config";
 import { api, Field, Badge, ResultCard, PHASE, display } from "./shared";
 import type { Action, Snapshot, Brand, Session, Result } from "./shared";
@@ -195,7 +194,7 @@ export function Equipment({ action, role }: { action: Action; role: string }) {
       <div className="card p-6">
         <div className="flex items-center">
           <h2 className="text-2xl font-extrabold">장비 정보</h2>
-          <Help text="미확인은 장비에서 읽은 값이 없다는 뜻입니다." />
+
         </div>
         <p className="mt-2 text-lg font-bold">
           수집 시각{" "}
@@ -245,7 +244,7 @@ export function Equipment({ action, role }: { action: Action; role: string }) {
       <div className="card p-6">
         <div className="flex items-center">
           <h3 className="text-xl font-extrabold">실물 운전 전 확인할 항목</h3>
-          <Help text="장비 실측과 아래 시험을 완료한 후 실물 운전을 사용할 수 있습니다." />
+
         </div>
         <ul className="mt-4 list-inside list-disc space-y-2">
           {info.blockers.map((b: string) => (

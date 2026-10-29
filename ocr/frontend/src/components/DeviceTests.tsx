@@ -4,7 +4,6 @@ import { Camera, Lightbulb, Play, Square, Signal } from "lucide-react";
 import { api, uuid } from "../station/shared";
 import { useApp } from "../lib/store";
 import { cameraEditable, ended } from "../lib/station";
-import Help from "./Help";
 import BatchCapture from "./BatchCapture";
 import { useCameraPreview } from "./useCameraPreview";
 
@@ -126,7 +125,7 @@ export function CameraView({ connected, tracking, flow }: { connected: boolean; 
       {tracking.boxes.map(([x1,y1,x2,y2], i) => <rect key={i} x={x1*tracking.width} y={y1*tracking.height} width={(x2-x1)*tracking.width} height={(y2-y1)*tracking.height} fill="none" stroke="#22c55e" strokeWidth={2}/>)}
       <line x1={flow.axis === "x" ? flow.line*tracking.width : 0} x2={flow.axis === "x" ? flow.line*tracking.width : tracking.width} y1={flow.axis === "y" ? flow.line*tracking.height : 0} y2={flow.axis === "y" ? flow.line*tracking.height : tracking.height} stroke="#facc15" strokeWidth={2}/>
     </svg>}
-  </div>{connected && url && failed && <p role="status" className="mt-2 text-sm">영상 갱신 지연</p>}{connected && url && !failed && frame.seq && <details className="mt-2 text-sm text-ink-700"><summary className="cursor-pointer">영상 정보</summary><p>프레임 {frame.seq}, 설정 버전 {frame.revision || "미확인"}</p></details>}</div>;
+  </div>{connected && url && failed && <p role="status" className="mt-2 text-xl font-extrabold text-danger">영상 갱신 지연</p>}{connected && url && !failed && frame.seq && <details className="mt-2 text-lg font-bold text-ink-700"><summary className="cursor-pointer">영상 정보</summary><p>프레임 {frame.seq}, 설정 버전 {frame.revision || "미확인"}</p></details>}</div>;
 }
 
 export function OutputTests({ bench, ledOnly = false, compact = false }: { bench: BenchHook; ledOnly?: boolean; compact?: boolean }) {
@@ -164,8 +163,7 @@ export function OutputTests({ bench, ledOnly = false, compact = false }: { bench
   </div>;
   return <>
     {!ledOnly && <div className="card space-y-4 p-5">
-      <div className="flex items-center gap-3"><Play size={26}/><h2 className="text-xl font-extrabold">모터</h2>
-        <Help text="켜기와 끄기를 직접 선택합니다. 끄기는 즉시 작동하고, 끈 뒤 5초가 지나야 다시 켤 수 있습니다. 켠 뒤 3초 후 DI3를 확인하며 미응답은 표시만 합니다. 속도는 US-52에서 조절합니다. 장비 테스트를 종료하거나 통신이 끊기면 시험 출력을 끕니다."/></div>
+      <div className="flex items-center gap-3"><Play size={32}/><h2 className="text-[30px] font-black">모터</h2></div>
       <p className="text-xl font-bold">{state?.io.km2_on === true ? "접촉기 켜짐" : state?.io.km2_on === false ? "접촉기 꺼짐" : "접촉기 미확인"}</p>
       <div role="group" aria-label="모터 스위치" className="grid grid-cols-2 gap-2">
         <button aria-pressed={!motorOn} className={`btn !min-h-[72px] text-2xl ${!motorOn ? "btn-primary" : "btn-outline"}`} disabled={locked} onClick={() => bench.action(() => api("/bench/motor/off", {}))}>끄기</button>
@@ -174,13 +172,12 @@ export function OutputTests({ bench, ledOnly = false, compact = false }: { bench
       {motorWait > 0 && <p role="status">모터 재시작까지 {motorWait}초</p>}
       {requestedTarget === "motor" && bench.error && <p role="alert" className="text-lg font-bold text-danger">{bench.error}</p>}
       {motorRun && <p role="status" className={`text-lg font-bold ${motorRun.feedback_error ? "text-danger" : ""}`}>{motorRun.feedback_error ? `${motorRun.feedback_error} (켜기 명령 유지)` : motorRun.feedback_checked ? "DI3 응답 확인" : "DI3 응답 대기 (3초)"}</p>}
-      {!!state?.output_blockers.length && <div className="space-y-2"><p className="text-lg font-bold">가동할 수 없는 이유</p>{state.output_blockers.map(reason => <p className="text-lg" key={reason}>{reason}</p>)}
+      {!!state?.output_blockers.length && <div className="space-y-2"><p className="text-lg font-bold">가동 불가</p>{state.output_blockers.map(reason => <p className="text-lg" key={reason}>{reason}</p>)}
         <button className="btn btn-outline w-full" onClick={() => nav("/equipment?tab=connections")}>모터 연결 설정</button></div>}
     </div>}
     <div className="card space-y-4 p-5">
-      <div className="flex items-center gap-3"><Lightbulb size={26}/><h2 className="text-xl font-extrabold">LED</h2>
-        <Help text="DO2로 조명을 켜고 끕니다. 표시값은 출력 명령입니다. 실제 점등은 직접 확인하세요. 장비 테스트를 종료하면 시험 출력을 끕니다. 탭 이동 시에는 유지합니다."/></div>
-      <p className="text-xl font-bold">{state?.io.led_requested ? "켜기 명령 중" : "점등 상태는 현장에서 확인"}</p>
+      <div className="flex items-center gap-3"><Lightbulb size={32}/><h2 className="text-[30px] font-black">LED</h2></div>
+      <p className="text-xl font-bold">{state?.io.led_requested ? "켜기 명령 중" : "끄기 명령 상태"}</p>
       <div role="group" aria-label="LED 스위치" className="grid grid-cols-2 gap-2">
         <button aria-pressed={!ledOn} className={`btn !min-h-[72px] text-2xl ${!ledOn ? "btn-primary" : "btn-outline"}`} disabled={ledWait > 0 || locked} onClick={() => bench.action(() => api("/bench/led/off", {}))}>끄기</button>
         <button aria-pressed={ledOn} className={`btn !min-h-[72px] text-2xl ${ledOn ? "btn-primary" : "btn-outline"}`} disabled={!canLed || ledWait > 0} onClick={() => { setRequestedTarget("led"); return bench.pulse("led"); }}>켜기</button>
@@ -205,14 +202,12 @@ export function BenchHeader({ bench, compact = false }: { bench: BenchHook; comp
       <button className="btn btn-danger ml-auto px-6 text-xl" onClick={bench.stop}><Square size={24}/>시험 비상정지</button>
     </div>
     {!compact && state && Object.values(state.runs).map(run => run && <p key={run.id} role="status" className="text-2xl font-extrabold text-warn">{run.target === "motor" ? "모터 켜기 명령 중" : run.target === "led" ? "LED 켜기 명령 중" : "고속 선택 중"}{run.remaining_ms !== null && ` ${Math.ceil(run.remaining_ms / 1000)}초 남음`}</p>)}
-    {locked && <p className="font-bold">{cameraEditable(snapshot) ? "준비 중인 작업을 유지하며 카메라를 조정할 수 있습니다. 출력과 센서 시험은 작업 종료 후 가능합니다." : "작업 종료 후 시험할 수 있습니다"}</p>}
+    {locked && <p className="text-xl font-extrabold text-danger">작업 진행 중</p>}
     {(bench.error || state?.error) && <p role="alert" className="text-lg font-bold text-danger">{bench.error || state?.error}</p>}
     {state?.error && <div className="flex items-center gap-3">
       <button className="btn btn-primary" disabled={bench.busy || locked || !!state.native_busy || !!state.run}
         onClick={() => bench.action(() => api("/bench/error/clear", {}))}>오류 해제</button>
-      <Help text="출력 OFF와 DI3 접촉기 꺼짐을 확인한 뒤 오류를 해제합니다. 자동으로 켜지지 않습니다. 모터는 정지 후 5초, LED는 신호 변경 후 1초가 지나면 다시 시험할 수 있습니다."/>
     </div>}
-    {!!state?.output_blockers.length && <div className="flex items-center"><span className="text-lg font-bold">출력 시험 준비 필요</span><Help text={state.output_blockers.join(" ")}/></div>}
   </div>;
 }
 
@@ -223,7 +218,7 @@ export function CameraTest({ bench }: { bench: BenchHook }) {
   const busy = bench.busy || !!s?.native_busy || !!s?.rfid_busy || !!s?.sensor_ocr?.busy;
   useEffect(() => { let alive = true; api("/bench/captures/latest").then(result => { if (alive) setCapture(result); }).catch(() => {}); return () => { alive = false; }; }, []);
   return <section className="card space-y-3 p-4">
-    <div className="flex items-center gap-3"><Camera size={24}/><h2 className="text-xl font-extrabold">영상과 사진</h2>
+    <div className="flex items-center gap-3"><Camera size={32}/><h2 className="text-[30px] font-black">영상과 사진</h2>
       <button className="btn btn-outline btn-sm ml-auto" disabled={busy || locked || !!s?.runs.motor}
         onClick={() => bench.action(() => api("/bench/camera/" + (s?.camera?.connected ? "disconnect" : "connect"), {}))}>
         {s?.camera?.connected ? "카메라 연결 종료" : "저장한 설정으로 연결"}
@@ -247,7 +242,7 @@ export function CameraTest({ bench }: { bench: BenchHook }) {
           <button className="btn btn-outline btn-sm" aria-pressed={zoom} onClick={() => setZoom(v => !v)}>{zoom ? "화면에 맞춤" : "원본 1:1"}</button>
           <a className="btn btn-outline btn-sm" href={capture.url} download={"camera-test-" + capture.id + ".png"}>원본 사진 저장</a>
         </div>
-        <details className="text-sm text-ink-700"><summary className="cursor-pointer">촬영 정보</summary>
+        <details className="text-lg font-bold text-ink-700"><summary className="cursor-pointer">촬영 정보</summary>
           <p>{capture.width} × {capture.height}</p><p>프레임 {capture.metadata?.seq ?? "미확인"}, 설정 버전 {capture.metadata?.camera_settings_revision ?? "미확인"}</p>
         </details>
       </div>}
@@ -261,8 +256,7 @@ export function CameraTest({ bench }: { bench: BenchHook }) {
 export function SensorTest({ bench }: { bench: BenchHook }) {
   const feedback = bench.state?.feedback;
   return <section className="card space-y-4 p-5">
-    <div className="flex items-center gap-3"><Signal size={26}/><h2 className="text-xl font-extrabold">센서</h2>
-      <Help text="감지와 해제 때 입력값 및 변화 횟수가 바뀌는지 확인하세요. 감지 극성을 설정하기 전에는 원시값만 표시합니다."/></div>
+    <div className="flex items-center gap-3"><Signal size={32}/><h2 className="text-[30px] font-black">센서</h2></div>
     <div className="grid grid-cols-2 gap-4">{bench.state?.sensors.map(s => <div key={s.channel} className="rounded-xl bg-panel p-4">
       <h3 className="text-xl font-extrabold">센서 {s.channel}</h3>
       <p className="my-3 text-2xl font-black">{s.raw === null ? "미연결" : s.active === null ? "입력 " + s.raw : s.active ? "감지" : "감지 없음"}</p>
@@ -270,7 +264,7 @@ export function SensorTest({ bench }: { bench: BenchHook }) {
       {s.changed_at && <p className="mt-2 text-lg">{new Date(s.changed_at * 1000).toLocaleTimeString("ko-KR")}</p>}
     </div>)}</div>
     <div className="rounded-xl bg-panel p-4 space-y-2">
-      <div className="flex items-center gap-3"><h3 className="text-xl font-extrabold">DI3 접촉기 입력</h3><Help text="DI3는 KM2 접촉기 피드백입니다. 문서 기준 입력 0은 접촉기 켜짐, 1은 꺼짐입니다. 실제 벨트 회전을 확인하는 센서는 아닙니다. GPIO 번호는 커넥터의 물리 핀 번호와 다릅니다."/></div>
+      <h3 className="text-xl font-extrabold">DI3 접촉기 입력</h3>
       <p className="text-2xl font-black">{feedback?.raw == null ? "입력 미확인" : `입력 ${feedback.raw}`}</p>
       <p className="text-xl font-bold">{feedback?.active == null ? "접촉기 미확인" : feedback.active ? "접촉기 켜짐" : "접촉기 꺼짐"}</p>
       <p className="text-lg font-bold">GPIO {feedback?.line ?? bench.state?.pins.feedback ?? "미확인"}, 변화 {feedback?.changes ?? 0}회</p>

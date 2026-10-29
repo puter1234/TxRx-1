@@ -24,11 +24,11 @@ export default function OptionValues({
   const commit = () => {
     const next = (editing === null ? value : replacement).trim();
     if (!next) {
-      setError("값을 입력하세요.");
+      setError("값 없음");
       return;
     }
     if (option.values.some((v) => v === next && v !== editing)) {
-      setError("이미 등록된 값입니다.");
+      setError("이미 있는 값");
       return;
     }
     const colors = { ...option.colors };
@@ -71,7 +71,7 @@ export default function OptionValues({
             {isColorOption(option) && (
               <span
                 aria-hidden="true"
-                className="h-4 w-4 shrink-0 rounded-sm border border-line"
+                className="h-7 w-7 shrink-0 rounded-md border-2 border-ink-500"
                 style={{ backgroundColor: option.colors?.[code] || "white" }}
               />
             )}
@@ -90,12 +90,12 @@ export default function OptionValues({
             setError("");
           }}
         >
-          <Plus size={16} />
+          <Plus size={24} />
           추가
         </button>
       </div>
       {(adding || editing !== null) && (
-        <div className="max-w-xl rounded-md bg-panel p-3">
+        <div className="max-w-2xl rounded-2xl bg-panel p-4">
           <div className="flex flex-wrap items-center gap-2">
             <input
               key={editing ?? "add"}
@@ -165,11 +165,11 @@ export default function OptionValues({
               aria-label="편집 닫기"
               onClick={close}
             >
-              <X size={18} />
+              <X size={28} />
             </button>
           </div>
           {error && (
-            <p role="alert" className="mt-2 text-sm text-danger">
+            <p role="alert" className="mt-2 text-lg font-bold text-danger">
               {error}
             </p>
           )}

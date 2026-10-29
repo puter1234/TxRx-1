@@ -6,7 +6,6 @@ import { api } from "../station/shared";
 import { useApp } from "../lib/store";
 import { cameraEditable, ended, reportError } from "../lib/station";
 import InspectionImage from "../components/InspectionImage";
-import Help from "../components/Help";
 import { DeviceSettingsPanels } from "../components/DeviceSettings";
 import { LoginGate } from "./Settings";
 import SensorPipelineTest from "../components/SensorPipelineTest";
@@ -52,7 +51,7 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy, sharedPrevi
   const canRead = connected && (sharedPreview || !!url) && !locked && !busy;
   return <section className="card space-y-5 p-5">
     <div className="flex items-center gap-3"><ScanText size={26}/><h2 className="text-xl font-extrabold">OCR 촬영 시험</h2>
-      <Help text="바코드 위치를 기준으로 택을 정렬하고 주변 인쇄 문자를 읽습니다. 바코드 값은 판독하지 않습니다. 읽은 문자와 사진을 확인하는 시험이며 목표값 합격 판정은 작업 검사에서 진행합니다."/></div>
+</div>
     <div className={sharedPreview ? "space-y-5" : "grid gap-5 xl:grid-cols-2"}>
       <div className="space-y-3">
         <div hidden={sharedPreview} className="rounded-xl bg-ink-900 p-2">
@@ -75,7 +74,7 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy, sharedPrevi
           {result.error && <p role="status" className="text-xl font-bold text-danger">{result.error}</p>}
           {result.preview_url && <div className="space-y-3">
             <div className="flex items-center gap-2"><h3 className="text-xl font-bold">검사한 사진</h3>
-              <Help text="이번 판독에 실제로 사용한 프레임입니다. 화면에서는 작게 표시하며 원본 사진 저장은 같은 프레임의 전체 해상도 PNG를 받습니다. 다음 검사 시 이전 사진은 교체됩니다."/></div>
+</div>
             <InspectionImage key={result.preview_url} src={result.preview_url} alt="이번 검사에 사용한 사진" diagnostics={result.barcode_diagnostics}/>
             <p className="text-lg font-bold">{result.frame_width} × {result.frame_height}</p>
             <a className="btn btn-outline" href={result.original_url} download>검사 원본 사진 저장</a>
@@ -92,7 +91,7 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy, sharedPrevi
               <p className="text-lg font-bold">인식 신뢰도 {(line.confidence * 100).toFixed(1)}%</p>
             </div>)}
           </div>)}
-          {!result.error && result.reads.every(read => !read.lines.length) && <p className="text-xl font-bold">글자를 찾지 못했습니다</p>}
+          {!result.error && result.reads.every(read => !read.lines.length) && <p className="text-xl font-bold">문자 미검출</p>}
           {result.barcode_diagnostics && <details className="space-y-3">
             <summary className="cursor-pointer text-lg font-bold">판독 상세</summary>
           <p className="text-lg font-bold">프레임 복사 {result.capture_ms.toFixed(1)} ms</p>
@@ -122,15 +121,21 @@ export function OcrLiveTest({ bench, locked, checkOcr, ocr, ocrBusy, sharedPrevi
   </section>;
 }
 
-export default function Equipment() {
+export default function Equipment({ embedded = false }: { embedded?: boolean }) {
   const nav = useNavigate(), bench = useBench();
   const [params, setParams] = useSearchParams();
   const tabs = [
-    { id: "camera", label: "카메라 설정" }, { id: "sensors", label: "센서 시험" },
+    ...(embedded ? [] : [{ id: "camera", label: "카메라 설정" }]), { id: "sensors", label: "센서 시험" },
     { id: "ocr", label: "OCR 시험" }, { id: "rfid", label: "RFID 시험" },
     { id: "connections", label: "연결 설정" }, { id: "details", label: "장비 정보" },
   ];
-  const tab = tabs.some(item => item.id === params.get("tab")) ? params.get("tab")! : "camera";
+  const tab = tabs.some(item => item.id === params.get("tab")) ? params.get("tab")! : tabs[0].id;
+  useEffect(() => () => {
+    // Leaving the settings section must release the test GPIO owner; an open
+    // input connection blocks the next production job.
+    if (embedded) void fetch("/api/bench/close", { method: "POST", credentials: "same-origin", keepalive: true,
+      headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {});
+  }, [embedded]);
   const panel = useRef<HTMLDivElement>(null);
   const positions = useRef<Record<string, number>>({});
   useLayoutEffect(() => {
@@ -166,19 +171,19 @@ export default function Equipment() {
     try {
       setOcr(await api("/bench/ocr", {}));
     } catch (error) {
-      setOcr({ ok: false, detail: error instanceof Error ? error.message : "OCR 모델을 불러오지 못했습니다." });
+      setOcr({ ok: false, detail: error instanceof Error ? error.message : "OCR 모델 오류" });
     } finally {
       setOcrBusy(false);
     }
   });
-  return <div className="flex h-full flex-col">
-    <div className="flex shrink-0 items-center gap-4 px-5 py-3">
-      <button className="btn btn-outline btn-sm" onClick={async () => { if (await bench.leave()) nav("/"); }}><ArrowLeft size={20}/>처음 화면</button>
-      <h1 className="text-2xl font-extrabold">장비 테스트</h1>
-      {admin && <button className="btn btn-outline btn-sm ml-auto" onClick={async () => {
+  return <div className={"flex flex-col " + (embedded ? "min-h-full" : "h-full")}>
+    {!embedded && <div className="flex shrink-0 items-center gap-4 px-5 py-3">
+      <button className="btn btn-outline" onClick={async () => { if (await bench.leave()) nav("/"); }}><ArrowLeft size={24}/>처음 화면</button>
+      <h1 className="text-[36px] font-black">장비 시험</h1>
+      {admin && <button className="btn btn-outline ml-auto" onClick={async () => {
         try { await api("/auth/logout", {}); setAdmin(false); } catch (e) { reportError(e); }
       }}>설정 잠금</button>}
-    </div>
+    </div>}
     <div className="shrink-0 px-5 pb-3"><BenchHeader bench={bench} compact/></div>
     <div className="grid min-h-0 flex-1 grid-cols-2 gap-5 px-5 pb-5">
       <div className="flex min-h-0 min-w-0 flex-col gap-3" aria-label="실시간 영상과 출력 시험">
@@ -204,7 +209,7 @@ export default function Equipment() {
           <div role="tabpanel" id="panel-rfid" aria-labelledby="tab-rfid" hidden={tab !== "rfid"}>
         <section className="card space-y-4 p-5">
           <div className="flex items-center gap-3"><CreditCard size={26}/><h2 className="text-xl font-extrabold">RFID 확인</h2>
-            <Help text="설정한 직렬 포트에서 실제 태그를 읽습니다. EPC와 읽은 횟수를 표시하며 생산 수량에는 반영하지 않습니다."/></div>
+</div>
           <button className="btn btn-primary w-full" disabled={rfidLocked} onClick={readRfid}>{rfidBusy || bench.state?.rfid_busy ? "태그 읽는 중" : "태그 읽기"}</button>
           {rfidError && <p role="alert" className="text-lg font-bold text-danger">{rfidError}</p>}
           {!rfidBusy && !rfidError && (rfid ? <div className="space-y-3"><p className="text-xl font-bold">{rfid.detail}</p>

@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../station/shared";
 import { useApp } from "../lib/store";
 import { cameraEditable, ended } from "../lib/station";
-import Help from "./Help";
 import { BenchHeader, useBench, type BenchHook } from "./DeviceTests";
 
 type Mode = { width: number; height: number; fps: number; pixel_format: string };
@@ -105,7 +104,7 @@ export function DeviceSettingsPanels({ bench, tab = "all" }: { bench: BenchHook;
       ["width", "height", "pixel_format"].every(key => saved[key] === current[key]) &&
       Math.abs(saved.fps - current.fps) < 0.05 &&
       Object.entries(saved.controls).every(([key, value]) => actual[key] === value);
-    setCameraMessage(matchesSaved ? "저장한 설정과 같습니다" : saved ? "저장한 설정과 다릅니다" : "저장된 설정이 없습니다");
+    setCameraMessage(matchesSaved ? "저장값과 같음" : saved ? "저장값과 다름" : "저장값 없음");
   };
   const apply = (save: boolean) => bench.action(async () => {
     if (!caps?.modes[modeIndex]) return;
@@ -121,7 +120,7 @@ export function DeviceSettingsPanels({ bench, tab = "all" }: { bench: BenchHook;
     setValues(actual);
     setBaseline(JSON.stringify({ modeIndex, values: actual }));
     setRevision(result.revision);
-    setCameraMessage(save ? "설정을 적용하고 저장했습니다" : "영상에 적용했습니다. 저장 전입니다.");
+    setCameraMessage(save ? "저장됨" : "적용됨, 저장 전");
   });
   const disabled = locked || bench.busy || !!bench.state?.native_busy || !!bench.state?.sensor_ocr?.busy;
   const cameraDisabled = cameraLocked || bench.busy || !!bench.state?.native_busy || !!bench.state?.rfid_busy || !!bench.state?.sensor_ocr?.busy || !!bench.state?.runs.motor;
@@ -133,8 +132,7 @@ export function DeviceSettingsPanels({ bench, tab = "all" }: { bench: BenchHook;
   const field = (key: string, value: any) => setSetup((old: any) => ({ ...old, [key]: value }));
   return <div className="space-y-5">
     <section role="tabpanel" id="panel-camera" aria-labelledby="tab-camera" hidden={tab !== "all" && tab !== "camera"} className="card space-y-5 p-5">
-      <div className="flex items-center"><h2 className="text-2xl font-extrabold">카메라 설정</h2>
-        <Help text="지원 목록을 읽고 해상도와 촬영값을 지정합니다. 시험 적용으로 영상을 확인한 뒤 저장하세요. 설정 변경 중에는 생산 작업을 시작할 수 없습니다."/></div>
+      <h2 className="text-[32px] font-black">카메라 설정</h2>
       <div className="flex flex-wrap items-end gap-4">
         <label className="min-w-72 flex-1 text-lg font-bold">카메라
           <select className="field mt-2" value={device} disabled={cameraDisabled} onChange={e => { setDevice(e.target.value); setCaps(null); setCameraMessage(""); }}>
@@ -144,7 +142,6 @@ export function DeviceSettingsPanels({ bench, tab = "all" }: { bench: BenchHook;
         <button className="btn btn-primary" disabled={cameraDisabled || !device} onClick={() => bench.action(inspect)}>{dirty ? "초안 버리고 다시 읽기" : "실제 설정 다시 읽기"}</button>
       </div>
       {discovery && <p className="text-lg font-bold">{discovery}</p>}
-      <p className="text-base text-ink-700">초점과 화이트밸런스는 수동으로 고정합니다.</p>
       <div>
         {caps && <div className="space-y-4">
           <label className="block text-lg font-bold">해상도와 촬영 속도
@@ -159,8 +156,7 @@ export function DeviceSettingsPanels({ bench, tab = "all" }: { bench: BenchHook;
             const inactive = !controlActive(c, caps.controls, values);
             const label = labels[c.name], value = values[c.name] ?? c.value;
             return <div key={c.name} className="border-b border-line pb-4">
-              <div className="mb-3 flex items-center"><label htmlFor={"camera-" + c.name} className="text-lg font-bold">{label}</label>
-                <Help text={c.name.includes("focus") ? "초점 숫자는 렌즈 위치입니다. 거리 단위가 아닙니다. 영상의 글자를 보면서 맞추세요." : c.name.includes("exposure") ? "카메라가 보고한 제어값입니다. 자동 노출을 수동으로 바꾼 뒤 조절하세요." : "카메라가 보고한 범위 안에서 조절합니다."}/></div>
+              <div className="mb-3"><label htmlFor={"camera-" + c.name} className="text-xl font-extrabold">{label}</label></div>
               {Object.keys(c.menu).length ? <select id={"camera-" + c.name} className="field" disabled={cameraDisabled || readonly || inactive} value={value} onChange={e => setValues(v => ({ ...v, [c.name]: Number(e.target.value) }))}>
                 {Object.entries(c.menu).map(([n, text]) => <option key={n} value={n}>{menuLabel(text)}</option>)}
               </select> : c.type === "bool" ? <button id={"camera-" + c.name} role="switch" aria-label={label} aria-checked={value !== 0} className={"btn w-full " + (value ? "btn-primary" : "btn-outline")} disabled={cameraDisabled || readonly || inactive} onClick={() => setValues(v => ({ ...v, [c.name]: value ? 0 : 1 }))}>{value ? "켜짐" : "꺼짐"}</button>
@@ -171,32 +167,30 @@ export function DeviceSettingsPanels({ bench, tab = "all" }: { bench: BenchHook;
                 </div>}
             </div>;
           })}</div></details>)}
-          {!caps.controls.some(c => c.name === "gain") && <p className="text-lg font-bold">게인: 카메라 드라이버에서 제어를 제공하지 않습니다.</p>}
           <div className="sticky bottom-0 z-10 flex gap-3 border-t border-line bg-white py-3"><button className="btn btn-outline flex-1" disabled={cameraDisabled || !caps.modes.length} onClick={() => apply(false)}>시험 적용</button>
             <button className="btn btn-primary flex-1" disabled={cameraDisabled || !caps.modes.length} onClick={() => apply(true)}>적용하고 저장</button></div>
-          {(dirty || cameraMessage) && <p role="status" className="text-lg font-bold">{dirty ? "변경한 설정이 아직 적용되지 않았습니다." : cameraMessage}</p>}
+          {(dirty || cameraMessage) && <p role="status" className="text-xl font-extrabold">{dirty ? "적용 전" : cameraMessage}</p>}
         </div>}
       </div>
     </section>
-    {setup && <details role="tabpanel" aria-labelledby="tab-connections" hidden={tab !== "all" && tab !== "connections"} id="panel-connections" open className="card space-y-5 p-6"><summary className="cursor-pointer text-xl font-bold">입출력 및 RFID 설정</summary>
-      <div className="flex items-center"><h2 className="text-2xl font-extrabold">입출력 연결</h2><Help text="배선 확인 후 값을 입력하세요. 입력 연결을 종료해야 수정할 수 있습니다. 저장해도 생산 운전 승인은 바뀌지 않습니다."/></div>
+    {setup && <details role="tabpanel" aria-labelledby="tab-connections" hidden={tab !== "all" && tab !== "connections"} id="panel-connections" open className="card space-y-5 p-6"><summary className="cursor-pointer text-[28px] font-black">입출력 및 RFID 설정</summary>
+      <h2 className="text-[32px] font-black">입출력 연결</h2>
       <p className="text-lg font-bold">모터 DO1 ({bench.state?.pins.motor}), LED DO2 ({bench.state?.pins.led}), 접촉기 DI3 ({bench.state?.pins.feedback})</p>
-      {bench.state?.connected && <div className="space-y-3"><p className="text-lg font-bold">입력 연결 중에는 설정이 잠깁니다.</p>
-        <button className="btn btn-primary" disabled={disabled} onClick={() => bench.action(async () => { await api("/bench/io/disconnect", {}); setMessage("입력 연결을 종료했습니다. 설정을 수정하고 저장하세요."); })}>시험 정지하고 설정 수정</button></div>}
+      {bench.state?.connected && <div className="space-y-3">
+        <button className="btn btn-primary" disabled={disabled} onClick={() => bench.action(async () => { await api("/bench/io/disconnect", {}); setMessage("입력 연결 종료됨"); })}>시험 정지하고 설정 수정</button></div>}
       <fieldset disabled={disabled || !!bench.state?.connected} className="grid gap-5 md:grid-cols-2">
         <label className="text-lg font-bold">출력 ON 값<select className="field mt-2" value={setup.do_on_raw ?? ""} onChange={e => field("do_on_raw", e.target.value === "" ? null : Number(e.target.value))}><option value="">미확인</option><option value="0">0</option><option value="1">1</option></select></label>
         <label className="text-lg font-bold">운전 허가 GPIO<input className="field mt-2" type="number" min="0" max="1023" value={setup.permit_line ?? ""} onChange={e => field("permit_line", e.target.value === "" ? null : Number(e.target.value))}/></label>
         <label className="text-lg font-bold">운전 허가 입력값<select className="field mt-2" value={setup.permit_active_raw ?? ""} onChange={e => field("permit_active_raw", e.target.value === "" ? null : Number(e.target.value))}><option value="">미확인</option><option value="0">0</option><option value="1">1</option></select></label>
-        <p className="text-lg font-bold">모터 시험 DI3 확인 대기: 3초</p>
         {[0, 1].map(i => <label key={i} className="text-lg font-bold">센서 {i + 1} 감지값<select className="field mt-2" value={setup.sensor_active_raw[i] ?? ""} onChange={e => field("sensor_active_raw", setup.sensor_active_raw.map((v: number | null, j: number) => j === i ? e.target.value === "" ? null : Number(e.target.value) : v))}><option value="">미확인</option><option value="0">0</option><option value="1">1</option></select></label>)}
         <label className="flex items-center gap-3 text-lg font-bold"><input className="h-6 w-6" type="checkbox" checked={setup.output_wiring_confirmed} onChange={e => field("output_wiring_confirmed", e.target.checked)}/>출력 배선과 OFF 상태 확인</label>
         <label className="flex items-center gap-3 text-lg font-bold"><input className="h-6 w-6" type="checkbox" checked={setup.stop_circuit_confirmed} onChange={e => field("stop_circuit_confirmed", e.target.checked)}/>현장 정지 회로 확인</label>
       </fieldset>
-      <button className="btn btn-primary" disabled={disabled || !!bench.state?.connected || !!bench.state?.rfid_busy} onClick={() => bench.action(async () => { await api("/bench/setup", setup, "PUT"); setMessage("연결 설정을 저장했습니다"); })}>입출력 설정 저장</button>
+      <button className="btn btn-primary" disabled={disabled || !!bench.state?.connected || !!bench.state?.rfid_busy} onClick={() => bench.action(async () => { await api("/bench/setup", setup, "PUT"); setMessage("저장됨"); })}>입출력 설정 저장</button>
       <h3 className="text-xl font-extrabold">RFID 연결</h3>
       <button className="btn btn-outline" disabled={portsBusy} onClick={findPorts}>{portsBusy ? "포트 찾는 중" : "RFID 포트 찾기"}</button>
       {portsError && <p role="alert" className="text-lg font-bold text-danger">{portsError}</p>}
-      {!portsBusy && !portsError && ports.length === 0 && <p role="status" className="text-lg font-bold">검색된 직렬 포트가 없습니다.</p>}
+      {!portsBusy && !portsError && ports.length === 0 && <p role="status" className="text-lg font-bold">포트 없음</p>}
       <fieldset disabled={disabled || !!bench.state?.rfid_busy} className="grid gap-5 md:grid-cols-2">
         <label className="text-lg font-bold">직렬 포트<select className="field mt-2" value={setup.rfid_port} onChange={e => field("rfid_port", e.target.value)}>
           <option value="">포트 선택</option>{setup.rfid_port && !ports.some(p => p.device === setup.rfid_port) && <option value={setup.rfid_port}>{setup.rfid_port}</option>}
@@ -204,14 +198,14 @@ export function DeviceSettingsPanels({ bench, tab = "all" }: { bench: BenchHook;
         </select></label>
         <label className="text-lg font-bold">읽기 시간 (ms)<input className="field mt-2" type="number" min="100" max="10000" value={setup.rfid_window_ms} onChange={e => field("rfid_window_ms", Number(e.target.value))}/></label>
         <label className="text-lg font-bold">RFID 출력<input className="field mt-2" type="number" min="0" max="2600" step="1" value={setup.rfid_power} onChange={e => field("rfid_power", e.target.value === "" ? "" : Number(e.target.value))}/></label>
-        <label className="flex items-center gap-3 text-lg font-bold"><input className="h-6 w-6" type="checkbox" checked={setup.rfid_protocol_confirmed} onChange={e => field("rfid_protocol_confirmed", e.target.checked)}/>RFID 명령 규격 확인<Help text="YRM1006 리더의 제공 명령서와 현재 구현을 대조한 뒤 선택합니다. 읽기 시험은 지역과 출력 초기화 명령을 포함합니다."/></label>
+        <label className="flex items-center gap-3 text-lg font-bold"><input className="h-6 w-6" type="checkbox" checked={setup.rfid_protocol_confirmed} onChange={e => field("rfid_protocol_confirmed", e.target.checked)}/>RFID 명령 규격 확인</label>
       </fieldset>
       <button className="btn btn-primary" disabled={disabled || !!bench.state?.rfid_busy} onClick={() => bench.action(async () => {
-        if (!Number.isInteger(setup.rfid_power) || setup.rfid_power < 0 || setup.rfid_power > 2600) throw new Error("RFID 출력은 0~2600의 정수로 입력하세요.");
+        if (!Number.isInteger(setup.rfid_power) || setup.rfid_power < 0 || setup.rfid_power > 2600) throw new Error("RFID 출력 0~2600");
         await api("/bench/rfid/setup", { rfid_port: setup.rfid_port, rfid_window_ms: setup.rfid_window_ms, rfid_power: setup.rfid_power, rfid_protocol_confirmed: setup.rfid_protocol_confirmed }, "PUT");
-        setMessage("연결 설정을 저장했습니다");
+        setMessage("저장됨");
       })}>RFID 설정 저장</button>
-      {message === "연결 설정을 저장했습니다" && <p role="status" className="text-lg font-bold">{message}</p>}
+      {message && <p role="status" className="text-xl font-extrabold">{message}</p>}
     </details>}
   </div>;
 }

@@ -33,7 +33,7 @@ it("selects each detected barcode and shows zero when only a tag was detected", 
   fireEvent.click(screen.getByRole("button", {name: "바코드 2"}));
   expect(screen.getByAltText("검출된 바코드 2").getAttribute("src")).toBe("/frame?view=barcode_crop&region=1");
   view.rerender(<InspectionImage src="/frame" diagnostics={{...diagnostics, regions: []}}/>);
-  expect(screen.getByText("검출된 바코드가 없습니다.")).toBeTruthy();
+  expect(screen.getByText("검출된 바코드 없음")).toBeTruthy();
   expect(screen.queryByAltText("검출된 바코드 2")).toBeNull();
 });
 it("does not offer model inputs for a different locator", () => {

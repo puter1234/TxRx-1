@@ -47,7 +47,7 @@ export default function Statistics() {
         }
       })
       .catch((error) => {
-        if (alive) setLoadError(error instanceof Error ? error.message : "통계를 불러오지 못했습니다.");
+        if (alive) setLoadError(error instanceof Error ? error.message : "불러오기 실패");
       })
       .finally(() => {
         if (alive) setBusy(false);
@@ -61,11 +61,11 @@ export default function Statistics() {
   const canExport = validRange && !busy && !loadError && currentData !== null;
   const hours = (s: number | null) => s == null ? "미기록" : (s / 3600).toFixed(2);
   return (
-    <section className="card space-y-4 p-5">
-      <h2 className="text-2xl font-bold">작업 통계</h2>
-      {!!currentData?.timing_unknown_jobs && <p>종료 시각이 없는 이전 작업 {currentData.timing_unknown_jobs}건은 시간 합계에서 제외했습니다.</p>}
+    <section className="card space-y-5 p-6 text-xl">
+      <h2 className="text-[32px] font-black">작업 통계</h2>
+      {!!currentData?.timing_unknown_jobs && <p className="text-xl font-bold">시간 미기록 {currentData.timing_unknown_jobs}건 제외</p>}
       <div className="flex flex-wrap items-end gap-3">
-        <label className="font-bold">
+        <label className="text-xl font-extrabold">
           시작일
           <input
             className="field"
@@ -74,7 +74,7 @@ export default function Statistics() {
             onChange={(e) => setSince(e.target.value)}
           />
         </label>
-        <label className="font-bold">
+        <label className="text-xl font-extrabold">
           종료일
           <input
             className="field"
@@ -83,18 +83,18 @@ export default function Statistics() {
             onChange={(e) => setUntil(e.target.value)}
           />
         </label>
-        <label className="flex gap-2 p-3">
+        <label className="flex items-center gap-3 p-3 text-xl font-extrabold">
           <input
             type="checkbox"
+            className="h-8 w-8 accent-brand-600"
             checked={test}
             onChange={(e) => setTest(e.target.checked)}
           />
           시험 포함
         </label>
-        <span className="p-3">한국 시간 기준</span>
       </div>
       <div className="flex gap-3">
-        <label className="font-bold">
+        <label className="text-xl font-extrabold">
           브랜드
           <select
             aria-label="통계 브랜드"
@@ -110,7 +110,7 @@ export default function Statistics() {
             ))}
           </select>
         </label>
-        <label className="font-bold">
+        <label className="text-xl font-extrabold">
           작업
           <select
             aria-label="통계 작업"
@@ -158,8 +158,8 @@ export default function Statistics() {
           검사 상세 CSV
         </a>
       </div>
-      {!validRange ? <p role="alert">시작일과 종료일을 확인하세요.</p> : loadError ? <p role="alert">{loadError}</p> : busy ? (
-        <p role="status">통계를 불러오는 중입니다.</p>
+      {!validRange ? <p role="alert">기간 확인</p> : loadError ? <p role="alert">{loadError}</p> : busy ? (
+        <p role="status">불러오는 중</p>
       ) : (
         <div className="overflow-auto">
           <table className="w-full text-left">
@@ -211,7 +211,7 @@ export default function Statistics() {
               ))}
             </tbody>
           </table>
-          {!rows.length && <p className="p-5">조회 기간에 기록이 없습니다.</p>}
+          {!rows.length && <p className="p-5">기록 없음</p>}
         </div>
       )}
     </section>

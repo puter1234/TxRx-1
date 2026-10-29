@@ -123,12 +123,12 @@ export const CHANNEL: Record<string, string> = {
   barcode: "바코드 (선택)",
 };
 export const ERR: Record<string, string> = {
-  QUANTITY_MISMATCH: "센서와 비전 수량이 다릅니다.",
-  DI2_WITHOUT_DI1: "DI1 기록 없이 DI2가 감지되었습니다.",
-  EARLY_DI1_UNRESOLVED: "이전 제품 처리 중 DI1이 다시 감지되었습니다.",
-  CAMERA_PRODUCT_REVIEW: "카메라 연결을 복구했습니다. 이송 중이던 제품을 확인하세요.",
+  QUANTITY_MISMATCH: "센서와 비전 수량 다름",
+  DI2_WITHOUT_DI1: "DI1 없이 DI2 감지",
+  EARLY_DI1_UNRESOLVED: "이전 제품 처리 중 DI1 감지",
+  CAMERA_PRODUCT_REVIEW: "카메라 복구됨, 이송 중 제품 확인",
   CAMERA_ERROR: "카메라 촬영 오류",
-  CAMERA_CAPTURE_MISSED: "연결이 끊긴 동안 제품이 촬영 위치를 통과했습니다.",
+  CAMERA_CAPTURE_MISSED: "카메라 끊김 중 제품 통과",
   REQUIRED_FIELD_MISSING: "필수 항목 미판독",
   TARGET_MISMATCH: "목표와 불일치",
   BARCODE_LABEL_MISMATCH: "가격택과 폴리백의 상품 정보 불일치",
@@ -157,6 +157,34 @@ export const ERR: Record<string, string> = {
   SERVICE_SHUTDOWN: "프로그램 종료로 중단",
   RFID_ERROR: "RFID 읽기 오류",
   VISION_ERROR: "영상 판독 오류",
+  APPLICATION_ERROR: "프로그램 처리 오류",
+  DEVICE_TEST_STOP: "장비 시험 정지",
+  IO_LEASE_EXPIRED: "장비 제어 응답 지연",
+  IO_ACCESS_ERROR: "장비 제어 오류",
+  IO_STALE: "장비 신호 수신 중단",
+  MOTOR_PERMIT_LOST: "운전 허가 끊김",
+  OCR_MISSING: "문자 미판독",
+  OCR_TEXT_MISSING: "문자 미판독",
+  MULTIPLE_OCR_VALUES: "문자 판독값 여러 개",
+  BARCODE_OCR_MISMATCH: "바코드와 문자 불일치",
+  PRODUCT_COUNT_NOT_ONE: "제품 수량 확인 필요",
+  PRODUCT_DETECTION_INVALID: "제품 위치 확인 필요",
+  RFID_CHAR_UNSUPPORTED: "RFID 문자 오류",
+  RFID_HEX_INVALID: "RFID 형식 오류",
+  RFID_LENGTH_INVALID: "RFID 길이 오류",
+  RFID_RULE_MISSING: "RFID 규칙 없음",
+  EVIDENCE_WRITE_FAILED: "검사 사진 저장 실패",
+  EVIDENCE_ERROR: "검사 사진 저장 실패",
+  CAMERA_DISCONNECTED: "카메라 연결 끊김",
+  CAMERA_TIMEOUT: "카메라 응답 없음",
+  CAMERA_CLOSED: "카메라 꺼짐",
+  STOP_REQUEST_HAS_PRIORITY: "정지 요청 처리",
+};
+// Faults may carry a detail after the code ("INSPECTION_ERROR: ...").
+export const errorText = (code: string | null | undefined) => {
+  if (!code) return "";
+  const key = code.split(":")[0].trim();
+  return ERR[key] || ERR[code] || (/^[A-Z0-9_]+$/.test(key) ? "장비 오류" : code);
 };
 export const display = (v: unknown): string =>
   v === null || v === undefined
@@ -214,7 +242,7 @@ export function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block font-bold text-ink-700">{label}</span>
+      <span className="mb-2 block text-xl font-extrabold text-ink-900">{label}</span>
       {children}
     </label>
   );

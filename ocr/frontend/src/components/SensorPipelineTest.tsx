@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { Play, Square } from "lucide-react";
 import { api } from "../station/shared";
 import InspectionImage from "./InspectionImage";
-import Help from "./Help";
 import type { BenchHook, BenchState } from "./DeviceTests";
 import { LocatorSelect, LocationSummary, type Locator, type LocationDiagnostics } from "./BarcodeLocation";
 
@@ -69,7 +68,7 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
     delayMs >= 0 && delayMs <= 60000 && intervalMs >= 0 && intervalMs <= 10000 &&
     departureMs >= 100 && departureMs <= 120000 && delayMs + (count - 1) * intervalMs < departureMs));
   const save = () => bench.action(async () => {
-    await api("/bench/pipeline/settings", settings, "PUT"); setMessage("설정을 저장했습니다.");
+    await api("/bench/pipeline/settings", settings, "PUT"); setMessage("저장됨");
   });
   const start = () => bench.action(async () => {
     const next = await api<BenchState>("/bench/pipeline/start", settings);
@@ -82,8 +81,8 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
   const frameUrl = job && frame ? `/api/bench/pipeline/frames/${job.id}/${frame.seq}` : "";
   const lines = frame?.result?.reads.flatMap(read => read.lines) ?? [];
   return <section className="card space-y-5 p-5" onChangeCapture={() => { edited.current = true; setMessage(""); }}>
-    <div className="flex items-center gap-3"><h2 className="text-2xl font-extrabold">센서 연동 OCR 시험</h2>
-      <Help text="컨베이어 연동은 DI1에서 저속 전환과 LED 점등, 설정 시간에 촬영, DI2에서 소등과 계수를 진행합니다. 저속 유지 시간이 끝나면 고속으로 돌아갑니다. OCR 성공 시 나머지 사진의 판독을 생략합니다. 문자를 읽지 못해도 결과를 남기고 운전은 계속합니다. 사진과 계수는 시험 결과로만 표시합니다. 센서 촬영 방식은 기존처럼 선택한 센서의 해제에서 계수합니다."/></div>
+    <div className="flex items-center gap-3"><h2 className="text-[30px] font-black">센서 연동 OCR 시험</h2>
+</div>
     <label className="block space-y-2 text-lg font-bold">시험 방식
       <select aria-label="시험 방식" className="field block w-full" disabled={running} value={linked ? "conveyor" : "sensor"} onChange={e => setLinked(e.target.value === "conveyor")}>
         <option value="conveyor">컨베이어 연동</option><option value="sensor">센서 촬영</option>
@@ -91,7 +90,6 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
     </label>
     <LocatorSelect value={locator} onChange={setLocator} disabled={running}/>
     {linked && <div className="space-y-3">
-      <p className="text-lg">DI1에서 저속과 LED 켜기, DI2에서 LED 끄기와 계수</p>
       <div className="grid grid-cols-2 gap-3">
         <label className="font-bold">저속 유지 (ms)<input className="field mt-1 w-full" type="number" min={0} max={60000} disabled={running} value={lowMs} onChange={e => setLowMs(Number(e.target.value))}/></label>
         <label className="font-bold">촬영 지연 (ms)<input className="field mt-1 w-full" type="number" min={0} max={60000} disabled={running} value={delayMs} onChange={e => setDelayMs(Number(e.target.value))}/></label>
@@ -124,16 +122,16 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
     <details className="space-y-3">
       <summary className="cursor-pointer text-lg font-bold">상품코드 형식</summary>
       <div className="flex items-center gap-2"><label htmlFor="sensor-ocr-pattern" className="text-lg font-bold">확인할 형식</label>
-        <Help text="문자를 읽으면 해당 제품의 나머지 사진 판독을 생략합니다. 형식을 입력하면 형식에 맞는 문자를 읽었을 때 생략합니다. 모터 운전은 계속합니다. [A-Z]는 대문자, [0-9]는 숫자, [A-Z0-9]는 영문 또는 숫자입니다. {4}는 네 글자입니다. OCR 값의 공백은 비교할 때 제외합니다."/></div>
+</div>
       <input id="sensor-ocr-pattern" className="field w-full text-lg" disabled={running} value={pattern}
         onChange={e => setPattern(e.target.value)} placeholder="[A-Z]{4}[0-9][A-Z][0-9]{3}[A-Z0-9]{2}[0-9]{3}"/>
     </details>
     <div className="flex items-center gap-3"><button className="btn btn-outline" onClick={save} disabled={locked || running || !valid}>설정 저장</button>{message && <p role="status">{message}</p>}</div>
-    {!bench.state?.connected && <p>위쪽의 입력 연결을 누르세요.</p>}
-    {!bench.state?.camera?.connected && <p>카메라를 연결하면 시험을 시작할 수 있습니다.</p>}
-    {manualOutputs && <p>수동 출력 시험이 켜져 있습니다. 위쪽의 시험 비상정지로 끈 뒤 연동 시험을 시작하세요.</p>}
+    {!bench.state?.connected && <p className="text-xl font-extrabold text-danger">입력 미연결</p>}
+    {!bench.state?.camera?.connected && <p className="text-xl font-extrabold text-danger">카메라 꺼짐</p>}
+    {manualOutputs && <p className="text-xl font-extrabold text-danger">수동 출력 켜짐</p>}
     {!running && motorWait > 0 && <p role="status">모터 재시작까지 {motorWait}초</p>}
-    {!valid && <p role="alert" className="font-bold text-danger">촬영 장수와 시간을 확인하세요. 마지막 촬영은 DI2 도착 제한 시간보다 빨라야 합니다.</p>}
+    {!valid && <p role="alert" className="text-xl font-extrabold text-danger">촬영 장수와 시간 확인</p>}
     <div className="grid grid-cols-2 gap-3">
       <button className="btn btn-primary !min-h-[72px] text-xl" onClick={start}
         disabled={locked || running || manualOutputs || motorWait > 0 || !bench.state?.connected || !bench.state?.camera?.connected || !valid}>
@@ -170,8 +168,8 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
             </div>
             <InspectionImage key={frameUrl} src={frameUrl} alt="센서 감지 후 수집한 프레임" diagnostics={frame.result?.barcode_diagnostics} actualSize={actualSize}/>
           </>
-            : <p className="text-lg font-bold">사진이 메모리에서 정리되었습니다</p>}
-          {frame.state === "skipped" && <p className="text-lg font-bold">앞 프레임에서 성공하여 OCR 생략</p>}
+            : <p className="text-lg font-bold">사진 없음</p>}
+          {frame.state === "skipped" && <p className="text-lg font-bold">OCR 생략</p>}
           {frame.result?.error && <p className="text-lg font-bold text-danger">{frame.result.error}</p>}
           {frame.result && <p className="text-lg font-bold">위치 검출과 정렬 {frame.result.ms_barcode.toFixed(1)} ms, OCR {frame.result.ms_ocr.toFixed(1)} ms</p>}
           <LocationSummary diagnostics={frame.result?.barcode_diagnostics}/>
