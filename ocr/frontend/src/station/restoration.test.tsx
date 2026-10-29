@@ -3,6 +3,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import App from "../App";
+import Work from "../screens/Work";
 import { useApp } from "../lib/store";
 import {
   acceptSnapshot,
@@ -92,28 +93,51 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("restored original screens", () => {
-  it("opens the original two-choice main page without a login or account", async () => {
+  it("allows STOP on the work screen before the start response arrives", async () => {
     const user = userEvent.setup();
-    render(
-      <MemoryRouter>
-        <App />
-      </MemoryRouter>,
-    );
-    expect(
-      screen.getByRole("heading", { name: "계수 방식을 선택하세요" }),
-    ).toBeTruthy();
-    expect(screen.getByRole("button", { name: "단순 계수 시작" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "조건 설정" })).toBeTruthy();
-    expect(screen.queryByLabelText("사용자 ID")).toBeNull();
-    expect(screen.queryByText(/admin/)).toBeNull();
-    await user.click(screen.getByRole("button", { name: "단순 계수 시작" }));
-    expect(screen.getByRole("heading", { name: "단순 계수" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "수량 초기화" })).toBeTruthy();
+    const current = { ...snapshot, mode: "HARDWARE" as const, can_start: true, session };
+    acceptSnapshot(current);
+    let finish: (v: any) => void = () => {};
+    const fetcher = vi.fn((path: string, options?: any): Promise<any> => {
+      if (path === "/api/presets") return Promise.resolve(response([]));
+      if (path === "/api/status") return Promise.resolve(response(current));
+      if (path === "/api/commands" && JSON.parse(options.body).action === "start")
+        return new Promise(resolve => { finish = resolve; });
+      return Promise.resolve(response({}));
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<MemoryRouter><Work /></MemoryRouter>);
+    await user.click(screen.getByRole("button", { name: "운전 시작" }));
+    try {
+      expect(screen.getByRole("button", { name: "정지" })).toHaveProperty("disabled", false);
+      await user.click(screen.getByRole("button", { name: "정지" }));
+      expect(fetcher.mock.calls.filter(([p]) => p === "/api/commands")
+        .map(([, args]) => JSON.parse(args.body).action)).toEqual(["start", "stop"]);
+      // The earlier start is still pending even though STOP finished first.
+      expect(screen.getByRole("button", { name: "운전 시작" })).toHaveProperty("disabled", true);
+    } finally {
+      finish(response({}));
+      await waitFor(() => expect(useApp.getState().pending).toHaveLength(0));
+    }
+  });
+  it("preserves the original home choices and simple count controls", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", vi.fn(async () => response([{id: "simple", name: "단순 계수", enabled: true, kind: "simple", brand_id: "__simple__", channels: [], flow: {counter: "sensor"}, revision: 1}])));
+    render(<MemoryRouter><App /></MemoryRouter>);
+    expect(screen.getByRole("heading", {name: "계수 방식을 선택하세요"})).toBeTruthy();
+    expect(screen.getByRole("button", {name: "조건 설정"})).toBeTruthy();
+    await user.click(screen.getByRole("button", {name: "단순 계수 시작"}));
+    expect(screen.getByRole("button", {name: "수량 초기화"})).toBeTruthy();
+    expect(screen.getByRole("button", {name: "계수 시작"})).toBeTruthy();
+    expect(screen.queryByLabelText("계수 방법")).toBeNull();
+    expect(screen.queryByLabelText("비밀번호")).toBeNull();
   });
   it("preserves all three setup steps and submits dynamic options with barcode optional", async () => {
     const user = userEvent.setup();
     const fetcher = vi.fn(async (path: string, options?: any) => {
       if (path === "/api/brands") return response([brand]);
+      if (path === "/api/presets") return response([]);
+      if (path === "/api/status") return response({...snapshot, session: {...session, phase: "FEEDING"}});
       if (path === "/api/sessions")
         return response({
           ...snapshot,
@@ -135,7 +159,7 @@ describe("restored original screens", () => {
     await user.click(screen.getByRole("button", { name: "N3" }));
     await user.click(screen.getByRole("button", { name: "095" }));
     const start = screen.getByRole("button", {
-      name: "검사 화면 열기",
+      name: "검사 시작",
     }) as HTMLButtonElement;
     expect(start.disabled).toBe(true);
     await user.click(screen.getByRole("button", { name: "SS" }));
@@ -144,6 +168,7 @@ describe("restored original screens", () => {
       ([path]) => path === "/api/sessions",
     )!;
     expect(JSON.parse(creation[1].body).channels).toEqual(["rfid"]);
+    expect(fetcher.mock.calls.filter(([path]) => path === "/api/commands").map(([,options]) => JSON.parse(options.body).action)).toEqual(["start"]);
     expect(JSON.parse(creation[1].body).targets).toEqual({
       style: "HUTS6C612",
       color: "N3",
@@ -274,6 +299,8 @@ describe("restored original screens", () => {
   it("keeps inspection evidence and saved target loading in the original history table", async () => {
     const user = userEvent.setup();
     const fetcher = vi.fn(async (path: string) => {
+      if (path === "/api/presets") return response([{id: "hazzys-work", name: "헤지스 작업", revision: 1, enabled: true, kind: "condition", brand_id: "hazzys", channels: ["rfid"], flow: {counter: "sensor"}}]);
+      if (path.startsWith("/api/statistics?")) return response({daily: [], jobs: []});
       if (path === "/api/history?offset=0")
         return response({ sessions: [session] });
       if (path === "/api/history?session_id=s&offset=0")
@@ -320,7 +347,7 @@ describe("restored original screens", () => {
     expect(
       (
         screen.getByRole("button", {
-          name: "검사 화면 열기",
+          name: "검사 시작",
         }) as HTMLButtonElement
       ).disabled,
     ).toBe(true);

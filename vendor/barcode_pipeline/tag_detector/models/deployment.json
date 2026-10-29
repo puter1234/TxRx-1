@@ -1,0 +1,20 @@
+{
+  "model": "YOLO26n detection",
+  "classes": {"0": "label"},
+  "imgsz": 960,
+  "confidence": 0.15,
+  "same_class_dedup_iou": 0.55,
+  "roi_padding": 0.08,
+  "preferred_backend_on_measured_cpu": "onnxruntime",
+  "weights_pt": "models/tag_label.pt",
+  "weights_onnx": "models/tag_label.onnx",
+  "device": "cpu",
+  "precision": "FP32",
+  "threads": 4,
+  "preprocessing": {"max_side": 1600, "green_gain": 3.5, "channels": "green replicated to 3 channels", "letterbox_color": 114},
+  "selected_epoch": 87,
+  "trained_epochs": 100,
+  "selection_saved_before_test_evaluation": true,
+  "selection_reason": "On validation, 960 and 1280 both detect 8/8 with one FP after deduplication. At padding 0.08, 960 covers >=95% of all 8 GT boxes, versus 6/8 at 1280, and is faster. 640 needs confidence 0.02 and produces 3 FP. Thresholds selected by validation F2. ONNX real-image parity passed and measured CPU latency is lower.",
+  "scope": "Pilot model: 34 real 4000x3000 images; session independence and real 48MP accuracy unverified. No camera, Stage 2 or OCR."
+}

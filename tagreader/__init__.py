@@ -51,7 +51,7 @@ class TagResult:
     """회전 보정된 이미지 전체. 택을 통짜로 OCR에 넣고 싶을 때 쓴다."""
 
     stage: str = ""
-    """값을 찾아낸 감지 단계 ('small' | 'full' | 'tiled' | 'whole-image')."""
+    """위치를 찾은 단계 ('stripes' | 'small' | 'full' | 'tiled' | 'whole-image')."""
 
     _rotated_quad: np.ndarray | None = field(default=None, repr=False)
     """rotated 좌표계로 옮긴 quad. debug_view()에서만 쓴다."""
@@ -75,6 +75,7 @@ def read_tag(
     max_barcodes: int = 4,
     diagnostics: dict | None = None,
     decode_values: bool = True,
+    locator: str = "opencv",
 ) -> list[TagResult]:
     """사진에서 바코드를 찾아 값을 읽고, OCR용 위/아래 크롭을 만든다.
 
@@ -85,17 +86,28 @@ def read_tag(
     want_crops=False로 두면 크롭 생성을 건너뛰어 더 빠르다 (값만 필요할 때).
     """
     prepared = time.perf_counter()
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+    if locator not in ("opencv", "stripes"):
+        raise ValueError("위치 검출 방식이 올바르지 않습니다.")
+    stripes = not decode_values and locator == "stripes"
+    gray = None
+    if not stripes:
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
     if diagnostics is not None:
         diagnostics.update(stages=[], status="not_detected", decoded=0,
-                           prepare_ms=(time.perf_counter() - prepared) * 1000, align_ms=0.0)
+                           prepare_ms=(time.perf_counter() - prepared) * 1000, align_ms=0.0,
+                           locator="stripes" if stripes else "opencv", regions=[],
+                           source_width=img.shape[1], source_height=img.shape[0])
 
     hits: list[tuple[str | None, str | None, np.ndarray]] = []
     stage = ""
     detector_options = {"first_only": True} if not decode_values else {}
     if diagnostics is not None:
         detector_options["diagnostics"] = diagnostics["stages"]
-    tiers = candidate_tiers(gray, **detector_options)
+    if stripes:
+        from .stripes import candidate_tiers as stripe_tiers
+        tiers = stripe_tiers(img, diagnostics=diagnostics["stages"] if diagnostics is not None else None)
+    else:
+        tiers = candidate_tiers(gray, **detector_options)
     for stage, quads in tiers:
         started = time.perf_counter()
         decoded = 0
@@ -148,7 +160,8 @@ def read_tag(
 
     if diagnostics is not None:
         diagnostics.update(status="decoded" if decode_values else "located",
-                           decoded=sum(bool(text) for text, _, _ in hits))
+                           decoded=sum(bool(text) for text, _, _ in hits),
+                           regions=[{"quad": quad.tolist(), "stage": stage} for _, _, quad in hits])
 
     if not (want_crops or want_rotated):
         return [

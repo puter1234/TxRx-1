@@ -267,11 +267,14 @@ describe("operator flows without browser or screenshots", () => {
     await user.click(screen.getByRole("button", { name: "헤지스" }));
     await user.type(screen.getByLabelText("새 옵션 이름"), "시즌");
     await user.click(screen.getByRole("button", { name: "옵션 추가" }));
-    expect(screen.getByLabelText("시즌 선택값")).toBeTruthy();
-    await user.type(screen.getByLabelText("시즌 선택값"), "SS, FW");
+    await user.click(screen.getByRole("button", {name: "시즌 추가"}));
+    await user.type(screen.getByLabelText("시즌 추가값"), "SS{Enter}");
+    await user.type(screen.getByLabelText("시즌 추가값"), "FW{Enter}");
+    expect(screen.getByRole("button", { name: "시즌 SS 수정" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "시즌 FW 수정" })).toBeTruthy();
     const buttons = screen.getAllByRole("button", { name: "옵션 삭제" });
     await user.click(buttons[3]);
-    expect(screen.queryByLabelText("시즌 선택값")).toBeNull();
+    expect(screen.queryByLabelText("시즌 추가값")).toBeNull();
   });
 
   it("locks settings while a product job is active", async () => {

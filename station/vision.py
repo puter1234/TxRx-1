@@ -13,10 +13,11 @@ import time
 from pathlib import Path
 
 from .schema import Brand, Recipe
+from .vision_trace import record_operation, stage
 
 ROOT = Path(__file__).resolve().parents[1]
 
-OCR_MODULES = ("PIL", "torch", "torchvision", "timm", "pytorch_lightning", "yaml", "lmdb", "nltk", "zxingcpp")
+OCR_MODULES = ("PIL", "torch", "torchvision", "timm", "pytorch_lightning", "yaml", "lmdb", "nltk", "zxingcpp", "onnxruntime", "ultralytics")
 
 
 def missing_ocr_modules():
@@ -68,14 +69,41 @@ def verify_model(directory: Path):
 
 
 class Vision:
-    def __init__(self, model_dir: Path | None = None):
+    def __init__(self, model_dir: Path | None = None, *, locator="yolo26"):
         self.directory = model_dir or ROOT / "models/parseq"
+        self.locator = locator
         self.recognizer = None
         self.lock = threading.Lock()
         self.model_lock = threading.Lock()
         self.model_hash = None
         self.error = None
+        self.trace_directory = ROOT / "runtime/diagnostics"
 
+    @record_operation("locator.load")
+    def prepare_locator(self, locator=None):
+        if (locator or self.locator) == "yolo26":
+            from tagreader.model_pipeline import get_locator
+            get_locator()
+
+    def source_error(self, status, locator=None):
+        if (locator or self.locator) != "yolo26" or not status.get("connected"):
+            return None
+        from tagreader.model_pipeline import validate_source_size
+        profile = status.get("profile") or {}
+        try:
+            validate_source_size(status.get("width") or profile.get("width"),
+                                 status.get("height") or profile.get("height"))
+        except ValueError as exc:
+            return str(exc)
+        return None
+
+    def prepare_capture(self, status, locator=None):
+        error = self.source_error(status, locator)
+        if error:
+            raise ValueError(error)
+        self.prepare_locator(locator)
+
+    @record_operation("parseq.load")
     def load(self):
         with self.model_lock:
             self._load()
@@ -93,11 +121,13 @@ class Vision:
         sys.path.insert(0, str(self.directory / "source"))
         from strhub.models.utils import create_model
 
-        model = create_model("parseq", pretrained=False)
-        state = torch.load(
-            self.directory / "parseq-bb5792a6.pt", map_location="cpu", weights_only=True
-        )
-        model.model.load_state_dict(state, strict=True)
+        with stage("parseq.create_model"):
+            model = create_model("parseq", pretrained=False)
+        with stage("parseq.load_weights"):
+            state = torch.load(
+                self.directory / "parseq-bb5792a6.pt", map_location="cpu", weights_only=True
+            )
+            model.model.load_state_dict(state, strict=True)
         recognizer = Recognizer.__new__(Recognizer)
         recognizer.model_name = "parseq"
         recognizer.device = device
@@ -106,7 +136,8 @@ class Vision:
             if recognizer.device.type == "cuda"
             else ""
         )
-        recognizer.model = model.eval().to(recognizer.device)
+        with stage("parseq.to_device"):
+            recognizer.model = model.eval().to(recognizer.device)
         recognizer.img_size = tuple(model.hparams.img_size)
         recognizer.transform = build_transform(model.hparams.img_size)
         recognizer._lock = threading.Lock()
@@ -119,6 +150,7 @@ class Vision:
         """Inspect an OpenCV BGR frame without encoding or reopening a photo."""
         return self._inspect(frame, brand, recipe)
 
+    @record_operation("production.inspect")
     def _inspect(self, source, brand: Brand, recipe: Recipe):
         if not self.lock.acquire(blocking=False):
             raise RuntimeError("이전 영상 처리가 아직 끝나지 않았습니다.")
@@ -139,8 +171,8 @@ class Vision:
             width, height = (
                 image.size if image is not None else (frame.shape[1], frame.shape[0])
             )
-            if "barcode" in recipe.channels and width * height > 24_000_000:
-                raise ValueError("바코드 영상은 2,400만 화소 이하만 지원합니다.")
+            if width * height > 48_000_000:
+                raise ValueError("검사 영상은 4,800만 화소 이하만 지원합니다.")
             observations, detail, failures = {}, {}, []
             task = None
             if "ocr" in recipe.channels:
@@ -162,7 +194,7 @@ class Vision:
                     observations["ocr"] = fields
                     detail["ocr_serial"] = line["text"]
                     from ocr.normalize import normalize_strict
-                    if "barcode" in recipe.channels and linked_barcode and (
+                    if "barcode" in recipe.channels and len(recipe.barcode_targets) == 1 and linked_barcode and (
                         normalize_strict(linked_barcode) != normalize_strict(line["text"])
                     ):
                         failures.append({"code": "BARCODE_OCR_MISMATCH"})
@@ -177,24 +209,36 @@ class Vision:
                     if frame is not None
                     else cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
                 )
-                codes = sorted({t.text for t in tagreader.read_tag(bgr) if t.text}) if task is None else sorted({r.barcode for r in task.reads if r.barcode})
+                if task is None and self.locator == "yolo26":
+                    import pipeline
+                    task = pipeline.process_task(bgr, None, locator=self.locator, decode_values=True)
+                codes = [t.text for t in tagreader.read_tag(bgr) if t.text] if task is None else [r.barcode for r in task.reads if r.barcode]
+                # Separate registered tables identify label types. Keep duplicate
+                # values from distinct labels so two requested labels require two reads.
                 detail["barcodes"] = codes
-                if len(codes) != 1:
+                if len(codes) != len(recipe.barcode_targets):
                     failures.append(
                         {
                             "code": (
-                                "BARCODE_MISSING" if not codes else "MULTIPLE_BARCODES"
+                                "BARCODE_MISSING" if len(codes) < len(recipe.barcode_targets) else "MULTIPLE_BARCODES"
                             )
                         }
                     )
                 else:
-                    fields = brand.barcode_records.get(codes[0])
-                    if fields is None:
-                        failures.append(
-                            {"code": "BARCODE_UNREGISTERED", "actual": codes[0]}
-                        )
+                    from itertools import permutations
+                    tables = [brand.barcode_records if target == "tag" else brand.barcode_poly_records
+                              for target in recipe.barcode_targets]
+                    matches = [[table.get(code) for table, code in zip(tables, order)]
+                               for order in permutations(codes)]
+                    matches = [rows for rows in matches if all(row is not None for row in rows)]
+                    if not matches:
+                        failures.append({"code": "BARCODE_UNREGISTERED", "actual": ", ".join(codes)})
                     else:
-                        observations["barcode"] = fields
+                        fields = matches[0][0]
+                        if any(row != fields for rows in matches for row in rows):
+                            failures.append({"code": "BARCODE_LABEL_MISMATCH"})
+                        else:
+                            observations["barcode"] = fields
             return {
                 "observations": observations,
                 "details": detail,
@@ -207,14 +251,15 @@ class Vision:
         finally:
             self.lock.release()
 
-    def _auto_read(self, frame, *, diagnostics=None, decode_values=True):
+    def _auto_read(self, frame, *, diagnostics=None, decode_values=True, locator=None):
         self.load()
         import pipeline
         return pipeline.process_task(frame, self.recognizer, diagnostics=diagnostics,
-                                     decode_values=decode_values)
+                                     decode_values=decode_values, locator=locator or self.locator)
 
-    def test_auto(self, frame, *, include_previews=True, crop_images=None):
-        """Run the production OCR path on a fresh frame without writing a photo."""
+    @record_operation("test_auto")
+    def test_auto(self, frame, *, include_previews=True, crop_images=None, locator=None):
+        """Run the selected locator and return the actual prepared OCR inputs."""
         if not self.lock.acquire(blocking=False):
             raise RuntimeError("이전 영상 처리가 아직 끝나지 않았습니다.")
         try:
@@ -225,7 +270,7 @@ class Vision:
             self.load()
             ms_model_load = (time.perf_counter() - model_started) * 1000
             diagnostics = {}
-            task = self._auto_read(frame, diagnostics=diagnostics, decode_values=False)
+            task = self._auto_read(frame, diagnostics=diagnostics, decode_values=False, locator=locator)
             import cv2
             import importlib.metadata
             import tagreader
@@ -243,10 +288,9 @@ class Vision:
                     item = {**line, "crop_width": crop.shape[1], "crop_height": crop.shape[0]}
                     if include_previews:
                         preview = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
-                        preview.thumbnail((800, 500))
                         memory = io.BytesIO()
-                        preview.save(memory, format="JPEG", quality=80)
-                        item["preview"] = "data:image/jpeg;base64," + base64.b64encode(memory.getvalue()).decode()
+                        preview.save(memory, format="PNG")
+                        item["preview"] = "data:image/png;base64," + base64.b64encode(memory.getvalue()).decode()
                     if crop_images is not None:
                         crop_images.append(crop)
                     lines.append(item)
@@ -283,6 +327,7 @@ class Vision:
             "loaded": self.recognizer is not None,
             "local_assets_present": (self.directory / "manifest.json").exists(),
             "model": "PARSeq",
+            "locator": self.locator,
             "model_hash": self.model_hash,
             "error": self.error,
             "busy": self.lock.locked(),

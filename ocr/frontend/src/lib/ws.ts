@@ -19,26 +19,31 @@ export function connectWS() {
     try {
       await api("/auth/local", {});
       if (!alive) return;
-      socket = new WebSocket(
+      const current = new WebSocket(
         `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/ws`,
       );
-      socket.onmessage = (e) => {
-        if (!alive) return;
+      socket = current;
+      // A replacement connection has its own deadline. Reusing the expired
+      // timestamp closes every retry before its first status can arrive.
+      lastMessage = Date.now();
+      current.onmessage = (e) => {
+        if (!alive || socket !== current) return;
         try {
           const message = JSON.parse(e.data);
           acceptSnapshot(message.state);
           lastMessage = Date.now();
           useApp.getState().setConnected(true);
-          socket?.send(
+          current.send(
             JSON.stringify({ type: "heartbeat", event_seq: message.event_seq }),
           );
         } catch {
-          socket?.close();
+          current.close();
         }
       };
-      socket.onerror = () => socket?.close();
-      socket.onclose = () => {
-        if (alive) {
+      current.onerror = () => current.close();
+      current.onclose = () => {
+        if (alive && socket === current) {
+          socket = undefined;
           useApp.getState().setConnected(false);
           retryConnect();
         }

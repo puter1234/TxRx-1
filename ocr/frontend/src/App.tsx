@@ -22,6 +22,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/simple" element={<SimpleCount />} />
+          <Route path="/vision" element={<SimpleCount mode="vision" />} />
           <Route path="/condition/setup" element={<ConditionWizard />} />
           <Route path="/condition/run" element={<ConditionRun />} />
           <Route path="/equipment" element={<Equipment />} />

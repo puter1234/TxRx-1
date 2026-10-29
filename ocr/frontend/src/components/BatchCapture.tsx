@@ -1,26 +1,43 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../station/shared";
 import type { BenchHook } from "./DeviceTests";
 import Help from "./Help";
 
 export default function BatchCapture({ bench, locked }: { bench: BenchHook; locked: boolean }) {
   const [count, setCount] = useState(30);
+  const [interval, setInterval] = useState(0);
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+  const active = useRef(false);
   const batch = bench.state?.batch;
   useEffect(() => { api("/bench/batches/latest").then(setResult).catch(() => {}); }, []);
+  useEffect(() => {
+    const cancel = () => {
+      if (active.current) void fetch("/api/bench/camera/batch/cancel", { method: "POST", credentials: "same-origin", keepalive: true }).catch(() => {});
+    };
+    const hidden = () => { if (document.visibilityState === "hidden") cancel(); };
+    window.addEventListener("pagehide", cancel);
+    document.addEventListener("visibilitychange", hidden);
+    return () => {
+      window.removeEventListener("pagehide", cancel);
+      document.removeEventListener("visibilitychange", hidden);
+      cancel();
+    };
+  }, []);
   const shoot = () => bench.action(async () => {
-    setError(""); setPending(true); setResult(null);
-    try { setResult(await api("/bench/camera/batch", { count })); }
+    setError(""); setPending(true); setResult(null); active.current = true;
+    try { setResult(await api("/bench/camera/batch", { count, interval_ms: interval })); }
     catch (e) { setError((e as Error).message); }
-    finally { setPending(false); }
+    finally { setPending(false); active.current = false; }
   });
   return <div className="space-y-3 rounded-xl border border-line p-4">
     <div className="flex items-center gap-3"><h3 className="text-xl font-bold">연속 촬영</h3><Help text="서로 다른 원본 프레임을 지정한 장수만큼 PNG로 저장합니다. ZIP 안에 사진과 촬영 설정이 들어갑니다. 저장이 카메라 속도를 따라가지 못하면 중간 프레임을 건너뛰며 실제 저장 속도와 건너뛴 수를 기록합니다. 최대 500장, 5분입니다."/></div>
     <label className="block text-lg font-bold">촬영 장수<input className="field mt-2" type="number" min="1" max="500" step="1" disabled={pending || batch?.active} value={count} onChange={e => setCount(Number(e.target.value))}/></label>
+    <label className="block text-lg font-bold">촬영 간격 (ms)<input className="field mt-2" type="number" min="0" max="10000" step="1" disabled={pending || batch?.active} value={interval} onChange={e => setInterval(Number(e.target.value))}/></label>
+    <p className="text-base text-ink-700">0은 가능한 빠르게 촬영합니다. 설정 간격 기준 최소 {((count - 1) * interval / 1000).toFixed(1)}초이며 카메라와 저장 속도에 따라 더 걸릴 수 있습니다.</p>
     <div className="flex flex-wrap gap-3">
-      <button className="btn btn-primary" disabled={locked || bench.busy || bench.state?.native_busy || !bench.state?.camera?.connected || !Number.isInteger(count) || count < 1 || count > 500} onClick={shoot}>촬영 시작</button>
+      <button className="btn btn-primary" disabled={locked || bench.busy || bench.state?.native_busy || bench.state?.rfid_busy || bench.state?.sensor_ocr?.busy || !bench.state?.camera?.connected || !Number.isInteger(count) || count < 1 || count > 500 || !Number.isInteger(interval) || interval < 0 || interval > 10000 || (count - 1) * interval >= 300000} onClick={shoot}>촬영 시작</button>
       {(pending || batch?.active) && <button className="btn btn-outline" onClick={() => api("/bench/camera/batch/cancel", {}).catch(e => setError(e.message))}>촬영 중지</button>}
     </div>
     {(pending || batch?.active) && <p role="status" className="text-xl font-bold">{batch?.completed || 0} / {batch?.target || count}장 저장 중</p>}

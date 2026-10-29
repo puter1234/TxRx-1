@@ -256,6 +256,21 @@
       "title": "Do Lines",
       "type": "array"
     },
+    "speed_line": {
+      "anyOf": [
+        {
+          "maximum": 1023,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "미지정 시 J4012 JetPack 6 기본 배선의 DO4(PH.07, offset 50)를 사용합니다.",
+      "title": "Speed Line"
+    },
     "rfid_port": {
       "default": "",
       "title": "Rfid Port",
@@ -269,7 +284,7 @@
     "camera_width": {
       "anyOf": [
         {
-          "maximum": 3280,
+          "maximum": 8000,
           "minimum": 320,
           "type": "integer"
         },
@@ -283,7 +298,7 @@
     "camera_height": {
       "anyOf": [
         {
-          "maximum": 2464,
+          "maximum": 6000,
           "minimum": 240,
           "type": "integer"
         },
@@ -401,6 +416,13 @@
       "default": true,
       "title": "Automatic Cycle",
       "type": "boolean"
+    },
+    "rfid_power": {
+      "default": 2600,
+      "maximum": 2600,
+      "minimum": 0,
+      "title": "Rfid Power",
+      "type": "integer"
     }
   },
   "title": "StationConfig",

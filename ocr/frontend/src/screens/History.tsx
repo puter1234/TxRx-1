@@ -7,6 +7,7 @@ import type { Job } from "../lib/types";
 import { api as request, ResultCard, type Result } from "../station/shared";
 import { reportError } from "../lib/station";
 import Modal from "../components/Modal";
+import Statistics from "../components/Statistics";
 
 function InspectionHistory({
   job,
@@ -116,27 +117,22 @@ export default function History() {
     if (job.mode === "condition" && cfg) {
       setW({
         step: 3,
+        presetId: cfg.presetId || "",
+        testRun: cfg.testRun || false,
         brandId: cfg.brandId ?? null,
-        checks: cfg.checks ?? {
-          rfid: false,
-          ocr: false,
-          barcode_tag: false,
-          barcode_poly: false,
-        },
+        checks: cfg.checks ?? { rfid: false, ocr: false, barcode_tag: false, barcode_poly: false },
         countMode: cfg.countMode ?? "target",
         target: cfg.target ?? 40,
         sku: cfg.item?.sku ?? "",
         color: cfg.item?.color ?? "",
         size: cfg.item?.size ?? "",
-        targets: cfg.targets || {
-          style: cfg.item?.sku || "",
-          color: cfg.item?.color || "",
-          size: cfg.item?.size || "",
-        },
+        targets: cfg.targets || { style: cfg.item?.sku || "", color: cfg.item?.color || "", size: cfg.item?.size || "" },
       });
       nav("/condition/setup");
     } else {
-      nav("/simple");
+      nav(job.mode === "vision" ? "/vision" : "/simple", {
+        state: { presetId: cfg?.presetId, targets: cfg?.targets || {}, target: cfg?.target || null, testRun: cfg?.testRun || false },
+      });
     }
   };
 
@@ -158,7 +154,8 @@ export default function History() {
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-6">
+      <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-6">
+        <Statistics />
         <div className="mx-auto max-w-6xl space-y-4">
           <div className="card overflow-x-auto">
             <table className="w-full">
@@ -221,7 +218,7 @@ export default function History() {
                             : "bg-panel text-ink-700")
                         }
                       >
-                        {job.mode === "condition" ? "조건 계수" : "단순 계수"}
+                        {{ condition: "조건 계수", simple: "단순 계수", vision: "와펜 계수" }[job.mode]}
                       </span>
                     </td>
                     <td className="px-4 py-3.5 text-base font-bold">
@@ -231,7 +228,7 @@ export default function History() {
                       {job.config?.item?.sku || "없음"}
                     </td>
                     <td className="px-4 py-3.5 text-right text-lg font-extrabold tabular-nums">
-                      {job.count}벌
+                      {job.count}개
                     </td>
                     <td
                       className="max-w-[220px] truncate px-4 py-3.5 text-lg font-semibold text-ink-700"

@@ -19,3 +19,6 @@ flask>=3.0
 
 # --- 테스트 ---
 pytest>=8.0.0
+
+# --- 택 검출과 바코드 분할 ---
+-r requirements-barcode-pipeline.txt

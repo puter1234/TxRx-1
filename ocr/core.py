@@ -15,6 +15,7 @@ from pathlib import Path
 
 import torch
 from PIL import Image, ImageOps
+from station.vision_trace import stage
 
 HUB_REPO = "baudm/parseq"
 MODEL_NAMES = ["parseq"]
@@ -94,8 +95,12 @@ def infer_batch(model, tensor):
     PARSeq's tokenizer calls ids.tolist() for every line. Decoding on the CPU
     avoids one GPU synchronization per line while preserving its EOS handling.
     """
-    probabilities = model(tensor).softmax(-1).cpu()
-    return model.tokenizer.decode(probabilities)
+    with stage(f"parseq.forward device={tensor.device} shape={tuple(tensor.shape)}"):
+        logits = model(tensor)
+    with stage("parseq.probabilities_to_cpu"):
+        probabilities = logits.softmax(-1).cpu()
+    with stage("parseq.decode"):
+        return model.tokenizer.decode(probabilities)
 
 
 def to_rgb(image: Image.Image) -> Image.Image:
@@ -139,7 +144,10 @@ class Recognizer:
             return []
         with self._lock:
             start = time.perf_counter()
-            tensor = torch.stack([self.transform(to_rgb(image)) for image in images]).to(self.device)
+            with stage("parseq.transform"):
+                tensor = torch.stack([self.transform(to_rgb(image)) for image in images])
+            with stage("parseq.input_to_device"):
+                tensor = tensor.to(self.device)
             labels, confidences = infer_batch(self.model, tensor)
             probabilities = [per_char.tolist() for per_char in confidences]
             elapsed = (time.perf_counter() - start) * 1000.0

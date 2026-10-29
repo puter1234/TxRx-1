@@ -37,6 +37,18 @@ it("keeps motor ON available while LED is on and within its own cooldown", () =>
   expect(mocks.bench.pulse).toHaveBeenCalledWith("motor");
 });
 
+it.each([false, true])("shows the restart wait and leaves motor OFF available (compact=%s)", compact => {
+  mocks.bench.state.cooldown_ms.motor = 4800;
+  const view = render(<MemoryRouter><OutputTests bench={mocks.bench} compact={compact}/></MemoryRouter>);
+  const motor = () => within(screen.getByRole("group", { name: "모터 스위치" }));
+  expect(motor().getByRole("button", { name: "켜기" })).toHaveProperty("disabled", true);
+  expect(motor().getByRole("button", { name: "끄기" })).toHaveProperty("disabled", false);
+  expect(screen.getByText("모터 재시작까지 5초")).toBeTruthy();
+  mocks.bench.state.cooldown_ms.motor = 0;
+  view.rerender(<MemoryRouter><OutputTests bench={mocks.bench} compact={compact}/></MemoryRouter>);
+  expect(motor().getByRole("button", { name: "켜기" })).toHaveProperty("disabled", false);
+});
+
 it("finds and saves RFID ports independently of camera errors and connected GPIO", async () => {
   mocks.api.mockImplementation(async (path: string) => {
     if (path === "/bench/camera/devices") throw new Error("카메라 검색 실패");
@@ -49,9 +61,13 @@ it("finds and saves RFID ports independently of camera errors and connected GPIO
   const select = screen.getByLabelText("직렬 포트") as HTMLSelectElement;
   expect(select.closest("fieldset")?.disabled).toBe(false);
   fireEvent.change(select, { target: { value: "/dev/ttyUSB0" } });
+  const power = screen.getByRole("spinbutton", { name: "RFID 출력" });
+  expect(power).toHaveProperty("value", "2600");
+  expect(power).toHaveProperty("max", "2600");
+  fireEvent.change(power, { target: { value: "2000" } });
   fireEvent.click(screen.getByRole("button", { name: "RFID 설정 저장" }));
   await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/bench/rfid/setup", {
-    rfid_port: "/dev/ttyUSB0", rfid_window_ms: 500, rfid_protocol_confirmed: true,
+    rfid_port: "/dev/ttyUSB0", rfid_window_ms: 500, rfid_power: 2000, rfid_protocol_confirmed: true,
   }, "PUT"));
 });
 
@@ -70,9 +86,11 @@ it("allows RFID reading with both outputs on and displays read errors beside the
   mocks.bench.state.io.motor_requested = true;
   mocks.api.mockImplementation(async (path: string) => {
     if (path === "/bench/rfid") throw new Error("RFID response timeout: 08");
+    if (path === "/bench/pipeline") return { active: false, busy: false, jobs: [] };
+    if (path === "/bench/captures/latest" || path === "/bench/batches/latest") return null;
     return {};
   });
-  render(<MemoryRouter><Equipment/></MemoryRouter>);
+  render(<MemoryRouter initialEntries={["/equipment?tab=rfid"]}><Equipment/></MemoryRouter>);
   const read = screen.getByRole("button", { name: "태그 읽기" }) as HTMLButtonElement;
   expect(read.disabled).toBe(false);
   fireEvent.click(read);
@@ -111,9 +129,13 @@ it("shows the exact OCR test frame and offers its original download", async () =
     expect(screen.queryByText("검사 통과")).toBeNull();
     expect(screen.queryByText("검사 실패")).toBeNull();
     expect(screen.getByAltText("자동 검출한 글자 줄")).toHaveProperty("src", "data:image/jpeg;base64,dGVzdA==");
-    expect(mocks.api).toHaveBeenCalledWith("/bench/ocr/read", {});
+    expect(mocks.api).toHaveBeenCalledWith("/bench/ocr/read", { locator: "yolo26" });
     expect(screen.getByAltText("이번 검사에 사용한 사진").getAttribute("src")).toBe("/api/bench/ocr/frames/test-frame");
     expect(screen.getByRole("link", { name: "검사 원본 사진 저장" }).getAttribute("href")).toBe("/api/bench/ocr/frames/test-frame?original=true");
+    fireEvent.change(screen.getByLabelText("바코드 위치 검출"), { target: { value: "opencv" } });
+    await waitFor(() => expect(read.disabled).toBe(false));
+    fireEvent.click(read);
+    await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/bench/ocr/read", { locator: "opencv" }));
   } finally {
     fetchMock.mockRestore(); create.mockRestore(); revoke.mockRestore();
   }

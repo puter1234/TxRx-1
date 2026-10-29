@@ -110,19 +110,28 @@ it("assigns a code color in settings and persists its exact code separately from
     />,
   );
   await user.click(screen.getByRole("button", { name: "테스트 브랜드" }));
+  await user.click(screen.getByRole("button", { name: "색상 BK 수정" }));
   await user.click(screen.getByRole("button", { name: "BK 색상 지정" }));
   await user.click(screen.getByRole("button", { name: "검정" }));
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(
     screen.getByRole("button", { name: "BK 색상 지정" }).style.backgroundColor,
   ).toBe("rgb(0, 0, 0)");
+  await user.click(screen.getByRole("button", { name: "색상 N3 수정" }));
+  await user.clear(screen.getByLabelText("색상 N3 수정값"));
+  await user.type(screen.getByLabelText("색상 N3 수정값"), "BK{Enter}");
+  expect(screen.getByRole("alert").textContent).toBe("이미 등록된 값입니다.");
+  await user.clear(screen.getByLabelText("색상 N3 수정값"));
+  await user.type(screen.getByLabelText("색상 N3 수정값"), "NV{Enter}");
+  await user.click(screen.getByRole("button", { name: "색상 NV 수정" }));
+  expect(screen.getByRole("button", { name: "NV 색상 지정" }).style.backgroundColor).toBe("rgb(20, 43, 73)");
   await user.type(screen.getByLabelText("설정 변경 사유"), "색상 표시 등록");
   await user.click(screen.getByRole("button", { name: "설정 저장" }));
   await waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
   const saved = JSON.parse(fetcher.mock.calls[0][1].body as string).brand;
-  expect(saved.options[0].values).toEqual(["N3", "WH", "BK"]);
+  expect(saved.options[0].values).toEqual(["NV", "WH", "BK"]);
   expect(saved.options[0].colors).toEqual({
-    N3: "#142B49",
+    NV: "#142B49",
     WH: "#FFFFFF",
     BK: "#000000",
   });
@@ -146,6 +155,7 @@ it("clears mappings for deleted codes and validates custom color input", async (
     />,
   );
   await user.click(screen.getByRole("button", { name: "테스트 브랜드" }));
+  await user.click(screen.getByRole("button", { name: "색상 N3 수정" }));
   await user.click(screen.getByRole("button", { name: "N3 색상 지정" }));
   await user.clear(screen.getByLabelText("색상 값"));
   await user.type(screen.getByLabelText("색상 값"), "invalid");
@@ -156,9 +166,9 @@ it("clears mappings for deleted codes and validates custom color input", async (
   await user.clear(screen.getByLabelText("색상 값"));
   await user.type(screen.getByLabelText("색상 값"), "#Ab1234");
   await user.click(screen.getByRole("button", { name: "적용" }));
-  await user.clear(screen.getByLabelText("색상 선택값"));
-  await user.type(screen.getByLabelText("색상 선택값"), "N3, BK");
-  expect(screen.queryByRole("button", { name: "WH 색상 지정" })).toBeNull();
+  await user.click(screen.getByRole("button", {name: "색상 WH 수정"}));
+  await user.click(screen.getByRole("button", {name: "색상 WH 삭제"}));
+  expect(screen.queryByRole("button", { name: "색상 WH 수정" })).toBeNull();
   await user.type(screen.getByLabelText("설정 변경 사유"), "선택값 수정");
   await user.click(screen.getByRole("button", { name: "설정 저장" }));
   const option = JSON.parse(fetcher.mock.calls[0][1].body as string).brand

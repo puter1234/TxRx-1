@@ -19,6 +19,10 @@ class Frame:
     payload: bytes
 
 
+class InventoryCancelled(RuntimeError):
+    pass
+
+
 def frame(command: int, payload: bytes = b"", kind: int = 0):
     if len(payload) > 512:
         raise ValueError("RFID frame too long")
@@ -104,7 +108,7 @@ class Reader:
         if self.port.write(data) != len(data):
             raise IOError("Incomplete RFID write")
 
-    def _response(self, command, payload=b"", timeout=0.6):
+    def _response(self, command, payload=b"", timeout=1.0):
         self.parser = Parser()
         self.port.reset_input_buffer()
         self._send(command, payload)
@@ -117,38 +121,101 @@ class Reader:
                     return m.payload
         raise TimeoutError(f"RFID response timeout: {command:02X}")
 
-    def initialize(self):
+    def _set_power(self, power):
+        if not isinstance(power, int) or not 0 <= power <= 2600:
+            raise ValueError("RFID 출력은 0~2600의 정수로 입력하세요.")
+        payload = power.to_bytes(2, "big")
+        if self._response(0xB6, payload) != b"\x00":
+            raise IOError("RFID power SET rejected")
+        if self._response(0xB7) != payload:
+            raise IOError("RFID power GET mismatch")
+        self.power = power
+        self.last_error = None
+
+    def set_power(self, power):
         with self.lock:
-            self._response(0x08)
-            if self._response(0x07, b"\x06") != b"\x00":
-                raise IOError("RFID region SET rejected")
-            if self._response(0x08) != b"\x06":
-                raise IOError("RFID region GET mismatch")
-            if self._response(0xB6, (2000).to_bytes(2, "big")) != b"\x00":
-                raise IOError("RFID power SET rejected")
-            if self._response(0xB7) != (2000).to_bytes(2, "big"):
-                raise IOError("RFID power GET mismatch")
+            if not self.initialized:
+                raise RuntimeError("RFID initialization required")
+            try:
+                self._set_power(power)
+            except Exception as exc:
+                self.initialized = False
+                self.last_error = str(exc)
+                raise
+
+    def initialize(self, power=2600):
+        with self.lock:
+            self.initialized = False
+            try:
+                region = self._response(0x08)
+                if len(region) != 1:
+                    raise IOError("RFID region GET invalid")
+                if region != b"\x06":
+                    if self._response(0x07, b"\x06") != b"\x00":
+                        raise IOError("RFID region SET rejected")
+                    if self._response(0x08) != b"\x06":
+                        raise IOError("RFID region GET mismatch")
+                # Match the supplied Pico initialization. Region selection alone
+                # does not establish automatic frequency hopping.
+                if self._response(0xAD, b"\xff") != b"\x00":
+                    raise IOError("RFID frequency hopping SET rejected")
+                self._set_power(power)
+            except Exception as exc:
+                self.last_error = str(exc)
+                raise
             self.initialized = True
 
+    def inventory_once(self, timeout_ms: int, cancel: threading.Event | None = None):
+        return self._inventory(timeout_ms, cancel, rounds=1, first_read=True)
+
     def inventory(self, window_ms: int, cancel: threading.Event | None = None):
+        return self._inventory(window_ms, cancel, rounds=100, first_read=False)
+
+    def inventory_bench(self, window_ms: int, cancel: threading.Event | None = None):
+        return self._inventory(window_ms, cancel, rounds=5, first_read=False,
+                               idle_ms=500, require_response=True)
+
+    def _inventory(self, window_ms, cancel, *, rounds, first_read,
+                   idle_ms=None, require_response=False):
         if not self.initialized:
             raise RuntimeError("RFID initialization required")
         with self.lock:
+            if cancel and cancel.is_set():
+                raise InventoryCancelled("RFID inventory cancelled")
             self.parser = Parser()
             self.port.reset_input_buffer()
-            self._send(0x27, b"\x22\x00\x64")
+            self._send(0x27, b"\x22" + rounds.to_bytes(2, "big"))
             deadline = time.monotonic() + window_ms / 1000
             tags = {}
+            received_response = False
+            idle_deadline = None
             try:
                 while time.monotonic() < deadline:
                     if cancel and cancel.is_set():
-                        raise RuntimeError("RFID inventory cancelled")
-                    for m in self.parser.feed(self.port.read(512)):
+                        raise InventoryCancelled("RFID inventory cancelled")
+                    if idle_deadline is not None and time.monotonic() >= idle_deadline:
+                        break
+                    no_tag = False
+                    data = self.port.read(512)
+                    if cancel and cancel.is_set():
+                        raise InventoryCancelled("RFID inventory cancelled")
+                    for m in self.parser.feed(data):
                         if m.kind == 1 and m.command == 0xFF:
-                            # No-tag/error responses are not a successful inventory.
+                            # No tag response or an air CRC failure (0x15) is
+                            # a missed round, including during bench inventory.
+                            # Keep collected tags and wait for later rounds.
+                            if m.payload == b"\x15":
+                                no_tag = True
+                                received_response = True
+                                if idle_ms is not None:
+                                    idle_deadline = time.monotonic() + idle_ms / 1000
+                                continue
                             raise IOError("RFID inventory error: " + m.payload.hex())
                         if m.kind == 2 and m.command == 0x22:
                             tag = tag_notice(m)
+                            received_response = True
+                            if idle_ms is not None:
+                                idle_deadline = time.monotonic() + idle_ms / 1000
                             epc = tag["epc"]
                             record = tags.setdefault(
                                 epc,
@@ -156,8 +223,14 @@ class Reader:
                             )
                             record["samples"].append(tag["rssi"])
                             record["last_ns"] = tag["mono_ns"]
+                    # Process the whole received chunk so simultaneous distinct
+                    # EPCs remain visible to the product mismatch check.
+                    if first_read and (tags or no_tag):
+                        break
                 if self.parser.errors:
                     raise IOError("RFID frame checksum/length error")
+                if require_response and not received_response:
+                    raise TimeoutError("RFID 응답이 없습니다.")
             finally:
                 self._send(0x28)
             return [

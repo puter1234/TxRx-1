@@ -1,0 +1,6 @@
+# Bundled YOLO26 detection and segmentation exports, executed locally on CPU.
+# Keep these compatible with requirements-counting.txt and Jetson's PyTorch.
+ultralytics==8.4.177
+onnxruntime==1.23.2
+numpy>=1.26,<2
+opencv-python>=4.10,<4.12

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
   ChevronRight,
@@ -16,6 +16,8 @@ import { api } from "../lib/api";
 import Help from "../components/Help";
 import OptionButtons from "../components/OptionButtons";
 import type { Brand, Checks } from "../lib/types";
+import { usePresets } from "../lib/presets";
+import { ended, sendCommand, reportError } from "../lib/station";
 
 const STEPS = ["브랜드 및 검사 항목", "수량 설정", "조건 설정"];
 
@@ -69,12 +71,14 @@ function CheckRow({
   label,
   checked,
   disabled,
+  locked,
   indent,
   onToggle,
 }: {
   label: string;
   checked: boolean;
   disabled?: boolean;
+  locked?: boolean;
   indent?: boolean;
   onToggle: () => void;
 }) {
@@ -90,7 +94,7 @@ function CheckRow({
             : "border-line bg-white hover:border-brand-200")
       }
       onClick={onToggle}
-      disabled={disabled}
+      disabled={disabled || locked}
     >
       <span
         className={
@@ -131,6 +135,26 @@ export default function ConditionWizard() {
   const [starting, setStarting] = useState(false);
   const online = useApp((s) => s.connected);
   const hardware = useApp((s) => s.snapshot?.mode === "HARDWARE");
+  const presets = usePresets("condition");
+  const [params] = useSearchParams();
+  const [linked, setLinked] = useState(false);
+  const preset = presets.rows.find((p) => p.id === w.presetId);
+  const brandPresets = presets.rows.filter((p) => p.brand_id === w.brandId);
+  useEffect(() => {
+    const id = params.get("preset");
+    if (linked || !id || presets.loading || !brands.length) return;
+    const row = presets.rows.find((p) => p.id === id);
+    const b = brands.find(item => item.id === row?.brand_id);
+    setW({ presetId: id, brandId: row?.brand_id || null, testRun: params.get("test") === "1", step: 1, targets: {},
+      ...(b ? {checks: {...b.caps}} : {}) });
+    setLinked(true);
+  }, [params, presets.rows, presets.loading, linked, brands, setW]);
+  useEffect(() => {
+    if (!w.presetId && hardware && !params.get("preset")) {
+      const row = presets.rows.find((p) => p.brand_id === w.brandId);
+      if (row) setW({ presetId: row.id });
+    }
+  }, [preset, presets.rows, w.presetId, w.brandId, hardware, params, setW]);
 
   useEffect(() => {
     api<Brand[]>("/api/brands")
@@ -150,16 +174,16 @@ export default function ConditionWizard() {
   const selectBrand = (b: Brand) => {
     setW({
       brandId: b.id,
+      presetId: hardware ? presets.rows.find((p) => p.brand_id === b.id)?.id || "" : "",
       targets: {},
-      checks: { ...b.caps, barcode_tag: false, barcode_poly: false },
+      checks: { ...b.caps },
     });
   };
 
   const toggle = (key: keyof Checks) => {
     if (
       !brand ||
-      !brand.caps[key] ||
-      (hardware && (key === "rfid" || key === "ocr"))
+      !brand.caps[key]
     )
       return;
     setW({ checks: { ...w.checks, [key]: !w.checks[key] } });
@@ -190,7 +214,7 @@ export default function ConditionWizard() {
     w.checks.barcode_tag ||
     w.checks.barcode_poly;
   const canNext1 =
-    !!brand && anyCheck && (!hardware || (w.checks.rfid && w.checks.ocr));
+    !!brand && anyCheck && (!w.presetId || !!preset) && !presets.loading && !presets.error;
   const validTargets =
     !!brand?.source.options.length &&
     brand.source.options.every((o) => o.values.includes(w.targets[o.key]));
@@ -210,6 +234,9 @@ export default function ConditionWizard() {
     try {
       await api("/api/session/start", {
         mode: "condition",
+        presetId: preset?.id,
+        presetRevision: preset?.revision,
+        testRun: w.testRun,
         brandId: brand.id,
         brandName: brand.name,
         checks: w.checks,
@@ -224,7 +251,7 @@ export default function ConditionWizard() {
       });
       nav("/condition/run");
     } catch {
-      // The shared API error banner retains the server's reason.
+      if (!ended(useApp.getState().snapshot?.session)) nav("/condition/run");
     } finally {
       setStarting(false);
     }
@@ -233,10 +260,11 @@ export default function ConditionWizard() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center gap-4 px-6 pt-5">
-        <button className="btn btn-outline btn-sm" onClick={() => nav("/")}>
+        <button className="btn btn-outline btn-sm" disabled={starting} onClick={() => nav("/")}>
           <ArrowLeft size={20} /> 처음 화면
         </button>
         <h1 className="text-2xl font-extrabold">조건 계수 설정</h1>
+        {w.testRun && <span className="rounded border border-line px-3 py-1 font-bold">시험 작업</span>}
       </div>
 
       <div className="shrink-0 px-6 pt-5">
@@ -292,6 +320,15 @@ export default function ConditionWizard() {
             </div>
 
             <div className="card flex flex-col p-6">
+              {brand && brandPresets.length > 1 && <div className="mb-5 space-y-2">
+                <label className="block text-lg font-bold">촬영 설정
+                  <select className="field mt-2" value={w.presetId} disabled={presets.loading} onChange={(e) => setW({presetId: e.target.value})}>
+                    <option value="" disabled>촬영 설정 선택</option>
+                    {brandPresets.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                </label>
+              </div>}
+              {presets.error && <p role="alert">{presets.error} <button className="btn btn-outline btn-sm" onClick={presets.retry}>다시 불러오기</button></p>}
               <h2 className="text-xl font-extrabold">
                 {brand ? brand.name + " 검사 항목" : "검사 항목"}
               </h2>
@@ -319,9 +356,10 @@ export default function ConditionWizard() {
                     disabled={!barcodeCapable}
                     onToggle={toggleBarcode}
                   />
-                  <div className="flex justify-end">
-                    <Help text="바코드는 선택 항목입니다. 여러 인식 결과가 있어도 제품 하나는 한 번만 계수합니다." />
-                  </div>
+                  {barcodeChecked && <div className="space-y-2 pl-6">
+                    <CheckRow label="가격택 바코드" checked={w.checks.barcode_tag} disabled={!brand.caps.barcode_tag} onToggle={() => toggle("barcode_tag")}/>
+                    <CheckRow label="폴리백 바코드" checked={w.checks.barcode_poly} disabled={!brand.caps.barcode_poly} onToggle={() => toggle("barcode_poly")}/>
+                  </div>}
                 </div>
               )}
             </div>
@@ -369,17 +407,15 @@ export default function ConditionWizard() {
                       >
                         <Minus size={24} />
                       </button>
-                      <div className="flex h-14 w-28 items-center justify-center rounded-xl border-2 border-line bg-white text-3xl font-black tabular-nums">
-                        {w.target}
-                      </div>
+                      <input aria-label="목표 수량" type="number" min={1} max={1000000} className="field !h-14 !w-36 text-center text-3xl font-black" value={w.target} onChange={(e) => setW({target: Number(e.target.value)})}/>
                       <button
                         aria-label="목표 수량 늘리기"
                         className="btn btn-outline h-14 w-14 !min-h-0 !p-0"
-                        onClick={() => setW({ target: w.target + 1 })}
+                        onClick={() => setW({ target: Math.min(1000000, w.target + 1) })}
                       >
                         <Plus size={24} />
                       </button>
-                      <span className="text-xl font-bold">장</span>
+                      <span className="text-xl font-bold">개</span>
                       <div className="ml-2 flex gap-2">
                         {[20, 40, 60, 100].map((n) => (
                           <button
@@ -437,7 +473,7 @@ export default function ConditionWizard() {
                   label="작업 모드"
                   value={
                     w.countMode === "target"
-                      ? "목표 수량 " + w.target + "장"
+                      ? "목표 수량 " + w.target + "개"
                       : "계속 계수"
                   }
                 />
@@ -479,7 +515,7 @@ export default function ConditionWizard() {
                   label="작업 모드"
                   value={
                     w.countMode === "target"
-                      ? "목표 수량 " + w.target + "장"
+                      ? "목표 수량 " + w.target + "개"
                       : "계속 계수"
                   }
                 />
@@ -499,6 +535,7 @@ export default function ConditionWizard() {
       <div className="flex shrink-0 items-center gap-3 border-t border-line bg-white px-6 py-4">
         <button
           className="btn btn-outline"
+          disabled={starting}
           onClick={() =>
             w.step === 1 ? nav("/") : setW({ step: (w.step - 1) as 1 | 2 | 3 })
           }
@@ -511,6 +548,7 @@ export default function ConditionWizard() {
             onClick={() =>
               setW({
                 brandId: null,
+                presetId: "",
                 checks: {
                   rfid: false,
                   ocr: false,
@@ -524,6 +562,7 @@ export default function ConditionWizard() {
           </button>
         )}
         <div className="ml-auto" />
+        {starting && <button className="btn btn-danger" onClick={() => { void sendCommand("stop").catch(reportError); }}>정지</button>}
         {w.step < 3 ? (
           <button
             className="btn btn-primary"
@@ -532,7 +571,7 @@ export default function ConditionWizard() {
               (w.step === 1
                 ? !canNext1
                 : w.countMode === "target" &&
-                  (!Number.isInteger(w.target) || w.target < 1))
+                  (!Number.isInteger(w.target) || w.target < 1 || w.target > 1000000))
             }
             onClick={() => setW({ step: (w.step + 1) as 1 | 2 | 3 })}
           >
@@ -541,10 +580,10 @@ export default function ConditionWizard() {
         ) : (
           <button
             className="btn btn-primary btn-lg"
-            disabled={!online || starting || !validTargets}
+            disabled={!online || starting || !validTargets || !canNext1 || (w.countMode === "target" && (!Number.isInteger(w.target) || w.target < 1 || w.target > 1000000))}
             onClick={start}
           >
-            <Play size={24} /> 검사 화면 열기
+            <Play size={24} /> 검사 시작
           </button>
         )}
       </div>

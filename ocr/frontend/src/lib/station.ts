@@ -10,25 +10,36 @@ import { useApp } from "./store";
 
 export const ended = (s: Session | null | undefined) =>
   !s || ["FINISHED", "DONE", "ABORTED"].includes(s.phase);
+export const runPath = (kind?: string) =>
+  kind === "simple" ? "/simple" : kind === "vision" ? "/vision" : "/condition/run";
+// Only a fresh READY job can be adjusted without discarding the job. HOLD,
+// PAUSED and recovery states may still own a product and remain protected.
+export const cameraEditable = (s: Snapshot | null | undefined) =>
+  !s?.busy && (ended(s?.session) || (s?.session?.phase === "READY" && !s.session.active_product));
 export const brandView = (b: StationBrand): Brand => ({
   ...b,
   source: b,
-  caps: {
+  caps: b.caps || {
     ocr: true,
     rfid: b.decoder.kind !== "none",
     barcode_tag: Object.keys(b.barcode_records).length > 0,
-    barcode_poly: false,
+    barcode_poly: Object.keys(b.barcode_poly_records || {}).length > 0,
   },
 });
 export const configView = (s: Session): SessionConfig => ({
-  mode: s.recipe.kind === "simple" ? "simple" : "condition",
+  mode: s.recipe.kind || "condition",
+  presetId: s.recipe.preset_id,
+  presetRevision: s.recipe.preset_revision,
+  workName: s.recipe.work_name,
+  modelPath: s.recipe.flow?.model_path,
+  testRun: s.recipe.test_run,
   brandId: s.recipe.brand_id,
   brandName: s.brand.name,
   checks: {
     ocr: s.recipe.channels.includes("ocr"),
     rfid: s.recipe.channels.includes("rfid"),
-    barcode_tag: s.recipe.channels.includes("barcode"),
-    barcode_poly: false,
+    barcode_tag: s.recipe.channels.includes("barcode") && (s.recipe.barcode_targets || ["tag"]).includes("tag"),
+    barcode_poly: s.recipe.channels.includes("barcode") && (s.recipe.barcode_targets || []).includes("poly"),
   },
   countMode: s.recipe.target_count ? "target" : "continuous",
   target: s.recipe.target_count,
@@ -41,8 +52,8 @@ export const configView = (s: Session): SessionConfig => ({
 });
 export const jobView = (s: Session): Job => ({
   id: s.id,
-  date: new Date(s.created_at).toLocaleDateString("sv-SE"),
-  time: new Date(s.created_at).toLocaleTimeString("ko-KR"),
+  date: new Date(s.created_at).toLocaleDateString("sv-SE", {timeZone: "Asia/Seoul"}),
+  time: new Date(s.created_at).toLocaleTimeString("ko-KR", {timeZone: "Asia/Seoul"}),
   mode: configView(s).mode,
   count: s.count,
   config: configView(s),
@@ -167,10 +178,15 @@ export const reportError = (e: unknown) =>
     );
 const pending = new Map<string, any>();
 const active = new Set<string>();
+let stopGeneration = 0;
 export async function sendCommand(name: string, reason = "", delta?: number) {
+  if (["stop", "pause", "finish"].includes(name)) stopGeneration++;
   const state = useApp.getState().snapshot,
     s = state?.session;
-  if (!s) throw new Error("진행 중인 작업이 없습니다.");
+  if (!s) {
+    if (name === "stop" && active.has("create")) return;
+    throw new Error("진행 중인 작업이 없습니다.");
+  }
   const key = name;
   if (active.has(key)) return;
   active.add(key);
@@ -221,11 +237,31 @@ export async function sendCommand(name: string, reason = "", delta?: number) {
     useApp.getState().setPending([...active]);
   }
 }
-export async function startSession(config: SessionConfig) {
+export async function startSession(config: SessionConfig, run = false) {
   if (active.has("create")) return;
   if (!ended(useApp.getState().snapshot?.session))
     throw new Error("진행 중인 작업을 먼저 종료하세요.");
-  let recipe: Recipe;
+  let recipe: Recipe | undefined;
+  let path = "/sessions";
+  let body: unknown;
+  const generation = stopGeneration;
+  const channels = [config.checks?.ocr && "ocr", config.checks?.rfid && "rfid",
+    (config.checks?.barcode_tag || config.checks?.barcode_poly) && "barcode"].filter(Boolean) as string[];
+  const barcodeTargets = [config.checks?.barcode_tag && "tag", config.checks?.barcode_poly && "poly"].filter(Boolean) as ("tag" | "poly")[];
+  if (config.presetId) {
+    if (!config.presetRevision) throw new Error("작업 설정을 다시 선택하세요.");
+    const brand = useApp.getState().brands.find((b) => b.id === config.brandId)?.source;
+    path = `/presets/${encodeURIComponent(config.presetId)}/start`;
+    body = {
+      preset_revision: config.presetRevision,
+      brand_revision: brand?.revision || 1,
+      targets: config.targets || {},
+      target_count: config.countMode === "target" ? config.target || null : null,
+      test_run: config.testRun || false,
+      ...(config.mode === "condition" && config.checks ? { channels, barcode_targets: barcodeTargets } : {}),
+    };
+  } else {
+  if (config.mode === "vision") throw new Error("와펜 계수 작업을 선택하세요.");
   if (config.mode === "simple") {
     recipe = {
       kind: "simple",
@@ -235,6 +271,8 @@ export async function startSession(config: SessionConfig) {
       channels: [],
       target_count:
         config.countMode === "target" ? config.target || null : null,
+      default_flow: true,
+      test_run: config.testRun || false,
     };
   } else {
     const b = useApp
@@ -250,20 +288,38 @@ export async function startSession(config: SessionConfig) {
         color: config.item?.color || "",
         size: config.item?.size || "",
       },
-      channels: [
-        config.checks?.ocr && "ocr",
-        config.checks?.rfid && "rfid",
-        (config.checks?.barcode_tag || config.checks?.barcode_poly) &&
-          "barcode",
-      ].filter(Boolean) as string[],
+      channels,
+      barcode_targets: barcodeTargets,
+      default_flow: true,
+      test_run: config.testRun || false,
       target_count:
         config.countMode === "target" ? config.target || null : null,
     };
   }
+  body = recipe;
+  }
   active.add("create");
   useApp.getState().setPending([...active]);
   try {
-    acceptSnapshot(await request<Snapshot>("/sessions", recipe));
+    const created = await request<Snapshot>(path, body);
+    acceptSnapshot(created);
+    // The I/O monitor arms the released sensors on its next ticks after a
+    // session is created. Wait for that initial debounce before the one-click
+    // start, while leaving STOP able to cancel the pending command.
+    const deadline = Date.now() + 1500;
+    while (run && generation === stopGeneration && Date.now() < deadline) {
+      const next = useApp.getState().snapshot;
+      if (next?.session?.id !== created.session?.id || next?.can_start !== false ||
+          next.mode !== "HARDWARE" || !next.blockers?.length ||
+          !next.blockers.every(reason => reason === "DI1과 DI2의 해제 신호를 확인 중입니다.")) break;
+      const raw = next.io.di_raw;
+      if (!Array.isArray(raw) || raw[0] !== 1 || raw[1] !== 1) break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+      if (generation !== stopGeneration) break;
+      await refresh();
+    }
+    if (run && generation === stopGeneration && useApp.getState().snapshot?.session?.id === created.session?.id)
+      await sendCommand("start");
   } catch (error) {
     // Creation may have committed before a connection was lost. Read it back
     // before allowing the next attempt; the server also rejects an active job.

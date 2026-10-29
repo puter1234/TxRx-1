@@ -4,12 +4,14 @@ from __future__ import annotations
 import hashlib
 import importlib
 import importlib.util
+import math
 import platform
 import threading
 import time
 from pathlib import Path
 
-from .rfid import Reader
+from .rfid import Reader, InventoryCancelled
+from .motor import MOTOR_RESTART_SECONDS, restart_message
 
 
 class GpioIO:
@@ -37,11 +39,15 @@ class GpioIO:
         self.Value = Value
         self.req = None
         self.reader = None
+        self.rfid_error = None
         self.thread = None
         self.fault = None
         self.requested = False
         self.led_requested = False
+        self.speed_requested = False
         self.changed = time.monotonic()
+        # A new GPIO owner cannot know when the previous process stopped DO1.
+        self.motor_ready_at = time.monotonic() + MOTOR_RESTART_SECONDS
         self.last_lease = time.monotonic()
         self.permit_epoch = 0
         self.prior_permit = None
@@ -54,18 +60,30 @@ class GpioIO:
         mapping.update(
             {
                 line: gpiod.LineSettings(direction=Direction.OUTPUT, output_value=off)
-                for line in config.do_lines
+                for line in (*config.do_lines, *([config.speed_line] if config.speed_line is not None else []))
             }
         )
         try:
             self.req = gpiod.request_lines(
                 config.gpio_chip, consumer="inspection-io", config=mapping
             )
+            self.motor_ready_at = time.monotonic() + MOTOR_RESTART_SECONDS
             self._read()
             if config.rfid_port:
-                self.reader = Reader(config.rfid_port)
-                if config.commissioning.rfid_protocol_verified:
-                    self.reader.initialize()
+                try:
+                    self.reader = Reader(config.rfid_port)
+                    if config.commissioning.rfid_protocol_verified:
+                        self.reader.initialize(config.rfid_power)
+                except Exception as exc:
+                    # A disconnected optional reader does not take GPIO offline.
+                    # RFID jobs still require rfid_ready and can reconnect on reset.
+                    self.rfid_error = str(exc)
+                    if self.reader:
+                        try:
+                            self.reader.close()
+                        except Exception:
+                            pass
+                    self.reader = None
             self.thread = threading.Thread(
                 target=self._poll, daemon=True, name="inspection-io"
             )
@@ -79,6 +97,8 @@ class GpioIO:
         return self.Value.ACTIVE if raw else self.Value.INACTIVE
 
     def _outputs(self, motor, led):
+        if motor and not self.requested and self.motor_restart_ms():
+            raise RuntimeError(restart_message(self.motor_restart_ms()))
         self.req.set_values(
             {
                 self.config.do_lines[0]: self._value(motor),
@@ -87,8 +107,15 @@ class GpioIO:
         )
         if motor != self.requested:
             self.changed = time.monotonic()
+            if not motor:
+                self.motor_ready_at = self.changed + MOTOR_RESTART_SECONDS
         self.requested = motor
         self.led_requested = led
+        if not motor and not led:
+            self.speed(False)
+
+    def motor_restart_ms(self):
+        return max(0, math.ceil((self.motor_ready_at - time.monotonic()) * 1000))
 
     def _read(self):
         raw = [v.value for v in self.req.get_values(list(self.config.di_lines))]
@@ -100,12 +127,14 @@ class GpioIO:
             self.permit_epoch += 1
             self.fault = "MOTOR_PERMIT_LOST"
             self._outputs(False, False)
+            self.speed(False)
         self.prior_permit = permit
         self.latest = {
             "source": "HARDWARE",
             "connected": True,
             "motor_requested": self.requested,
             "led_requested": self.led_requested,
+            "speed_requested": self.speed_requested,
             "led_confirmed": None,
             "km2_on": raw[2] == 0,
             "di_raw": raw,
@@ -161,6 +190,7 @@ class GpioIO:
         with self.lock:
             if self.req:
                 self._outputs(False, False)
+                self.speed(False)
 
     def motor(self, on, allowed=None):
         with self.lock:
@@ -182,13 +212,25 @@ class GpioIO:
             self.last_lease = time.monotonic()
             self._outputs(self.requested, on)
 
+    def speed(self, high, allowed=None):
+        with self.lock:
+            line = self.config.speed_line
+            if line is None:
+                if high:
+                    raise RuntimeError("이 장비의 DO4 연결 정보가 없습니다.")
+                return
+            if high and (self.fault or (allowed is not None and not allowed())):
+                raise RuntimeError("STOP_REQUEST_HAS_PRIORITY")
+            self.req.set_value(line, self._value(high))
+            self.speed_requested = high
+
     def reset(self):
         with self.lock:
             self._outputs(False, False)
             snap = self._read()
             if snap["km2_on"] or not snap["physical_permit"]:
                 raise RuntimeError("현장 정지/새 START 상태를 확인하세요.")
-            if not self.snapshot().get("rfid_ready"):
+            if self.config.rfid_port and getattr(self, "require_rfid", True) and not self.snapshot().get("rfid_ready"):
                 if self.reader:
                     try:
                         self.reader.close()
@@ -197,12 +239,18 @@ class GpioIO:
                 self.reader = Reader(self.config.rfid_port)
                 if not self.config.commissioning.rfid_protocol_verified:
                     raise RuntimeError("RFID 프로토콜 실기 검증이 필요합니다.")
-                self.reader.initialize()
+                self.reader.initialize(self.config.rfid_power)
+                self.rfid_error = None
             self.fault = None
 
     def snapshot(self):
         with self.lock:
             snap = dict(self.latest)
+            # Requested outputs are known immediately. Physical feedback keeps
+            # the timestamp of the latest input sample.
+            snap.update(motor_requested=self.requested, led_requested=self.led_requested,
+                        speed_requested=self.speed_requested, fault=self.fault,
+                        motor_restart_ms=self.motor_restart_ms())
         if time.time() - snap.get("observed_at", 0) > 0.5:
             snap.update(connected=False, fault="IO_STALE")
         snap["rfid_connected"] = bool(
@@ -211,7 +259,7 @@ class GpioIO:
             and Path(self.config.rfid_port).exists()
         )
         snap["rfid_ready"] = bool(snap["rfid_connected"] and self.reader.initialized)
-        snap["rfid_error"] = self.reader.last_error if self.reader else None
+        snap["rfid_error"] = self.reader.last_error if self.reader else self.rfid_error
         return snap
 
     def blockers(self):
@@ -223,14 +271,36 @@ class GpioIO:
                 else []
             )
             + ([] if s.get("physical_permit") else ["물리 START 허가 확인 필요"])
-            + ([] if s.get("rfid_ready") else ["RFID 초기화·프로토콜 검증 필요"])
+            + ([restart_message(s["motor_restart_ms"])] if s["motor_restart_ms"] else [])
         )
 
+    def apply_rfid_power(self, power):
+        if self.reader and self.config.commissioning.rfid_protocol_verified:
+            if self.reader.initialized:
+                self.reader.set_power(power)
+            else:
+                self.reader.initialize(power)
+            self.rfid_error = None
+
     def inventory(self, window_ms, cancel):
+        return self._inventory(window_ms, cancel, once=False)
+
+    def inventory_bench(self, window_ms, cancel):
+        return self._inventory(window_ms, cancel, once=False, bench=True)
+
+    def inventory_once(self, timeout_ms, cancel):
+        return self._inventory(timeout_ms, cancel, once=True)
+
+    def _inventory(self, timeout_ms, cancel, *, once, bench=False):
         if not self.reader:
             raise RuntimeError("RFID 포트 없음")
         try:
-            return self.reader.inventory(window_ms, cancel)
+            read = (self.reader.inventory_bench if bench else
+                    self.reader.inventory_once if once else self.reader.inventory)
+            return read(timeout_ms, cancel)
+        except InventoryCancelled:
+            # A clean STOP during camera recovery does not undo reader setup.
+            raise
         except Exception as exc:
             self.reader.initialized = False
             self.reader.last_error = str(exc)

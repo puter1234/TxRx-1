@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import threading
+import math
 import time
 import uuid
 from collections import deque
@@ -10,6 +11,7 @@ from pathlib import Path
 from pydantic import Field, model_validator
 from .schema import Model
 from .controller import Conflict
+from .motor import MOTOR_RESTART_SECONDS, restart_message
 
 
 class BenchSetup(Model):
@@ -21,7 +23,8 @@ class BenchSetup(Model):
     output_wiring_confirmed: bool = False
     stop_circuit_confirmed: bool = False
     rfid_port: str = Field(default="", max_length=200)
-    rfid_window_ms: int = Field(default=500, ge=100, le=10000)
+    rfid_window_ms: int = Field(default=5000, ge=100, le=10000)
+    rfid_power: int = Field(default=2600, ge=0, le=2600)
     rfid_protocol_confirmed: bool = False
 
     @model_validator(mode="after")
@@ -41,7 +44,7 @@ def output_polarity(config, setup, target):
         return setup.do_on_raw
     # REV 1.1 p13/p15: DO2 -> K2 A2, K2 NO -> LED. Seeed J40:
     # GPIO 1 energizes the load. Defaults apply only to the documented channels.
-    if target in ("motor", "led") and documented_wiring(config):
+    if (target in ("motor", "led") or (target == "speed" and config.speed_line is not None)) and documented_wiring(config):
         return 1
     raise Conflict("출력 ON 값을 확인하세요.")
 
@@ -62,7 +65,7 @@ class BenchGPIO:
         self.gpiod, self.Direction, self.Value = gpiod, Direction, Value
         self.config, self.setup = config, setup
         self.outputs = {}
-        self.motor_requested = self.led_requested = False
+        self.motor_requested = self.led_requested = self.speed_requested = False
         pins = list(config.di_lines)
         if setup.permit_line is not None:
             pins.append(setup.permit_line)
@@ -78,13 +81,15 @@ class BenchGPIO:
             permit = self.inputs.get_value(self.setup.permit_line).value == self.setup.permit_active_raw
         return {"connected": True, "di_raw": raw, "km2_on": raw[2] == 0,
                 "physical_permit": permit, "motor_requested": self.motor_requested,
-                "led_requested": self.led_requested, "led_confirmed": None}
+                "led_requested": self.led_requested, "speed_requested": self.speed_requested, "led_confirmed": None}
 
     def set_output(self, target, on, allowed=lambda: True):
-        if target not in ("motor", "led"):
+        if target not in ("motor", "led", "speed"):
             raise ValueError("출력 채널이 올바르지 않습니다.")
         polarity = output_polarity(self.config, self.setup, target)
-        line = self.config.do_lines[0 if target == "motor" else 1]
+        line = self.config.speed_line if target == "speed" else self.config.do_lines[0 if target == "motor" else 1]
+        if line is None:
+            raise Conflict("이 장비의 DO4 연결 정보가 없습니다.")
         if on and not allowed():
             raise Conflict("정지 요청이 우선합니다.")
         if target not in self.outputs:
@@ -103,10 +108,7 @@ class BenchGPIO:
                 raise Conflict("정지 요청이 우선합니다.")
             raw = polarity if on else 1 - polarity
             self.outputs[target].set_value(line, self.Value.ACTIVE if raw else self.Value.INACTIVE)
-        if target == "motor":
-            self.motor_requested = on
-        else:
-            self.led_requested = on
+        setattr(self, target + "_requested", on)
 
     def stop(self):
         failures = []
@@ -117,7 +119,7 @@ class BenchGPIO:
                 failures.append(str(exc))
         if failures:
             raise RuntimeError(" / ".join(failures))
-        self.motor_requested = self.led_requested = False
+        self.motor_requested = self.led_requested = self.speed_requested = False
 
     def close(self):
         try:
@@ -137,7 +139,10 @@ class BorrowedGPIO:
         return self.io.snapshot()
 
     def set_output(self, target, on, allowed=lambda: True):
-        (self.io.motor if target == "motor" else self.io.light)(on, allowed=allowed)
+        method = {"motor": self.io.motor, "led": self.io.light, "speed": getattr(self.io, "speed", None)}.get(target)
+        if method is None:
+            raise ValueError("지원하지 않는 출력입니다.")
+        method(on, allowed=allowed)
 
     def stop(self):
         self.io.stop()
@@ -155,9 +160,25 @@ class Bench:
             feedback_timeout_ms=config.commissioning.feedback_timeout_ms,
             sensor_active_raw=[config.commissioning.sensor_active_raw] * 2,
             rfid_port=config.rfid_port,
-            rfid_window_ms=config.rfid_window_ms or 500,
+            rfid_window_ms=config.rfid_window_ms or 5000,
+            rfid_power=config.rfid_power,
         )
-        self.setup = BenchSetup.model_validate(store.get("bench_setup", defaults.model_dump()))
+        saved_setup = store.get("bench_setup", {})
+        self.setup = BenchSetup.model_validate({**defaults.model_dump(), **saved_setup})
+        if not store.get("rfid_bench_pico_timing", False):
+            # Upgrade the previous 500 ms default once. Other saved timeouts
+            # stay intact, and a later explicit choice of 500 ms stays intact.
+            migrated_setup = None
+            if self.setup.rfid_window_ms == 500:
+                self.setup = self.setup.model_copy(update={"rfid_window_ms": 5000})
+                migrated_setup = {**saved_setup, "rfid_window_ms": 5000}
+            import json
+            with store.transaction() as c:
+                if migrated_setup is not None:
+                    c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)",
+                              ("bench_setup", json.dumps(migrated_setup)))
+                c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)",
+                          ("rfid_bench_pico_timing", "true"))
         self.gpio_factory = gpio_factory
         self.lock = threading.RLock()
         self.stop_lock = threading.Lock()
@@ -174,13 +195,14 @@ class Bench:
         # Reconnection must not reset the interval. After a server restart,
         # previously used outputs wait a full interval before being enabled.
         used = store.get("bench_outputs_used", [])
-        self.next_output_at = {target: time.monotonic() + (1 if target in used else 0)
-                               for target in ("motor", "led")}
+        self.next_output_at = {target: time.monotonic() + ((MOTOR_RESTART_SECONDS if target == "motor" else 1) if target in used else 0)
+                               for target in (("motor", "led", "speed") if config.speed_line is not None else ("motor", "led"))}
         self.seen = deque(maxlen=256)
         self.transitions = [0, 0, 0]
         self.changed_at = [None, None, None]
         self.events = deque(maxlen=50)
         self.input_listeners = []
+        self.tick_listeners = []
         self.stop_listeners = []
         self.last_rfid = None
         self.closed = threading.Event()
@@ -190,34 +212,53 @@ class Bench:
     @property
     def run(self):
         # Legacy single-output status; simultaneous tests use runs by target.
-        return self.runs.get("motor") or self.runs.get("led")
+        return self.runs.get("motor") or self.runs.get("led") or self.runs.get("speed")
 
     def busy(self):
         return self.io is not None or self.native_busy or self.rfid_busy or self.run is not None or bool(self.error)
 
     def save_setup(self, setup, actor):
-        pins = [*self.config.di_lines, *self.config.do_lines]
+        pins = [*self.config.di_lines, *self.config.do_lines, *([self.config.speed_line] if self.config.speed_line is not None else [])]
         if len(pins) != len(set(pins)) or setup.permit_line in pins:
             raise ValueError("입출력 핀을 중복 지정할 수 없습니다.")
         with self.lock:
             if self.io or self.run:
                 raise Conflict("입력 연결을 종료한 후 저장하세요.")
-            with self.store.transaction() as c:
-                import json
-                c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", ("bench_setup", json.dumps(setup.model_dump())))
-                self.store.event("BENCH_SETUP_SAVED", {"actor": actor, "setup": setup.model_dump()}, c)
-            self.setup = setup
-            return self.status()
+            if "rfid_power" not in setup.model_fields_set:
+                setup = setup.model_copy(update={"rfid_power": self.setup.rfid_power})
+        self._save_setup(setup, "BENCH_SETUP_SAVED", actor, setup.model_dump())
+        return self.status()
 
     def save_rfid_setup(self, fields, actor):
         with self.lock:
             updated = BenchSetup.model_validate({**self.setup.model_dump(), **fields})
-            with self.store.transaction() as c:
-                import json
-                c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", ("bench_setup", json.dumps(updated.model_dump())))
-                self.store.event("BENCH_RFID_SETUP_SAVED", {"actor": actor, "setup": fields}, c)
-            self.setup = updated
-            return self.status()
+        self._save_setup(updated, "BENCH_RFID_SETUP_SAVED", actor, fields)
+        return self.status()
+
+    def _save_setup(self, setup, event, actor, fields):
+        import json
+
+        previous = self.config.rfid_power
+        changed = setup.rfid_power != previous
+        apply_power = getattr(self.production_io, "apply_rfid_power", None)
+        # The route holds the RFID operation reservation. Do not hold the bench
+        # output lock while waiting for serial replies: STOP must remain usable.
+        if changed and apply_power:
+            apply_power(setup.rfid_power)
+        try:
+            with self.lock:
+                with self.store.transaction() as c:
+                    c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", ("bench_setup", json.dumps(setup.model_dump())))
+                    self.store.event(event, {"actor": actor, "setup": fields}, c)
+                self.config.rfid_power = setup.rfid_power
+                self.setup = setup
+        except Exception:
+            if changed and apply_power:
+                try:
+                    apply_power(previous)
+                except Exception:
+                    pass  # The reader stays unready if its rollback is rejected.
+            raise
 
     def connect(self):
         with self.lock:
@@ -291,24 +332,26 @@ class Bench:
         with self.lock:
             if target not in self.next_output_at:
                 raise ValueError("출력 채널이 올바르지 않습니다.")
-            if time.monotonic() < self.next_output_at[target]:
+            if target != "motor" and time.monotonic() < self.next_output_at[target]:
                 raise Conflict("신호 변경 후 1초 뒤 다시 조작하세요.")
             with self.stop_lock:
                 self.stop_serial += 1
             output_polarity(self.config, self.setup, target)
             if not self.io:
                 self.connect()
-            self.runs.pop(target, None)
+            was_running = self.runs.pop(target, None) is not None or self.last.get(target + "_requested")
             self.generation += 1
             try:
                 self.io.set_output(target, False)
-                self.next_output_at[target] = time.monotonic() + 1
                 self.last = self.io.snapshot()
                 if target == "motor" and self.last.get("km2_on") is not False:
                     self.stop_wait_until = time.monotonic() + 3
             except Exception as exc:
                 self.error = "끄기 명령 실패: " + str(exc)
                 raise Conflict(self.error) from exc
+            finally:
+                if target != "motor" or was_running:
+                    self.next_output_at[target] = time.monotonic() + (MOTOR_RESTART_SECONDS if target == "motor" else 1)
             self.store.put("bench_outputs_used", sorted(set(self.store.get("bench_outputs_used", [])) | {target}))
             self.store.event("BENCH_OUTPUT_OFF", {"target": target, "raw": 1 - output_polarity(self.config, self.setup, target)})
             return self.status()
@@ -316,9 +359,32 @@ class Bench:
     def led_off(self):
         return self.output_off("led")
 
-    def pulse(self, target, seconds, generation, request_id, issued_at):
-        serial = self.stop_serial
+    def cooldown_ms(self, target):
+        remaining = max(0, math.ceil((self.next_output_at[target] - time.monotonic()) * 1000))
+        if target == "motor":
+            # Production and bench operations can share the same GPIO owner.
+            remaining = max(remaining, self.production_io.snapshot().get("motor_restart_ms", 0))
+        return remaining
+
+    def sequence_output(self, target, on, serial):
+        """Sensor-driven LED/speed changes under the motor run's heartbeat."""
         with self.lock:
+            if target not in ("led", "speed"):
+                raise ValueError("센서 연동 출력이 올바르지 않습니다.")
+            if (not self.io or "motor" not in self.runs or self.cancel.is_set()
+                    or serial != self.stop_serial):
+                raise Conflict("시험이 정지되었습니다.")
+            self.io.set_output(target, on, allowed=lambda: serial == self.stop_serial and not self.cancel.is_set())
+            self.last.update({target + "_requested": on})
+            # Manual switches retain their one-second interval. The configured
+            # sensor timings must not pass through that manual-switch throttle.
+            self.next_output_at[target] = time.monotonic() + 1
+
+    def pulse(self, target, seconds, generation, request_id, issued_at, expected_serial=None):
+        serial = self.stop_serial if expected_serial is None else expected_serial
+        with self.lock:
+            if serial != self.stop_serial:
+                raise Conflict("정지 요청 이후에는 다시 실행하세요.")
             if request_id in self.seen:
                 return self.status()
             if generation != self.generation or abs(time.time() - issued_at) > 3:
@@ -327,14 +393,17 @@ class Bench:
                 raise Conflict("현재 시험이 끝난 후 다시 시도하세요.")
             if target not in self.next_output_at:
                 raise ValueError("모터 또는 LED를 선택하세요.")
-            if time.monotonic() < self.next_output_at[target]:
-                raise Conflict("신호 변경 후 1초 뒤 다시 조작하세요.")
-            blockers = self.led_blockers() if target == "led" else self.output_blockers()
+            remaining = self.cooldown_ms(target)
+            if remaining:
+                raise Conflict(restart_message(remaining) if target == "motor" else "신호 변경 후 1초 뒤 다시 조작하세요.")
+            blockers = self.led_blockers() if target != "motor" else self.output_blockers()
+            if target == "speed" and self.config.speed_line is None:
+                blockers.append("이 장비의 DO4 연결 정보가 없습니다.")
             if blockers:
                 raise Conflict(" ".join(blockers))
             snap = self.io.snapshot()
             motor_running = "motor" in self.runs
-            if not snap.get("connected") or (target == "motor" and not self.document_motor_test() and snap.get("physical_permit") is not True) or (snap.get("km2_on") is not False and not (target == "led" and motor_running)) or snap.get("fault") or self.stop_wait_until:
+            if not snap.get("connected") or (target == "motor" and not self.document_motor_test() and snap.get("physical_permit") is not True) or (snap.get("km2_on") is not False and not (target != "motor" and motor_running)) or snap.get("fault") or self.stop_wait_until:
                 raise Conflict("운전 허가와 접촉기 정지 상태를 확인하세요.")
             if seconds is not None and not 10 <= seconds <= 60:
                 raise ValueError("켜짐 유지 시간은 10초부터 60초까지입니다.")
@@ -351,13 +420,13 @@ class Bench:
             self.store.event("BENCH_OUTPUT_START", {"target": target, "seconds": seconds, "id": run["id"]})
             used = set(self.store.get("bench_outputs_used", []))
             self.store.put("bench_outputs_used", sorted(used | {target}))
-            self.next_output_at[target] = now + 1
+            self.next_output_at[target] = now + (0 if target == "motor" else 1)
             self.runs[target] = run
             try:
                 self.io.set_output(target, True, allowed=lambda: serial == self.stop_serial)
                 sent = time.monotonic()
                 run.update(started=sent, deadline=None if seconds is None else sent + seconds, last_heartbeat=sent)
-                self.next_output_at[target] = sent + 1
+                self.next_output_at[target] = sent + (0 if target == "motor" else 1)
                 self.last = self.io.snapshot()
             except Exception:
                 self.stop("출력 설정 실패")
@@ -399,13 +468,9 @@ class Bench:
         with self.stop_lock:
             self.stop_serial += 1
         with self.lock:
-            for listener in self.stop_listeners:
-                listener(reason)
             self.generation += 1
             self.cancel.set()
             old, self.runs = self.runs, {}
-            for target in old:
-                self.next_output_at[target] = time.monotonic() + 1
             try:
                 if self.io:
                     self.io.stop()
@@ -414,6 +479,17 @@ class Bench:
                         self.stop_wait_until = time.monotonic() + 3
             except Exception as exc:
                 self.error = "출력 OFF 확인 실패: " + str(exc)
+            finally:
+                # Count from completion of the OFF write, never before a slow write.
+                for target in old:
+                    self.next_output_at[target] = time.monotonic() + (MOTOR_RESTART_SECONDS if target == "motor" else 1)
+            # Output OFF must precede OCR queue cleanup, including a blocked or
+            # failing listener. A cleanup error must never skip the OFF write.
+            for listener in self.stop_listeners:
+                try:
+                    listener(reason)
+                except Exception as exc:
+                    self.error = self.error or "시험 중지 처리 실패: " + str(exc)
             for run in old.values():
                 try:
                     self.store.event("BENCH_OUTPUT_STOP", {"id": run["id"], "reason": reason, "error": self.error})
@@ -488,6 +564,8 @@ class Bench:
                 elif run["deadline"] is not None and now >= run["deadline"]:
                     self.output_off(run["target"])
                     return
+            for listener in self.tick_listeners:
+                listener(time.monotonic_ns())
 
     def _watch(self):
         while not self.closed.wait(0.01):
@@ -505,12 +583,11 @@ class Bench:
                             "feedback_error": run.get("feedback_error"),
                             "remaining_ms": None if run["deadline"] is None else max(0, round((run["deadline"] - time.monotonic()) * 1000))}
                     for target, run in self.runs.items()}
-            run = runs.get("motor") or runs.get("led")
+            run = runs.get("motor") or runs.get("led") or runs.get("speed")
             raw = self.last.get("di_raw")
             return {"connected": self.io is not None and bool(self.last.get("connected")),
                     "motor_test_max_seconds": 60,
-                    "cooldown_ms": {target: max(0, round((deadline - time.monotonic()) * 1000))
-                                    for target, deadline in self.next_output_at.items()},
+                    "cooldown_ms": {target: self.cooldown_ms(target) for target in self.next_output_at},
                     "feedback": {"channel": 3, "line": self.config.di_lines[2],
                                  "raw": raw[2] if raw else None,
                                  "active": self.last.get("km2_on") if raw else None,
@@ -522,7 +599,7 @@ class Bench:
                                  "active": (raw[i] == self.setup.sensor_active_raw[i]) if raw and self.setup.sensor_active_raw[i] is not None else None,
                                  "changes": self.transitions[i], "changed_at": self.changed_at[i]} for i in range(2)],
                     "events": list(self.events), "output_blockers": self.output_blockers(), "led_blockers": self.led_blockers(),
-                    "pins": {"motor": self.config.do_lines[0], "led": self.config.do_lines[1],
+                    "pins": {"motor": self.config.do_lines[0], "led": self.config.do_lines[1], "speed": self.config.speed_line,
                              "feedback": self.config.di_lines[2], "chip": self.config.gpio_chip},
                     "setup": self.setup.model_dump(), "rfid": self.last_rfid}
 
@@ -542,14 +619,16 @@ class Bench:
                 if s.rfid_port != self.config.rfid_port:
                     raise Conflict("생산 설정과 RFID 포트가 다릅니다.")
                 if not prod.get("rfid_ready"):
-                    raise Conflict("RFID 초기화를 확인하세요.")
-                tags = self.production_io.inventory(s.rfid_window_ms, self.cancel)
+                    self.production_io.apply_rfid_power(s.rfid_power)
+                    if not self.production_io.snapshot().get("rfid_ready"):
+                        raise Conflict("RFID 초기화를 확인하세요.")
+                tags = self.production_io.inventory_bench(s.rfid_window_ms, self.cancel)
             else:
                 reader = Reader(s.rfid_port)
-                reader.initialize()
+                reader.initialize(s.rfid_power)
                 if self.cancel.is_set():
                     raise Conflict("RFID 시험을 중지했습니다.")
-                tags = reader.inventory(s.rfid_window_ms, self.cancel)
+                tags = reader.inventory_bench(s.rfid_window_ms, self.cancel)
             if self.cancel.is_set():
                 raise Conflict("RFID 시험을 중지했습니다.")
             result = {"ok": len(tags) == 1, "tags": tags, "time": time.time(),

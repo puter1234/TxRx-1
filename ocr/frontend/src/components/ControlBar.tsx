@@ -4,7 +4,12 @@ import { Play, Pause, Plus, Minus, RotateCcw, Square } from "lucide-react";
 import { useApp } from "../lib/store";
 import { ended, sendCommand, startSession, reportError } from "../lib/station";
 import Modal from "./Modal";
-export default function ControlBar({ mode }: { mode: "simple" | "condition" }) {
+import type { SessionConfig } from "../lib/types";
+export default function ControlBar({ mode, createConfig, createReady = true }: {
+  mode: "simple" | "condition" | "vision";
+  createConfig?: SessionConfig;
+  createReady?: boolean;
+}) {
   const nav = useNavigate(),
     state = useApp((s) => s.snapshot),
     online = useApp((s) => s.connected),
@@ -24,6 +29,7 @@ export default function ControlBar({ mode }: { mode: "simple" | "condition" }) {
     "INSPECTING",
     "STOPPING",
     "RETRY_PENDING",
+    "CAMERA_WAIT",
   ].includes(phase);
   const run = async (fn: () => Promise<unknown>) => {
     try {
@@ -34,8 +40,8 @@ export default function ControlBar({ mode }: { mode: "simple" | "condition" }) {
   };
   const start = () =>
     run(async () => {
-      if (!active && mode === "simple")
-        await startSession({ mode: "simple", countMode: "continuous" });
+      if (!active && mode !== "condition")
+        await startSession(createConfig || { mode, countMode: "continuous" }, true);
       else await sendCommand("start");
     });
   const open = (kind: typeof dialog, change = 1) => {
@@ -76,20 +82,20 @@ export default function ControlBar({ mode }: { mode: "simple" | "condition" }) {
             !!state?.busy ||
             pending.includes("start") ||
             pending.includes("create") ||
-            (active ? !state?.can_start : mode !== "simple")
+            (active ? !state?.can_start : mode === "condition" || !createReady)
           }
         >
           <Play size={22} />
-          {!active && mode === "simple"
+          {!active && mode !== "condition"
             ? "계수 시작"
             : phase === "PAUSED"
               ? "재개"
-              : "검사 시작"}
+              : mode === "condition" ? "검사 시작" : "계수 시작"}
         </button>
         <button
           className="btn btn-outline"
           onClick={() => run(() => sendCommand("stop"))}
-          disabled={!online || !active || pending.includes("stop")}
+          disabled={!online || (!active && !pending.includes("create")) || pending.includes("stop")}
         >
           <Pause size={22} />
           일시정지
@@ -122,7 +128,7 @@ export default function ControlBar({ mode }: { mode: "simple" | "condition" }) {
           <Plus size={22} />
           수동 1개 더하기
         </button>
-        {mode === "simple" && (
+        {mode !== "condition" && (
           <button
             className="btn btn-outline"
             onClick={() => open("zero")}
@@ -156,12 +162,12 @@ export default function ControlBar({ mode }: { mode: "simple" | "condition" }) {
           disabled={!online || !active || state?.busy}
         >
           <Square size={20} />
-          {mode === "simple" ? "계수 종료" : "검사 종료"}
+          {mode !== "condition" ? "계수 종료" : "검사 종료"}
         </button>
         <button
           className="btn btn-danger ml-auto"
           onClick={() => run(() => sendCommand("stop"))}
-          disabled={!online || !active || pending.includes("stop")}
+          disabled={!online || (!active && !pending.includes("create")) || pending.includes("stop")}
         >
           <Square size={22} />
           정지
@@ -219,9 +225,9 @@ export default function ControlBar({ mode }: { mode: "simple" | "condition" }) {
               }
               onClick={() => confirm("reset")}
             >
-              {dialog === "recover" ? "재검사 준비" : "확인"}
+              {dialog === "recover" ? (session?.recipe.flow && state?.mode === "HARDWARE" ? "오류 해제" : "재검사 준비") : "확인"}
             </button>
-            {dialog === "recover" && phase === "HOLD" && (
+            {dialog === "recover" && !!session?.active_product && ["HOLD", "FAULT", "PAUSED"].includes(phase) && (
               <button
                 className="btn btn-outline"
                 disabled={

@@ -62,3 +62,16 @@ def binarize(
         binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
 
     return binary
+
+
+GREEN_GAIN = 3.5
+_GREEN_LUT = np.clip(np.arange(256) * GREEN_GAIN, 0, 255).astype(np.uint8)
+
+
+def prepare_ocr_source(original):
+    """Apply the detector's green gain before any text crop or interpolation.
+
+    Keep one full-resolution channel, converting only the small text crops to
+    three channels for PARSeq. The retained camera image is never modified.
+    """
+    return cv2.LUT(cv2.extractChannel(original, 1), _GREEN_LUT)

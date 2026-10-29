@@ -19,7 +19,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { useApp } from "../lib/store";
 import Modal from "../components/Modal";
-import { ended } from "../lib/station";
+import { ended, runPath } from "../lib/station";
 
 function Feature({ icon: Icon, text }: { icon: LucideIcon; text: string }) {
   return (
@@ -74,9 +74,7 @@ export default function Home() {
               className="btn btn-primary mt-5"
               onClick={() =>
                 nav(
-                  session?.recipe.kind === "simple"
-                    ? "/simple"
-                    : "/condition/run",
+                  runPath(session?.recipe.kind),
                 )
               }
             >
@@ -132,6 +130,13 @@ export default function Home() {
             </button>
           </div>
         </div>
+        <button
+          className="btn btn-outline"
+          disabled={!ended(session)}
+          onClick={() => nav("/vision")}
+        >
+          와펜 계수 <ChevronRight size={22} />
+        </button>
       </div>
 
       <nav className="flex shrink-0 items-center justify-center gap-3 border-t border-line bg-white px-6 py-4">

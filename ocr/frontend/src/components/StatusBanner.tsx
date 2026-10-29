@@ -33,6 +33,7 @@ export default function StatusBanner() {
       <div className="space-y-2 text-lg font-bold">
         <h3 className="text-2xl">{label}</h3>
         {session?.fault && <p>{ERR[session.fault] || session.fault}</p>}
+        {session?.phase === "CAMERA_WAIT" && <p>카메라 연결을 {session.recipe.flow?.reconnect_interval_ms}ms 간격으로 다시 확인합니다. 정지를 누르면 자동 재가동을 취소합니다.</p>}
         {failure?.field && (
           <p>
             {session?.brand.options.find((o) => o.key === failure.field)
@@ -41,6 +42,7 @@ export default function StatusBanner() {
           </p>
         )}
         {fault && <p>제품 확인 후 조치 확인을 누르세요.</p>}
+        {session?.phase === "PAUSED" && session.active_product && session.recipe.flow && state?.mode === "HARDWARE" && <p>이송 중이던 제품을 정리한 뒤 조치 확인에서 제품 제거 완료를 누르세요.</p>}
         {!!state?.blockers?.length &&
           ["READY", "PAUSED"].includes(session?.phase || "") && (
             <p>

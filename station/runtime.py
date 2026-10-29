@@ -22,6 +22,7 @@ class HardwareCycle:
         self.eject_started = None
         self.exit_seen = False
         self.clear_since = None
+        self.feed_restart_serial = None
         self.workers = 0
         self.worker_lock = threading.Lock()
 
@@ -42,6 +43,9 @@ class HardwareCycle:
 
         # Cancellation does not free readiness while a native/library call still runs.
         future = asyncio.get_running_loop().run_in_executor(None, run)
+        # Cancellation leaves the native worker running until its own STOP.
+        # Retrieve any late exception even when the awaiting task was cancelled.
+        future.add_done_callback(lambda done: None if done.cancelled() else done.exception())
         return await asyncio.shield(future)
 
     def blockers(self):
@@ -67,6 +71,10 @@ class HardwareCycle:
         if s and "ocr" in s["recipe"]["channels"]:
             if not self.vision.status()["local_assets_present"]:
                 reasons.append("로컬 OCR 모델 필요")
+        if s and set(s["recipe"]["channels"]) & {"ocr", "barcode"} and self.camera and hasattr(self.vision, "source_error"):
+            error = self.vision.source_error(self.camera.status())
+            if error:
+                reasons.append(error)
         return reasons
 
     async def tick(self):
@@ -74,6 +82,8 @@ class HardwareCycle:
         if not s:
             return
         phase = s["phase"]
+        if phase != "READY" or self.feed_restart_serial != self.c.stop_serial:
+            self.feed_restart_serial = None
         cfg = self.c.config.commissioning
         snap = self.io.snapshot()
         active = phase not in (
@@ -118,6 +128,8 @@ class HardwareCycle:
             self.cancel.clear()
             self.task = asyncio.create_task(self.cycle())
         elif phase == "PASSED" and self.c.config.automatic_cycle and self.task is None:
+            if snap.get("motor_restart_ms", 0):
+                return
             self.issue("release")
             self.eject_started = time.monotonic()
             self.exit_seen = False
@@ -141,10 +153,17 @@ class HardwareCycle:
                 self.c.departed()
                 self.eject_started = None
                 if self.c.session["phase"] == "READY" and self.c.config.automatic_cycle:
-                    self.issue("start")
+                    self.feed_restart_serial = self.c.stop_serial
+                    if not self.io.snapshot().get("motor_restart_ms", 0):
+                        self.issue("start")
+                        self.feed_restart_serial = None
             elif time.monotonic() - self.eject_started > cfg.release_timeout_ms / 1000:
                 self.c.fault("PRODUCT_DEPARTURE_TIMEOUT")
                 self.eject_started = None
+        elif phase == "READY" and self.feed_restart_serial is not None:
+            if not snap.get("motor_restart_ms", 0):
+                self.issue("start")
+                self.feed_restart_serial = None
         else:
             self.eject_started = None
             self.exit_seen = False

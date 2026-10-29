@@ -34,7 +34,7 @@ from .schema import Model, Brand, Recipe, Command, Adjustment, StationConfig
 from .storage import Store, utc
 from .telemetry import collect
 from .vision import Vision
-from .runtime import HardwareCycle
+from .flow import FlowCycle as HardwareCycle
 from .bench import Bench
 from .usb_camera import CameraManager
 
@@ -68,6 +68,12 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
         if config_path.exists()
         else StationConfig()
     )
+    saved_speed = store.get("speed_line")
+    if saved_speed is not None:
+        config = StationConfig.model_validate({**config.model_dump(), "speed_line": saved_speed})
+    saved_rfid_power = store.get("bench_setup", {}).get("rfid_power")
+    if saved_rfid_power is not None:
+        config = StationConfig.model_validate({**config.model_dump(), "rfid_power": saved_rfid_power})
     camera = camera or CameraManager(config, store)
     detector = None
     hardware_errors = []
@@ -91,8 +97,11 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
                     config.commissioning.detector_sha256,
                 )
             except Exception as exc:
-                hardware_errors.append(str(exc))
+                if config.commissioning.detector_module:
+                    hardware_errors.append(str(exc))
     vision = vision or Vision()
+    if isinstance(vision, Vision):
+        vision.trace_directory = store.root / "diagnostics"
     controller = Controller(store, io, config)
     controller.external_busy = lambda: vision.status().get("busy", False)
     auth = Auth(store)
@@ -118,15 +127,18 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
     bench = bench_factory(config, io, store)
     controller.external_busy = lambda: maintenance_active.is_set() or prior_busy() or bench.busy()
 
+    def current_phase():
+        with controller.lock:
+            return (controller.session or {}).get("phase")
+
     async def watch():
         nonlocal hardware_monitor
         guard = LeaseGuard(io, config.io_lease_ms)
         try:
             while True:
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.01)
                 guard.renew()
-                state = controller.snapshot()
-                phase = (state["session"] or {}).get("phase")
+                phase = await asyncio.to_thread(current_phase)
                 if (
                     config.mode == "HARDWARE"
                     and phase
@@ -137,24 +149,25 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
                         "STOPPING",
                         "INSPECTING",
                         "RETRY_PENDING",
+                        "CAMERA_WAIT",
                     )
                     and time.monotonic() - controller.last_client > 3
                 ):
-                    controller.fault("OPERATOR_SCREEN_DISCONNECTED")
+                    await asyncio.to_thread(controller.fault, "OPERATOR_SCREEN_DISCONNECTED")
                 if guard.failed and phase not in (None, "FAULT", "FINISHED", "DONE"):
-                    controller.fault(guard.failed)
+                    await asyncio.to_thread(controller.fault, guard.failed)
                     guard.failed = None
                 if hardware_monitor:
                     try:
                         await hardware_monitor.tick()
                     except Exception as exc:
-                        controller.fault("HARDWARE_MONITOR_ERROR: " + str(exc))
+                        await asyncio.to_thread(controller.fault, "HARDWARE_MONITOR_ERROR: " + str(exc))
         finally:
             guard.close()
 
     async def maintain():
         while True:
-            state = controller.snapshot()
+            state = await asyncio.to_thread(controller.snapshot)
             phase = (state["session"] or {}).get("phase")
             if (
                 phase
@@ -186,10 +199,17 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
 
     @asynccontextmanager
     async def lifespan(app):
+        recovery = None
+        if config.mode == "REPLAY" and isinstance(camera, CameraManager):
+            from .camera_recovery import CameraRecovery
+            recovery = CameraRecovery(camera)
+            recovery.start()
         task = asyncio.create_task(watch())
         maintenance = asyncio.create_task(maintain())
         yield
         bench.stop("서비스 종료")
+        if recovery:
+            recovery.close()
         if hasattr(app.state, "sensor_ocr"):
             await asyncio.to_thread(app.state.sensor_ocr.close)
         controller.stop_outputs()
@@ -401,12 +421,11 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
         try:
             while auth.valid(ws.cookies.get("txrx_session")):
                 # Only an acknowledged screen heartbeat extends operator presence.
-                await ws.send_json(
-                    {
+                payload = await asyncio.to_thread(lambda: {
                         "state": {**controller.snapshot(), "vision": vision.status()},
                         "event_seq": store.last_event_seq(),
-                    }
-                )
+                    })
+                await ws.send_json(payload)
                 message = await asyncio.wait_for(ws.receive_json(), timeout=2)
                 if not isinstance(message, dict) or message.get("type") != "heartbeat":
                     break
@@ -480,11 +499,22 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
         store.delete_brand(ident, revision, actor, reason)
         return {"ok": True}
 
+    from .work_api import install_work_api, prepare_session
+    install_work_api(app, controller, permitted, vision, hardware_monitor)
+
     @app.post("/api/sessions")
     def new_session(recipe: Recipe, request: Request):
-        if "ocr" in recipe.channels:
-            vision.load()
-        return controller.new_session(recipe, permitted(request))
+        actor = permitted(request)
+        if recipe.flow and not recipe.preset_id:
+            permitted(request, ("admin",))
+        if config.mode == "HARDWARE" and not recipe.preset_id:
+            if not (recipe.default_flow and recipe.flow is None and recipe.kind in ("simple", "condition")):
+                permitted(request, ("admin",))
+            from .schema import FlowSettings
+            recipe.flow = recipe.flow or FlowSettings()
+        if recipe.test_run:
+            permitted(request, ("admin",))
+        return prepare_session(controller, vision, hardware_monitor, recipe, actor)
 
     @app.post("/api/commands")
     def command(cmd: Command, request: Request):
@@ -558,16 +588,31 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
         from fastapi.responses import Response
 
         def encode():
-            frame, _ = camera.read_latest()
+            frame, metadata = getattr(camera, "read_preview", camera.read_latest)()
             # Preview is bounded; saved test captures keep the original resolution.
             if frame.shape[1] > 1280:
                 frame = cv2.resize(frame, (1280, max(1, round(frame.shape[0] * 1280 / frame.shape[1]))))
             ok, data = cv2.imencode(".jpg", frame)
             if not ok:
                 raise RuntimeError("카메라 영상 변환 실패")
-            return data.tobytes()
+            headers = {"Cache-Control": "no-store"}
+            fps = (metadata.get("camera_profile") or {}).get("fps")
+            if fps:
+                headers["X-Camera-Fps"] = str(fps)
+            for field, header in (("seq", "X-Camera-Frame"),
+                                  ("camera_settings_revision", "X-Camera-Revision"),
+                                  ("host_received_ns", "X-Camera-Received-Ns")):
+                if metadata.get(field) is not None:
+                    headers[header] = str(metadata[field])
+            return data.tobytes(), headers
 
-        return Response(await asyncio.to_thread(encode), media_type="image/jpeg")
+        try:
+            data, headers = await asyncio.to_thread(encode)
+        except (TimeoutError, ValueError, RuntimeError, cv2.error) as exc:
+            import logging
+            logging.getLogger(__name__).warning("CAMERA_PREVIEW_FAILED: %s", exc)
+            raise HTTPException(503, "카메라 영상을 갱신하지 못했습니다.") from exc
+        return Response(data, media_type="image/jpeg", headers=headers)
 
     @app.post("/api/device/test/{kind}")
     async def device_test(kind: str, request: Request):
@@ -608,6 +653,7 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
                         "tags": tags,
                     }
                 vision.load()
+                vision.prepare_locator()
                 status = vision.status()
                 device = str(status.get("device") or "")
                 detail = ("OCR GPU 사용: " + str(status.get("gpu_name") or device)

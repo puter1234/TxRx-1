@@ -18,6 +18,7 @@ export type Brand = {
   id: string;
   name: string;
   revision: number;
+  caps?: { rfid: boolean; ocr: boolean; barcode_tag: boolean; barcode_poly: boolean } | null;
   options: Option[];
   decoder: {
     kind: "none" | "hazzys_6bit_crc8" | "lookup";
@@ -25,10 +26,18 @@ export type Brand = {
   };
   ocr_regions: Region[];
   barcode_records: Record<string, Fields>;
+  barcode_poly_records?: Record<string, Fields>;
   note: string;
 };
 export type Recipe = {
-  kind?: "condition" | "simple";
+  kind?: "condition" | "simple" | "vision";
+  flow?: Record<string, any> | null;
+  default_flow?: boolean;
+  barcode_targets?: ("tag" | "poly")[];
+  preset_id?: string;
+  preset_revision?: number;
+  work_name?: string;
+  test_run?: boolean;
   brand_id: string;
   brand_revision: number;
   targets: Fields;
@@ -78,6 +87,7 @@ export type Snapshot = {
   session: Session | null;
   busy: boolean;
   last_result: Result | null;
+  tracking?: {boxes: number[][]; total: number; width: number; height: number; inference_ms: number};
   stop_fault: string | null;
   io: Record<string, unknown>;
   vision: {
@@ -93,6 +103,7 @@ export type Action = (
 ) => Promise<void>;
 export const PHASE: Record<string, string> = {
   READY: "검사 대기",
+  CAMERA_WAIT: "카메라 재연결 중",
   RETRY_PENDING: "정지 상태 검사 준비",
   FEEDING: "제품 이송",
   STOPPING: "정지 확인",
@@ -112,8 +123,18 @@ export const CHANNEL: Record<string, string> = {
   barcode: "바코드 (선택)",
 };
 export const ERR: Record<string, string> = {
+  QUANTITY_MISMATCH: "센서와 비전 수량이 다릅니다.",
+  DI2_WITHOUT_DI1: "DI1 기록 없이 DI2가 감지되었습니다.",
+  EARLY_DI1_UNRESOLVED: "이전 제품 처리 중 DI1이 다시 감지되었습니다.",
+  CAMERA_PRODUCT_REVIEW: "카메라 연결을 복구했습니다. 이송 중이던 제품을 확인하세요.",
+  CAMERA_ERROR: "카메라 촬영 오류",
+  CAMERA_CAPTURE_MISSED: "연결이 끊긴 동안 제품이 촬영 위치를 통과했습니다.",
   REQUIRED_FIELD_MISSING: "필수 항목 미판독",
   TARGET_MISMATCH: "목표와 불일치",
+  BARCODE_LABEL_MISMATCH: "가격택과 폴리백의 상품 정보 불일치",
+  BARCODE_UNREGISTERED: "등록되지 않은 바코드",
+  BARCODE_MISSING: "바코드 미판독",
+  MULTIPLE_BARCODES: "바코드 수량 불일치",
   RFID_MISSING: "RFID 미판독",
   MULTIPLE_RFID_TAGS: "복수 RFID 감지",
   RFID_CRC_INVALID: "RFID 검증 오류",

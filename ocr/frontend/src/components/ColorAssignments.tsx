@@ -21,13 +21,15 @@ const palette = [
 export default function ColorAssignments({
   option,
   onChange,
+  onlyCode,
 }: {
   option: Option;
   onChange: (colors: Record<string, string>) => void;
+  onlyCode?: string;
 }) {
   const [code, setCode] = useState<string | null>(null),
     [custom, setCustom] = useState("#FFFFFF");
-  const codes = [...new Set(option.values.filter((v) => v.trim()))];
+  const codes = [...new Set(option.values.filter((v) => v.trim() && (onlyCode === undefined || v === onlyCode)))];
   const assign = (color: string | null) => {
     if (code === null) return;
     const colors = { ...option.colors };
@@ -37,26 +39,27 @@ export default function ColorAssignments({
     setCode(null);
   };
   return (
-    <div className="mt-4">
-      <div className="mb-3 flex items-center">
+    <div className={onlyCode === undefined ? "mt-4" : ""}>
+      {onlyCode === undefined && <div className="mb-3 flex items-center">
         <h4 className="text-lg font-extrabold">코드별 색상</h4>
         <Help text="코드 버튼을 눌러 실제 색상을 지정하세요. 작업 화면의 버튼에 반영됩니다. 판정에는 원래 코드를 사용합니다." />
-      </div>
-      <div className="flex max-h-80 flex-wrap gap-3 overflow-y-auto p-1">
+      </div>}
+      <div className={onlyCode === undefined ? "flex max-h-80 flex-wrap gap-3 overflow-y-auto p-1" : "flex p-1"}>
         {codes.map((v) => (
           <button
             key={v}
             type="button"
             aria-label={v + " 색상 지정"}
-            className="min-h-16 min-w-28 rounded-xl border-2 border-ink-700 bg-white px-5 py-3 text-xl font-extrabold"
+            title="색상 지정"
+            className={onlyCode === undefined ? "min-h-16 min-w-28 rounded-xl border-2 border-ink-700 bg-white px-5 py-3 text-xl font-extrabold" : "value-color-button"}
             style={optionColorStyle(option, v)}
             onClick={() => {
               setCode(v);
               setCustom(option.colors?.[v] || "#FFFFFF");
             }}
           >
-            {v}
-            {!option.colors?.[v] && (
+            {onlyCode === undefined ? v : <span className="sr-only">색상</span>}
+            {onlyCode === undefined && !option.colors?.[v] && (
               <span className="mt-1 block text-base font-bold">색상 지정</span>
             )}
           </button>
@@ -73,7 +76,7 @@ export default function ColorAssignments({
               <button
                 type="button"
                 key={hex}
-                className="min-h-16 rounded-xl border-2 border-ink-700 px-3 text-xl font-extrabold"
+                className="min-h-12 rounded-md border border-line px-3 text-base font-medium"
                 style={{ backgroundColor: hex, color: colorInk(hex) }}
                 onClick={() => assign(hex)}
               >
@@ -82,11 +85,11 @@ export default function ColorAssignments({
             ))}
           </div>
           <div className="mt-6 flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-3 text-lg font-bold">
+            <label className="flex items-center gap-3 text-sm font-medium">
               직접 지정
               <input
                 aria-label={code + " 직접 색상"}
-                className="h-14 w-20 cursor-pointer rounded-lg border-2 border-ink-700 bg-white p-1"
+                className="h-11 w-14 cursor-pointer rounded-md border border-line bg-white p-1"
                 type="color"
                 value={validColor(custom) ? custom : "#FFFFFF"}
                 onChange={(e) => setCustom(e.target.value.toUpperCase())}

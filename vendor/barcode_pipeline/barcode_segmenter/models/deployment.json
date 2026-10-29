@@ -1,0 +1,13 @@
+{
+  "weights": "barcode.pt",
+  "weights_sha256": "94f231a05b851a659f66563f5d763239310dd89ea458b908689ccf9166f18bd3",
+  "imgsz": 640,
+  "conf": 0.1,
+  "mask_dedup_iou": 0.7,
+  "green_gain": 3.5,
+  "max_det": 30,
+  "retina_masks": true,
+  "rect": false,
+  "selected_on": "validation only; F2, then mask AP50-95, then smaller input",
+  "annotation_sha256": "a7f8bf82d6ee0f72cea55ebabde0d24344f2bad8cf016dac5e6d4d424e73cc49"
+}

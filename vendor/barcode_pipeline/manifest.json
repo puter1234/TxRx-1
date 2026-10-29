@@ -1,0 +1,20 @@
+{
+  "repository": "https://github.com/puter1234/barcode-pipeline",
+  "commit": "100a3025192e7ea06a1eefcf32c2b7d7b16ba9a9",
+  "files": {
+    "tag_detector/tagdet/__init__.py": "88880ae3eb8718b99bea34d82d2eec5c29050d783d85bdbff5205d0a5796639e",
+    "tag_detector/tagdet/common.py": "e1da615e92e25cb76f2474e590777d6fa483a5c9f211c2adda11ab4df3043553",
+    "tag_detector/tagdet/infer.py": "ffb37bd0b92188846dc741fa3fe7b521d786e2bdd1ca3c79b917ee0a2bebfdc7",
+    "tag_detector/tagdet/onnx_runner.py": "5583448ba9d366f04e1f7d6a7984cf8ace649d1f6c063b125534c28b8df2ff47",
+    "tag_detector/tagdet/geometry.py": "ed09e63358aa06fc725907e1f822154b25f47d6b5391d1eca400a191a1b44751",
+    "tag_detector/models/deployment.json": "201375a37562012bec7ca323bc09c1b2201764de955d0f28ee3f401b4af3188a",
+    "tag_detector/models/tag_label.onnx": "8d37499ebd2d161395ca37c4e45db604344132617b7a6a736131aa9af152f22b",
+    "barcode_segmenter/barseg/__init__.py": "9b891e3818d58cd15578ebec2a4fd2e2890d91597641c2bae2bc6d46fa980749",
+    "barcode_segmenter/barseg/common.py": "ed9c2ad96f7bafd22e55c43b545820af09624eaaf6d90f7c8779eed93da38444",
+    "barcode_segmenter/barseg/infer.py": "60b977c0f340cfb6ce7b8c9a119e047365e87202b4225ed5df7220e1e5f4d235",
+    "barcode_segmenter/barseg/onnx_runner.py": "50c92e3a761252abbe499c596d590e71c2480b2edcef37720e8c3b7ffcea4ba1",
+    "barcode_segmenter/barseg/text_regions.py": "63181d4b42e00f7972defc7c64dc2b97c4f74a3344598a9be74f3d5a4a3c788f",
+    "barcode_segmenter/models/deployment.json": "c8ba53092d4b8cee282913e203e5b625d69dda45dd32e6870fb3d7cefe9b806b",
+    "barcode_segmenter/models/barcode.onnx": "d8bd2f0d86d11053a5433f2e00f19eae1ec837b27c05f00aa9281245974ac2fe"
+  }
+}

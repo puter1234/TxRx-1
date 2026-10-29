@@ -178,7 +178,8 @@ def test_stop_invalidates_delayed_on_and_duplicate_does_not_reenergize(rig):
     assert pulse(c, issued_at=time.time() - 20).status_code == 409
 
 
-def test_stop_during_pending_output_write_prevents_on(rig):
+@pytest.mark.parametrize("waiting_camera", [False, True])
+def test_stop_during_pending_output_write_prevents_on(rig, waiting_camera):
     c, app = rig
     setup(c)
     c.post("/api/bench/io/connect", json={})
@@ -194,6 +195,11 @@ def test_stop_during_pending_output_write_prevents_on(rig):
     with ThreadPoolExecutor() as pool:
         start = pool.submit(pulse, c)
         assert entered.wait(2)
+        # Let the periodic monitor run while the start request owns the lock.
+        time.sleep(.05)
+        if waiting_camera:
+            reading = pool.submit(c.post, "/api/bench/camera/inspect", json={"device": "/dev/video0"})
+            time.sleep(.05)
         stopping = pool.submit(c.post, "/api/bench/stop", json={})
         deadline = time.monotonic() + 2
         while b.stop_serial == 0 and time.monotonic() < deadline:
@@ -202,6 +208,8 @@ def test_stop_during_pending_output_write_prevents_on(rig):
         release.set()
         assert start.result().status_code == 409
         assert stopping.result().status_code == 200
+        if waiting_camera:
+            assert reading.result().status_code == 409
     assert not b.io.led and not any(on for _, on in b.io.calls)
 
 
@@ -250,7 +258,7 @@ def test_motor_feedback_is_reported_after_three_seconds_without_stopping(rig):
 
 
 @pytest.mark.parametrize("target", ["motor", "led"])
-def test_output_requires_one_second_after_stop_and_reconnect(rig, target):
+def test_output_requires_full_interval_after_stop_and_reconnect(rig, target):
     c, app = rig
     setup(c)
     c.post("/api/bench/io/connect", json={})
@@ -258,13 +266,41 @@ def test_output_requires_one_second_after_stop_and_reconnect(rig, target):
     assert pulse(c, target, 10).status_code == 200
     assert c.post("/api/bench/stop", json={}).status_code == 200
     assert b.run is None and not b.io.motor and not b.io.led
-    assert 0 < b.status()["cooldown_ms"][target] <= 1000
+    interval_ms = 5000 if target == "motor" else 1000
+    assert interval_ms - 200 < b.status()["cooldown_ms"][target] <= interval_ms
     assert pulse(c, target, 10).status_code == 409
     c.post("/api/bench/io/disconnect", json={})
     c.post("/api/bench/io/connect", json={})
     assert pulse(c, target, 10).status_code == 409
     b.next_output_at[target] = time.monotonic() - 0.01
     assert pulse(c, target, 10).status_code == 200
+
+
+def test_motor_off_is_immediate_and_repeated_off_does_not_extend_wait(rig):
+    c, app = rig
+    c.post("/api/bench/io/connect", json={})
+    b = app.state.bench
+    assert pulse(c, "motor", None).status_code == 200
+    assert c.post("/api/bench/motor/off", json={}).status_code == 200
+    assert not b.io.motor
+    assert 4800 < b.status()["cooldown_ms"]["motor"] <= 5000
+    deadline = b.next_output_at["motor"]
+    assert c.post("/api/bench/motor/off", json={}).status_code == 200
+    assert c.post("/api/bench/stop", json={}).status_code == 200
+    assert b.next_output_at["motor"] == deadline
+    assert pulse(c, "motor", None).status_code == 409
+    assert pulse(c, "led", None).status_code == 200
+
+
+def test_server_restart_preserves_motor_restart_protection(rig):
+    _, app = rig
+    app.state.store.put("bench_outputs_used", ["motor"])
+    fresh = Bench(app.state.bench.config, app.state.controller.io, app.state.store, gpio_factory=FakeGPIO)
+    try:
+        assert 4800 < fresh.status()["cooldown_ms"]["motor"] <= 5000
+    finally:
+        fresh.closed.set()
+        fresh.thread.join(timeout=1)
 
 
 def test_di3_reports_raw_feedback_and_transitions(rig):
@@ -360,7 +396,7 @@ def test_real_gpio_led_off_requests_only_do2():
 
 
 @pytest.mark.parametrize("target", ["motor", "led"])
-def test_manual_switch_holds_until_off_and_blocks_changes_for_one_second(rig, target):
+def test_manual_switch_holds_until_off_and_protects_restart(rig, target):
     c, app = rig
     c.post("/api/bench/io/connect", json={})
     b = app.state.bench
@@ -369,8 +405,9 @@ def test_manual_switch_holds_until_off_and_blocks_changes_for_one_second(rig, ta
     calls = b.io.calls[:]
     assert pulse(c, target, None).status_code == 409
     assert b.io.calls == calls
-    assert c.post(f"/api/bench/{target}/off", json={}).status_code == 409
-    assert 0 < b.next_output_at[target] - time.monotonic() <= 1
+    if target == "led":
+        assert c.post(f"/api/bench/{target}/off", json={}).status_code == 409
+        assert 0 < b.next_output_at[target] - time.monotonic() <= 1
     with b.lock:
         b.run["started"] -= 120
         b._tick()
@@ -497,7 +534,10 @@ def test_simultaneous_outputs_both_stop_on_emergency_or_connection_loss(rig, cau
             b.runs[cause.split("_")[0]]["last_heartbeat"] -= 2
             b._tick()
     assert not b.io.motor and not b.io.led and not b.runs
-    assert all(0 < value <= 1000 for value in b.status()["cooldown_ms"].values())
+    cooldown = b.status()["cooldown_ms"]
+    assert 4800 < cooldown["motor"] <= 5000
+    assert 0 < cooldown["led"] <= 1000
+    assert cooldown["speed"] == 0  # DO4 was not used in this test.
 
 
 def test_timed_output_completion_does_not_stop_other_output(rig):
@@ -532,14 +572,14 @@ def test_rfid_inventory_runs_with_outputs_and_does_not_lock_switches(rig, monkey
     entered, release = threading.Event(), threading.Event()
     class Reader:
         def __init__(self, port): assert port == "/dev/ttyUSB0"
-        def initialize(self): pass
-        def inventory(self, window, cancel):
+        def initialize(self, power): assert power == 2100
+        def inventory_bench(self, window, cancel):
             entered.set()
             assert release.wait(3)
             return [{"epc": "AABB", "count": 1}]
         def close(self): pass
     monkeypatch.setattr("station.rfid.Reader", Reader)
-    assert c.put("/api/bench/rfid/setup", json={"rfid_port": "/dev/ttyUSB0", "rfid_protocol_confirmed": True}).status_code == 200
+    assert c.put("/api/bench/rfid/setup", json={"rfid_port": "/dev/ttyUSB0", "rfid_protocol_confirmed": True, "rfid_power": 2100}).status_code == 200
     c.post("/api/bench/io/connect", json={})
     b = app.state.bench
     assert pulse(c, "led", None).status_code == 200
@@ -573,7 +613,8 @@ def test_ocr_reports_missing_runtime_package(rig):
     assert not app.state.bench.native_busy
 
 
-def test_live_ocr_reads_auto_detected_line_without_saving_a_photo(rig, monkeypatch):
+@pytest.mark.parametrize("locator", ["stripes", "opencv"])
+def test_live_ocr_reads_auto_detected_line_without_saving_a_photo(rig, monkeypatch, locator):
     c, app = rig
     profile = app.state.camera.backend.profile.model_dump()
     assert c.post("/api/bench/camera/apply", json={
@@ -599,12 +640,13 @@ def test_live_ocr_reads_auto_detected_line_without_saving_a_photo(rig, monkeypat
                           rotated=None, _rotated_quad=None,
                           quad=np.array([[100, 200], [300, 200], [300, 250], [100, 250]]))
     def read_tag(image, **kwargs):
+        assert kwargs["locator"] == locator and kwargs["decode_values"] is False
         tag.rotated = image
         return [tag]
     monkeypatch.setattr(pipeline.tagreader, "read_tag", read_tag)
     found = []
     monkeypatch.setattr(pipeline, "_ordered_crops", lambda above, *args: (found.append(True) or [above]))
-    response = c.post("/api/bench/ocr/read", json={})
+    response = c.post("/api/bench/ocr/read", json={"locator": locator})
     assert response.status_code == 200, response.text
     result = response.json()
     assert found
@@ -613,7 +655,7 @@ def test_live_ocr_reads_auto_detected_line_without_saving_a_photo(rig, monkeypat
     assert result["reads"][0]["barcode"] is None
     assert result["reads"][0]["verdict"] == "ocr_read"
     assert result["reads"][0]["lines"][0]["text"] == "40"
-    assert result["reads"][0]["lines"][0]["preview"].startswith("data:image/jpeg;base64,")
+    assert result["reads"][0]["lines"][0]["preview"].startswith("data:image/png;base64,")
     assert result["reads"][0]["lines"][0]["crop_width"] > 0
     # The downloaded image is the exact processed frame, even after live video changes.
     import cv2
@@ -623,8 +665,10 @@ def test_live_ocr_reads_auto_detected_line_without_saving_a_photo(rig, monkeypat
     assert original.headers["content-type"] == "image/png"
     restored = cv2.imdecode(np.frombuffer(original.content, np.uint8), cv2.IMREAD_COLOR)
     assert np.array_equal(restored, frame)
-    assert c.get(result["preview_url"]).headers["content-type"] == "image/jpeg"
-    next_result = c.post("/api/bench/ocr/read", json={})
+    preview = c.get(result["preview_url"])
+    assert preview.headers["content-type"] == "image/png"
+    assert preview.content == original.content
+    next_result = c.post("/api/bench/ocr/read", json={"locator": locator})
     assert next_result.status_code == 200, next_result.text
     assert c.get(result["original_url"]).status_code == 410
     assert not list((app.state.store.root / "device-tests").glob("*"))
@@ -634,7 +678,19 @@ def test_live_ocr_reads_auto_detected_line_without_saving_a_photo(rig, monkeypat
 def test_live_ocr_has_no_image_correction_endpoints(rig):
     c, _ = rig
     assert c.get("/api/bench/ocr/correction").status_code == 404
-    assert c.put("/api/bench/ocr/correction", json={}).status_code == 404
+    assert c.put("/api/bench/ocr/correction", json={}).status_code in (404, 405)
+
+
+def test_live_ocr_defaults_to_models_and_rejects_lower_resolution(rig):
+    c, app = rig
+    profile = app.state.camera.backend.profile.model_dump()
+    assert c.post("/api/bench/camera/apply", json={
+        "profile": profile, "save": False, "expected_revision": 0,
+    }).status_code == 200
+    app.state.vision.load = lambda: None
+    response = c.post("/api/bench/ocr/read", json={})
+    assert response.status_code == 422 and "48MP" in response.text
+    assert not app.state.bench.runs
 
 
 def test_unconfirmed_off_remains_blocked(rig):
@@ -766,3 +822,25 @@ def test_input_adapter_never_acquires_output_until_test(monkeypatch):
         assert all(v["direction"] == Direction.INPUT for v in calls[0]["config"].values())
     finally:
         gpio.close()
+
+
+def test_output_off_precedes_blocked_ocr_cleanup(rig):
+    client, app = rig
+    setup(client)
+    assert client.post('/api/bench/io/connect', json={}).status_code == 200
+    assert pulse(client, 'motor', None).status_code == 200
+    entered, release = threading.Event(), threading.Event()
+    def cleanup(reason):
+        entered.set()
+        assert release.wait(2)
+    app.state.bench.stop_listeners.append(cleanup)
+    worker = threading.Thread(target=app.state.bench.stop)
+    try:
+        worker.start()
+        assert entered.wait(1)
+        assert app.state.bench.io.motor is False
+        assert app.state.bench.cooldown_ms('motor') > 0
+    finally:
+        release.set()
+        worker.join(2)
+        app.state.bench.stop_listeners.remove(cleanup)

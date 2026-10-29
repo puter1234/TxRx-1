@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Clock, Timer, SlidersHorizontal } from "lucide-react";
 import { useApp } from "../lib/store";
-import { configView, ended, reportError, sendCommand } from "../lib/station";
+import { configView, ended, reportError, sendCommand, runPath } from "../lib/station";
 import VideoPanel from "../components/VideoPanel";
 import JudgeLog from "../components/JudgeLog";
 import StatusBanner from "../components/StatusBanner";
@@ -22,15 +22,15 @@ export default function ConditionRun() {
     const timer = setInterval(() => tick((v) => v + 1), 1000);
     return () => clearInterval(timer);
   }, []);
-  if (!s || s.recipe.kind === "simple")
+  if (!s || (s.recipe.kind && s.recipe.kind !== "condition"))
     return (
       <div className="flex h-full flex-col items-center justify-center gap-5">
         <h1 className="text-2xl font-extrabold">조건 계수 대기</h1>
         <button
           className="btn btn-primary btn-lg"
-          onClick={() => nav("/condition/setup")}
+          onClick={() => nav(!ended(s) ? runPath(s?.recipe.kind) : "/condition/setup")}
         >
-          조건 설정
+          {!ended(s) ? "진행 중인 작업 열기" : "조건 설정"}
         </button>
         <button className="btn btn-outline" onClick={() => nav("/")}>
           처음 화면
@@ -60,6 +60,8 @@ export default function ConditionRun() {
       setW({
         step: 3,
         brandId: s.recipe.brand_id,
+        presetId: s.recipe.preset_id || "",
+        testRun: s.recipe.test_run || false,
         checks: cfg.checks!,
         countMode: cfg.countMode,
         target: cfg.target || 40,
@@ -80,9 +82,11 @@ export default function ConditionRun() {
           처음 화면
         </button>
         <h1 className="text-2xl font-extrabold">조건 계수 {s.brand.name}</h1>
+        {s.recipe.test_run && <span className="rounded border border-line px-3 py-1 font-bold">시험 작업</span>}
+        <button className="btn btn-outline btn-sm ml-auto" onClick={() => nav("/equipment")}>장비 점검</button>
       </div>
       <div className="grid min-h-0 flex-1 grid-cols-[1.25fr_1fr] gap-5 overflow-y-auto p-6">
-        <div className="flex min-h-0 flex-col gap-5">
+        <div className="flex min-h-0 flex-col gap-5 overflow-y-auto">
           <VideoPanel />
           <JudgeLog />
         </div>
@@ -94,7 +98,7 @@ export default function ConditionRun() {
                 {s.count}
               </span>
               <span className="pb-2 text-3xl font-extrabold">
-                {target ? "/ " + target + "벌" : "벌"}
+                {target ? "/ " + target + "개" : "개"}
               </span>
             </div>
             {target != null && (
@@ -106,7 +110,7 @@ export default function ConditionRun() {
                   />
                 </div>
                 <div className="mt-2 text-lg font-extrabold">
-                  남은 수량 {Math.max(0, target - s.count)}벌
+                  남은 수량 {Math.max(0, target - s.count)}개
                 </div>
               </div>
             )}
@@ -146,6 +150,7 @@ export default function ConditionRun() {
                     "STOPPING",
                     "INSPECTING",
                     "RETRY_PENDING",
+                    "CAMERA_WAIT",
                   ].includes(s.phase)
                 }
                 onClick={() => setEdit(true)}

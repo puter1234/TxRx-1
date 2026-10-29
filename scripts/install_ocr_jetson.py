@@ -111,13 +111,15 @@ def main() -> None:
     run(str(PYTHON), "-m", "pip", "install", "--no-cache-dir",
         "timm==0.9.16", "pytorch-lightning==2.6.6", "PyYAML==6.0.3",
         "lmdb==2.3.0", "nltk==3.10.3", "zxing-cpp==3.1.1")
+    run(str(PYTHON), "-m", "pip", "install", "--no-cache-dir", "-r",
+        str(ROOT / "requirements-barcode-pipeline.txt"))
     # Some NVIDIA-published wheel metadata differs from the pair validated on
     # JetPack 6.1; the actual imports, CUDA check and model load below decide.
     subprocess.run([str(PYTHON), "-m", "pip", "check"], check=False)
     subprocess.run([str(PYTHON), "-c",
         "import torch, torchvision, timm, pytorch_lightning, PIL, zxingcpp; "
         "assert torch.cuda.is_available(), 'Jetson CUDA is unavailable'; "
-        "from station.vision import Vision; vision=Vision(); vision.load(); "
+        "from station.vision import Vision; vision=Vision(); vision.load(); vision.prepare_locator(); "
         "print('OCR READY:', torch.__version__, torchvision.__version__, "
         "torch.cuda.get_device_name(0), vision.status()['model_hash'])"],
         check=True, env=ocr_env)

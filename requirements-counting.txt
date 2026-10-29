@@ -1,0 +1,3 @@
+# Local YOLO26 .pt / .onnx detection and CVZone contours. No model downloads.
+cvzone==1.6.1
+-r requirements-barcode-pipeline.txt
