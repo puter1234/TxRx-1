@@ -228,6 +228,14 @@ it("saves every camera change by itself and starts from the saved values", async
   expect(screen.queryByRole("button", { name: /적용|저장/ })).toBeNull();
 });
 
+it("keeps adjusting the camera during a process test but holds the resolution", async () => {
+  bench.sensor_ocr = { active: true, busy: true };
+  mount("quality");
+  await screen.findByRole("button", { name: "초점 늘리기" });
+  expect(screen.getByLabelText("해상도")).toHaveProperty("disabled", true);
+  expect(screen.getByRole("button", { name: "초점 늘리기" })).toHaveProperty("disabled", false);
+});
+
 it("sends the chosen batch interval and cancels a pending batch when the page goes away", async () => {
   let release!: (value: any) => void;
   const fallback = mocks.api.getMockImplementation()!;

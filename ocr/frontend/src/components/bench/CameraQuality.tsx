@@ -173,7 +173,8 @@ export default function CameraQuality({ bench, locked }: { bench: BenchHook; loc
       {devices.length > 1 && <DevicePicker devices={devices} device={device} onChange={setDevice} disabled={locked} />}
       <label className="block space-y-2 text-[22px] font-extrabold">
         해상도
-        <select className="field" value={mode} disabled={locked} onChange={(e) => change({ mode: Number(e.target.value), values }, 0)}>
+        <select className="field" value={mode} disabled={locked || !!bench.state?.sensor_ocr?.busy}
+          onChange={(e) => change({ mode: Number(e.target.value), values }, 0)}>
           {caps.modes.map((m, i) => <option key={i} value={i}>{modeLabel(m)}</option>)}
         </select>
       </label>
