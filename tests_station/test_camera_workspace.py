@@ -385,6 +385,45 @@ def test_saved_camera_comes_on_after_restart_and_retries_until_it_works(tmp_path
         pass
 
 
+def test_saved_camera_that_keeps_failing_is_handed_back_with_its_reason(tmp_path):
+    import time
+    from fastapi.testclient import TestClient
+    from station.app import create_app
+    from station.bench import Bench
+    from station.camera_recovery import CameraRecovery
+    from tests_station.test_bench import FakeGPIO
+    first = create_app(tmp_path, bench_factory=lambda c, io, s: Bench(c, io, s, gpio_factory=FakeGPIO))
+    first.state.camera.backend, first.state.camera.stream_factory = FakeBackend(), FakeStream
+    with TestClient(first) as client:
+        client.post("/api/auth/setup", json={"password": "123456"})
+        apply(client, first)
+    app = create_app(tmp_path, bench_factory=lambda c, io, s: Bench(c, io, s, gpio_factory=FakeGPIO))
+    camera = app.state.camera
+    backend = FakeBackend()
+    tries = []
+    def unplugged(device):
+        tries.append(device)
+        raise ValueError("카메라 연결을 확인하세요.")
+    backend.inspect = unplugged
+    camera.backend, camera.stream_factory = backend, FakeStream
+    recovery = CameraRecovery(camera, interval=0.01, longest=0.02)
+    camera.wanted = True
+    deadline = time.monotonic() + 3
+    while camera.wanted and time.monotonic() < deadline:
+        try:
+            recovery.tick(time.monotonic())
+        except ValueError:
+            pass
+        time.sleep(0.005)
+    status = camera.status()
+    assert len(tries) == 3 and not status["reconnecting"] and not status["connected"]
+    assert "카메라 연결을 확인하세요." in status["error"]
+    for _ in range(5):
+        recovery.tick(time.monotonic() + 1)
+    assert len(tries) == 3
+    assert app.state.store.get("camera_wanted", True)
+
+
 def test_camera_switched_off_stays_off_after_restart(tmp_path):
     from fastapi.testclient import TestClient
     from station.app import create_app

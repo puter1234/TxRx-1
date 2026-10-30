@@ -157,6 +157,7 @@ function StatusStrip({ bench, locked, inputError, onQuality }: {
     <section aria-label="장비 상태" className="card space-y-3 px-5 py-4">
       <div className="flex min-h-16 flex-wrap items-center gap-x-6 gap-y-2">
         <Chip label="카메라" {...cameraChip} />
+        {!camera?.connected && camera?.error && <span role="alert" className="line-clamp-2 break-words text-[20px] font-extrabold text-danger">{camera.error}</span>}
         {!camera?.connected && !camera?.reconnecting && (
           camera?.saved_profile
             ? <button className="btn btn-primary" aria-label="카메라 켜기" disabled={locked || bench.busy} onClick={() => bench.action(() => api("/bench/camera/connect", {}))}>켜기</button>

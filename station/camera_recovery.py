@@ -5,8 +5,8 @@ import time
 
 
 class CameraRecovery:
-    def __init__(self, camera, interval=2.0, longest=10.0, paused=lambda: False):
-        self.camera, self.interval, self.longest = camera, interval, longest
+    def __init__(self, camera, interval=2.0, longest=10.0, paused=lambda: False, attempts=3):
+        self.camera, self.interval, self.longest, self.attempts = camera, interval, longest, attempts
         # True while someone else (a running job) is reconnecting the camera.
         self.paused = paused
         self.closed = threading.Event()
@@ -34,8 +34,11 @@ class CameraRecovery:
             camera.ensure()
             self.failures = 0
         except Exception:
-            # Keep trying for as long as the camera is wanted, a little slower each time.
+            # A few tries, a little slower each time; then the camera is handed back to a
+            # person, with the reason still in its status, instead of waiting forever.
             self.failures += 1
+            if self.failures >= self.attempts:
+                camera.give_up()
             raise
         finally:
             self.next_attempt = time.monotonic() + min(self.longest, self.interval * (1 + self.failures))

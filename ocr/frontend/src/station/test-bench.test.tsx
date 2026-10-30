@@ -158,7 +158,8 @@ it("shows a dropped camera coming back with nothing to press, and turns a switch
   const blocked = screen.getAllByRole("button", { name: "카메라 연결 중" });
   expect(blocked).toHaveLength(2);
   for (const button of blocked) expect(button).toHaveProperty("disabled", true);
-  bench.camera = { ...bench.camera, reconnecting: false, wanted: false };
+  bench.camera = { ...bench.camera, reconnecting: false, wanted: false, error: "카메라 연결을 확인하세요." };
+  await waitFor(() => expect(strip().getByRole("alert").textContent).toBe("카메라 연결을 확인하세요."));
   fireEvent.click(await screen.findByRole("button", { name: "카메라 켜기" }));
   await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/bench/camera/connect", {}));
   await waitFor(() => expect(strip().getByText("카메라 640 × 480, 초당 30장")).toBeTruthy());
@@ -390,6 +391,9 @@ it("shows a worker's dropped camera coming back with nothing to press", () => {
   render(<CameraBox />);
   expect(screen.getByText("카메라 연결 중")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "카메라 켜기" })).toBeNull();
-  act(() => useApp.setState({ equipment: { camera: { connected: false, reconnecting: false } } } as any));
+  act(() => useApp.setState({ equipment: { camera: { connected: false, reconnecting: true, error: "카메라를 열 수 없습니다." } } } as any));
+  expect(screen.getByRole("alert").textContent).toBe("카메라를 열 수 없습니다.");
+  act(() => useApp.setState({ equipment: { camera: { connected: false, reconnecting: false, error: "카메라를 열 수 없습니다." } } } as any));
   expect(screen.getByRole("button", { name: "카메라 켜기" })).toBeTruthy();
+  expect(screen.getByRole("alert").textContent).toBe("카메라를 열 수 없습니다.");
 });

@@ -600,9 +600,20 @@ class CameraManager:
             if not profile:
                 return False
             self.reconnect_attempts += 1
-            self.apply(CameraProfile.model_validate(profile), persist=False, actor="camera-recovery")
+            try:
+                self.apply(CameraProfile.model_validate(profile), persist=False, actor="camera-recovery")
+            except Exception as exc:
+                # A device that cannot even be opened fails before apply records why.
+                self.error = str(exc)
+                raise
             self.store.event("CAMERA_RECOVERED", {"device": profile["device"]})
             return True
+
+    def give_up(self):
+        """Stop reconnecting by itself; the last error stays for the screen. A restart tries again."""
+        with self.lock:
+            if not self.status().get("connected"):
+                self.wanted = False
 
     def recover(self, expected_stream):
         with self.lock:
