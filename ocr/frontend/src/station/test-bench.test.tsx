@@ -235,6 +235,17 @@ it("saves every camera change by itself and starts from the saved values", async
   expect(screen.queryByRole("button", { name: /적용|저장/ })).toBeNull();
 });
 
+it("opens the camera that is plugged in when the saved one is no longer there", async () => {
+  bench.camera = { ...bench.camera, connected: false, wanted: false, profile: null,
+    saved_profile: { ...saved, device: "/dev/v4l/by-path/old-port-video-index0" } };
+  mount("quality");
+  await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/bench/camera/inspect", { device: "/dev/video0" }));
+  expect(mocks.api).not.toHaveBeenCalledWith("/bench/camera/inspect", { device: "/dev/v4l/by-path/old-port-video-index0" });
+  expect(screen.getByLabelText("카메라")).toHaveProperty("value", "/dev/video0");
+  await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/bench/camera/apply", {
+    profile: expect.objectContaining({ device: "/dev/video0" }), save: true }), { timeout: 2000 });
+});
+
 it("tells apart two picture formats of the same size and speed", async () => {
   extraModes = [{ width: 640, height: 480, fps: 30, pixel_format: "MJPG" }, { width: 1280, height: 720, fps: 30, pixel_format: "MJPG" }];
   mount("quality");

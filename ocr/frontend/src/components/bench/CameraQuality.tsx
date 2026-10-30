@@ -17,7 +17,7 @@ const sameMode = (a: Mode, b: any) =>
 // apply or save step, and the screen always shows the saved values.
 export default function CameraQuality({ bench, locked }: { bench: BenchHook; locked: boolean }) {
   const camera = bench.state?.camera;
-  const [devices, setDevices] = useState<{ device: string; name: string }[]>([]);
+  const [devices, setDevices] = useState<{ device: string; name: string; node?: string }[]>([]);
   const [device, setDevice] = useState("");
   const [caps, setCaps] = useState<Caps | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -34,8 +34,11 @@ export default function CameraQuality({ bench, locked }: { bench: BenchHook; loc
     api("/bench/camera/devices")
       .then((r) => {
         setDevices(r.devices || []);
+        const listed: { device: string; node?: string }[] = r.devices || [];
         const known = camera?.saved_profile?.device || camera?.profile?.device;
-        setDevice(known || r.devices?.[0]?.device || "");
+        // A saved path that is gone (another USB port, a new camera) gives way to the camera that is there.
+        const present = !!known && listed.some((d) => d.device === known || d.node === known);
+        setDevice((present ? known : listed[0]?.device) || known || "");
         if (!r.devices?.length) setError(r.error || "카메라 없음");
       })
       .catch((e) => setError(e.message));
@@ -127,7 +130,7 @@ export default function CameraQuality({ bench, locked }: { bench: BenchHook; loc
     return (
       <div className="space-y-4">
         <p role="alert" className="text-[24px] font-extrabold text-danger">{error}</p>
-        {devices.length > 1 && <DevicePicker devices={devices} device={device} onChange={setDevice} disabled={locked} />}
+        {devices.length > 0 && <DevicePicker devices={devices} device={device} onChange={setDevice} disabled={locked} />}
       </div>
     );
   if (!caps || !draft) return <p role="status" className="text-[24px] font-extrabold">카메라 읽는 중</p>;
@@ -178,7 +181,7 @@ export default function CameraQuality({ bench, locked }: { bench: BenchHook; loc
           <button className="btn btn-outline ml-auto" disabled={locked} onClick={() => first.current && change(first.current, 0)}>처음 값으로</button>
         )}
       </div>
-      {devices.length > 1 && <DevicePicker devices={devices} device={device} onChange={setDevice} disabled={locked} />}
+      {devices.length > 0 && <DevicePicker devices={devices} device={device} onChange={setDevice} disabled={locked} />}
       <label className="block space-y-2 text-[22px] font-extrabold">
         해상도
         <select className="field" value={mode} disabled={locked || !!bench.state?.sensor_ocr?.busy}

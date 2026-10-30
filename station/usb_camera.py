@@ -142,7 +142,7 @@ class V4L2:
         try:
             real = path.resolve(strict=True)
         except OSError as exc:
-            raise ValueError("카메라 연결을 확인하세요.") from exc
+            raise ValueError(f"카메라 장치를 찾을 수 없습니다: {value}") from exc
         if not re.fullmatch(r"/dev/video\d+", str(real)) or not real.is_char_device():
             raise ValueError("영상 장치를 선택하세요.")
         return str(path)
