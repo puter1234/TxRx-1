@@ -131,7 +131,8 @@ def prepare(line, channels=(), target=2, **flow):
     preset = WorkPreset(id="test-work", name="공정 시험", kind=kind,
         brand_id="hazzys" if channels else "__simple__", channels=list(channels),
         flow=FlowSettings(**{"capture_delay_ms": 0, "rfid_delay_ms": 0, "di1_debounce_ms": 5, "di2_debounce_ms": 5,
-                             "sensor_gap_ms": 0, "result_timeout_ms": 1000, "departure_timeout_ms": 2000, **flow}))
+                             "sensor_gap_ms": 0, "finish_run_ms": 0, "result_timeout_ms": 1000,
+                             "departure_timeout_ms": 2000, **flow}))
     response = line.client.post("/api/presets", json={"preset": preset.model_dump()})
     assert response.status_code == 200, response.text
     response = line.client.post("/api/presets/test-work/start", json={"preset_revision": 1,
@@ -152,7 +153,8 @@ def test_preset_to_target_completion_with_real_gpio_adapter(line, channels):
     for count in (1, 2):
         line.gpio.sensor(1, 0)
         wait_state(line, lambda s: s["session"]["active_product"] is not None)
-        assert line.io.snapshot()["led_requested"]
+        # Plain counting reads nothing on the belt, so it needs no light.
+        assert line.io.snapshot()["led_requested"] == bool(channels)
         line.gpio.sensor(1, 1)
         line.gpio.sensor(2, 0)
         final = wait_state(line, lambda s: s["session"]["count"] == count)

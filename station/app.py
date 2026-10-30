@@ -74,6 +74,10 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
     saved_rfid_power = store.get("bench_setup", {}).get("rfid_power")
     if saved_rfid_power is not None:
         config = StationConfig.model_validate({**config.model_dump(), "rfid_power": saved_rfid_power})
+    saved_rfid_port = store.get("bench_setup", {}).get("rfid_port")
+    if saved_rfid_port and not config.rfid_port:
+        # The reader found in the device tests is the one jobs use.
+        config = StationConfig.model_validate({**config.model_dump(), "rfid_port": saved_rfid_port})
     camera = camera or CameraManager(config, store)
     detector = None
     hardware_errors = []

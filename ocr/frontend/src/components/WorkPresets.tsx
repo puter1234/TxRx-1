@@ -29,6 +29,7 @@ export const defaults = {
   di1_debounce_ms: 20,
   di2_debounce_ms: 20,
   sensor_gap_ms: 300,
+  finish_run_ms: 3000,
   counter: "sensor",
   model_path: "",
   confidence: 0.5,
@@ -500,6 +501,7 @@ function PresetEditor({
           {number("di1_debounce_ms", "DI1 신호 유지 (ms)")}
           {number("di2_debounce_ms", "DI2 신호 유지 (ms)")}
           {number("sensor_gap_ms", "센서 끊김 허용 (ms)", 1, 0, 5000)}
+          {number("finish_run_ms", "목표 후 배출 시간 (ms)", 1, 0, 60000)}
           {number("departure_timeout_ms", "DI2 도착 제한 (ms)")}
           {number("result_timeout_ms", "검사 완료 제한 (ms)")}
           {number("reconnect_interval_ms", "카메라 재연결 간격 (ms)")}

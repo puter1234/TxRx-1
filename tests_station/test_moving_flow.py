@@ -122,11 +122,13 @@ def test_di1_flicker_within_one_product_counts_once(controller, monkeypatch):
 def test_simple_count_ignores_camera_and_waits_for_di2(controller, monkeypatch):
     c, io, camera, cycle, clock = rig(controller, monkeypatch, low_speed_ms=200)
     camera.connected = False
+    io.high = True
     async def run():
         await cycle.tick()
         io.raw[0] = 0
         await cycle.tick()
-        assert io.on and io.led and not io.high and c.session["count"] == 0
+        # Nothing is read on the belt: it keeps full speed with the light off.
+        assert io.on and not io.led and io.high and c.session["count"] == 0
         clock[0] += .21
         await cycle.tick()
         assert io.high and io.on
@@ -140,8 +142,8 @@ def test_simple_count_ignores_camera_and_waits_for_di2(controller, monkeypatch):
 
 
 @pytest.mark.parametrize("low_speed_ms,debounce_ms", [(0, 0), (0, 20), (10, 20), (20, 20), (50, 20)])
-def test_short_low_speed_hold_is_not_restarted_by_debounced_di1(controller, monkeypatch, low_speed_ms, debounce_ms):
-    c, io, _, cycle, clock = rig(controller, monkeypatch, low_speed_ms=low_speed_ms)
+def test_short_low_speed_hold_is_not_restarted_by_debounced_di1(controller, recipe, monkeypatch, low_speed_ms, debounce_ms):
+    c, io, _, cycle, clock = rig(controller, monkeypatch, recipe, low_speed_ms=low_speed_ms, rfid_delay_ms=0)
     c.session["recipe"]["flow"]["di1_debounce_ms"] = debounce_ms
     io.log.clear()
 
@@ -163,7 +165,9 @@ def test_short_low_speed_hold_is_not_restarted_by_debounced_di1(controller, monk
         await cycle.tick()
         assert io.high and io.on
         io.raw[1] = 0
-        await cycle.tick()
+        for _ in range(30):  # Let the RFID read finish.
+            await asyncio.sleep(.002)
+            await cycle.tick()
         assert c.session["count"] == 1 and io.high and io.on
         assert "stop" not in io.log
 
@@ -448,19 +452,62 @@ def test_slow_photo_save_does_not_block_monitor_or_count_after_stop(controller, 
         gate.set()
 
 
-def test_low_speed_deadline_survives_early_product_completion(controller, monkeypatch):
-    c, io, _, cycle, clock = rig(controller, monkeypatch, low_speed_ms=500)
+def test_low_speed_deadline_survives_early_product_completion(controller, recipe, monkeypatch):
+    c, io, _, cycle, clock = rig(controller, monkeypatch, recipe, low_speed_ms=500, rfid_delay_ms=0)
     async def run():
         await cycle.tick()
         io.raw[0] = 0
         await cycle.tick()
         clock[0] += .1
         io.raw[1] = 0
-        await cycle.tick()
+        for _ in range(30):  # Let the RFID read finish.
+            await asyncio.sleep(.002)
+            await cycle.tick()
         assert c.session["count"] == 1 and cycle.pending is None and not io.high
         clock[0] += .41
         await cycle.tick()
         assert io.high and io.on
+    asyncio.run(run())
+
+
+def test_target_reached_keeps_the_belt_running_until_the_last_product_is_off(controller, monkeypatch):
+    c, io, _, cycle, clock = rig(controller, monkeypatch, finish_run_ms=3000)
+    c.session["recipe"]["target_count"] = 1
+    async def run():
+        await cycle.tick()
+        io.raw[0] = 0
+        await cycle.tick()
+        io.raw[0] = 1
+        io.raw[1] = 0
+        await cycle.tick()
+        assert c.session["phase"] == "DONE" and c.session["count"] == 1 and io.on
+        await cycle.tick()  # The station ticks every 10 ms; the run-out starts here.
+        clock[0] += 2.9
+        await cycle.tick()
+        assert io.on
+        clock[0] += .2
+        await cycle.tick()
+        assert not io.on and c.run_out is None and c.session["phase"] == "DONE"
+    asyncio.run(run())
+
+
+def test_a_new_product_at_di1_stops_the_run_out_at_once(controller, monkeypatch):
+    c, io, _, cycle, clock = rig(controller, monkeypatch, finish_run_ms=3000)
+    c.session["recipe"]["target_count"] = 1
+    async def run():
+        await cycle.tick()
+        io.raw[0] = 0
+        await cycle.tick()
+        io.raw[0] = 1
+        io.raw[1] = 0
+        await cycle.tick()
+        assert io.on
+        io.raw[1] = 1
+        await cycle.tick()
+        io.raw[0] = 0
+        clock[0] += .5
+        await cycle.tick()
+        assert not io.on and c.session["count"] == 1
     asyncio.run(run())
 
 

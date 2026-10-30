@@ -142,6 +142,8 @@ class FlowSettings(Model):
     # A sensor that clears for less than this and sees the product again is the
     # same product (folds, loose fabric), not the next one arriving early.
     sensor_gap_ms: int = Field(default=300, ge=0, le=5000)
+    # After the target's last product passes DI2 the belt keeps running this long.
+    finish_run_ms: int = Field(default=3000, ge=0, le=60000)
     counter: Literal["sensor", "cvzone", "yolo"] = "sensor"
     model_path: str = Field(default="", max_length=1000)
     confidence: float = Field(default=0.5, gt=0, le=1)

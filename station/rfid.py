@@ -1,8 +1,8 @@
 """Bounded YRM UART frame parser and reader. Wire protocol needs unit-specific FAT.
 
 The handover fixes inventory 0x27/tag notice 0x22. Other command/framing values
-use the BB/7E YRM dialect and stay behind rfid_protocol_verified until checked
-against the supplied reader's command manual and captured responses.
+use the BB/7E YRM dialect; initialization checks each reply, so a reader that
+speaks another dialect stays unready.
 """
 
 from __future__ import annotations

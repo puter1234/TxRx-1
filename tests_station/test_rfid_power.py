@@ -97,6 +97,71 @@ def test_restart_restores_power_before_hardware_initialization(tmp_path, monkeyp
         assert app.state.controller.config.rfid_power == app.state.bench.setup.rfid_power == expected
 
 
+@pytest.mark.parametrize("configured,expected", [("", "/dev/ttyUSB-bench"), ("/dev/ttyUSB-config", "/dev/ttyUSB-config")])
+def test_jobs_use_the_reader_port_found_in_the_device_tests(tmp_path, monkeypatch, configured, expected):
+    store = Store(tmp_path / "data")
+    store.put("bench_setup", {"rfid_port": "/dev/ttyUSB-bench"})
+    store.close()
+    path = tmp_path / "config.json"
+    path.write_text(StationConfig(mode="HARDWARE", rfid_port=configured).model_dump_json())
+    monkeypatch.setenv("TXRX_CONFIG", str(path))
+    ports = []
+
+    def hardware(config):
+        ports.append(config.rfid_port)
+        return ReplayIO()
+
+    monkeypatch.setattr("station.hardware.GpioIO", hardware)
+    camera = SimpleNamespace(connect=lambda: None, close=lambda: None,
+                             status=lambda: {"connected": False})
+    app = create_app(tmp_path / "data", camera=camera)
+    with TestClient(app):
+        assert ports == [expected] and app.state.controller.config.rfid_port == expected
+
+
+def test_production_reader_starts_without_a_separate_protocol_sign_off(monkeypatch):
+    import enum
+    import sys
+    from station.hardware import GpioIO
+
+    class Value(enum.Enum):
+        INACTIVE = 0
+        ACTIVE = 1
+
+    class Request:
+        def get_values(self, lines): return [Value.ACTIVE] * len(lines)
+        def set_values(self, values): pass
+        def set_value(self, line, value): pass
+        def release(self): pass
+
+    readers = []
+
+    class Reader:
+        def __init__(self, port):
+            self.port = SimpleNamespace(is_open=True)
+            self.initialized = False
+            self.last_error = None
+            readers.append(self)
+
+        def initialize(self, power):
+            self.initialized = True
+
+        def close(self): pass
+
+    monkeypatch.setitem(sys.modules, "gpiod", SimpleNamespace(LineSettings=lambda **kw: kw,
+                                                              request_lines=lambda *a, **kw: Request()))
+    monkeypatch.setitem(sys.modules, "gpiod.line", SimpleNamespace(
+        Direction=SimpleNamespace(INPUT=1, OUTPUT=2), Value=Value))
+    monkeypatch.setattr("platform.system", lambda: "Linux")
+    monkeypatch.setattr("station.hardware.Reader", Reader)
+    monkeypatch.setattr("station.hardware.Path.exists", lambda self: True)
+    io = GpioIO(StationConfig(mode="HARDWARE", rfid_port="/dev/ttyUSB0"))
+    try:
+        assert readers[0].initialized and io.snapshot()["rfid_ready"]
+    finally:
+        io.close()
+
+
 @pytest.mark.parametrize("failure", ["reader", "storage"])
 def test_failed_save_preserves_previous_power(line, monkeypatch, failure):
     app = line.app

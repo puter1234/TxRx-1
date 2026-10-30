@@ -80,9 +80,9 @@ class GpioIO:
             self._read()
             if config.rfid_port:
                 try:
+                    # Initialization checks the reader's replies itself, as the device test does.
                     self.reader = Reader(config.rfid_port)
-                    if config.commissioning.rfid_protocol_verified:
-                        self.reader.initialize(config.rfid_power)
+                    self.reader.initialize(config.rfid_power)
                 except Exception as exc:
                     # A disconnected optional reader does not take GPIO offline.
                     # RFID jobs still require rfid_ready and can reconnect on reset.
@@ -246,8 +246,6 @@ class GpioIO:
                     except Exception:
                         pass  # The unplugged descriptor may reject STOP.
                 self.reader = Reader(self.config.rfid_port)
-                if not self.config.commissioning.rfid_protocol_verified:
-                    raise RuntimeError("RFID 프로토콜 실기 검증이 필요합니다.")
                 self.reader.initialize(self.config.rfid_power)
                 self.rfid_error = None
             self.fault = None
@@ -284,7 +282,7 @@ class GpioIO:
         )
 
     def apply_rfid_power(self, power):
-        if self.reader and self.config.commissioning.rfid_protocol_verified:
+        if self.reader:
             if self.reader.initialized:
                 self.reader.set_power(power)
             else:

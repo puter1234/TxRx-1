@@ -155,7 +155,9 @@ class FlowCycle(HardwareCycle):
             hits = [self.edges[i].update(raw[i], now, getattr(cfg, f"di{i + 1}_debounce_ms"), cfg.sensor_gap_ms)
                     for i in range(2)]
             # Light is controlled by raw sensor edges, independent of inference/debounce.
-            if s["phase"] in ("FEEDING", "CAMERA_WAIT"):
+            # Plain sensor counting reads nothing on the belt: no light, no slow-down.
+            inspects = self.camera_required() or "rfid" in s["recipe"].get("channels", [])
+            if s["phase"] in ("FEEDING", "CAMERA_WAIT") and inspects:
                 if raw[0] == 0 and self.raw_previous and self.raw_previous[0] != 0:
                     self.io.light(True, allowed=lambda: tick_serial == self.c.stop_serial and not self.c.pending_stops)
                     self.io.speed(False)
@@ -164,6 +166,17 @@ class FlowCycle(HardwareCycle):
                 if raw[1] == 0 and self.raw_previous and self.raw_previous[1] != 0:
                     self.io.light(False)
             self.raw_previous = list(raw)
+        run_out = self.c.run_out
+        if run_out is not None:
+            # The target's last product passed DI2 on a moving belt; carry it off,
+            # but stop at once for anything new at DI1 or any other change.
+            run_out.setdefault("until", now + run_out["ms"] / 1000)
+            if s["phase"] != "DONE" or hits[0] or now >= run_out["until"]:
+                self.c.stop_outputs()
+                if self.c.stop_fault and s["phase"] == "DONE":
+                    with self.c.lock:
+                        s.update(phase="FAULT", fault="IO_STOP_UNCONFIRMED")
+                        self.c.changed("FAULT", {"reason": "IO_STOP_UNCONFIRMED"})
         if s["phase"] not in ("FEEDING", "CAMERA_WAIT"):
             self.cancel.set()
             self.resume_serial = None

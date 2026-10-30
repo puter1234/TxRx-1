@@ -29,6 +29,8 @@ class Controller:
         self.last_result = None
         self.tracking = None
         self.stop_fault = None
+        # Belt kept running after a job reached its target, until the last product is off.
+        self.run_out = None
         self.boot_id = str(uuid.uuid4())
         self.last_client = time.monotonic()
         self.stop_serial = 0
@@ -65,6 +67,7 @@ class Controller:
                 store.event("PROCESS_RESTART", {"session_id": self.session["id"]}, c)
 
     def stop_outputs(self):
+        self.run_out = None
         try:
             self.io.stop()
         except Exception as exc:
@@ -621,7 +624,11 @@ class Controller:
                                 waiting_camera = s["phase"] == "CAMERA_WAIT"
                                 s.update(phase="DONE" if done else "CAMERA_WAIT" if waiting_camera else "FEEDING",
                                          fault="CAMERA_STALE" if waiting_camera and not done else None, active_product=None)
-                                if done:
+                                run_ms = (s["recipe"].get("flow") or {}).get("finish_run_ms", 0)
+                                if done and run_ms and not waiting_camera:
+                                    # The flow stops the belt once the last product is off it.
+                                    self.run_out = {"ms": run_ms}
+                                elif done:
                                     self.stop_outputs()
                                     if self.stop_fault:
                                         s.update(phase="FAULT", fault="IO_STOP_UNCONFIRMED")
