@@ -576,6 +576,16 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
         end = until.astimezone(timezone.utc).isoformat()
         return {"events": store.event_page(start, end, before_seq)}
 
+    metrics_cache = {"at": 0., "value": None}
+
+    def metrics():
+        # Every screen polls equipment every few seconds; the inspection figures
+        # parse up to 2000 records and are only read on the equipment details.
+        now = time.monotonic()
+        if metrics_cache["value"] is None or now - metrics_cache["at"] > 30:
+            metrics_cache.update(at=now, value=store.metrics())
+        return metrics_cache["value"]
+
     @app.get("/api/equipment")
     def equipment():
         return {
@@ -583,7 +593,7 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
             "system": collect(store.root),
             "io": io.snapshot(),
             "vision": vision.status(),
-            "metrics": store.metrics(),
+            "metrics": metrics(),
             "last_daily_backup": store.get("last_daily_backup"),
             "camera": (
                 camera.status()

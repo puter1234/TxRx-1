@@ -58,6 +58,10 @@ class Store:
         CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, body TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL,
           created_at TEXT NOT NULL, body TEXT NOT NULL);
+        -- The equipment status every screen polls reads the newest inspections and
+        -- counts restarts; without these both scan whole tables under the DB lock.
+        CREATE INDEX IF NOT EXISTS inspections_created ON inspections(created_at);
+        CREATE INDEX IF NOT EXISTS events_kind ON events(kind);
         PRAGMA user_version=1;
         """
         )
