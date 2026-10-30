@@ -139,6 +139,9 @@ class FlowSettings(Model):
     reconnect_interval_ms: int = Field(default=2000, ge=100, le=60000)
     di1_debounce_ms: int = Field(default=20, ge=0, le=1000)
     di2_debounce_ms: int = Field(default=20, ge=0, le=1000)
+    # A sensor that clears for less than this and sees the product again is the
+    # same product (folds, loose fabric), not the next one arriving early.
+    sensor_gap_ms: int = Field(default=300, ge=0, le=5000)
     counter: Literal["sensor", "cvzone", "yolo"] = "sensor"
     model_path: str = Field(default="", max_length=1000)
     confidence: float = Field(default=0.5, gt=0, le=1)

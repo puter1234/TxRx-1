@@ -127,10 +127,6 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
     bench = bench_factory(config, io, store)
     controller.external_busy = lambda: maintenance_active.is_set() or prior_busy() or bench.busy()
 
-    def current_phase():
-        with controller.lock:
-            return (controller.session or {}).get("phase")
-
     async def watch():
         nonlocal hardware_monitor
         guard = LeaseGuard(io, config.io_lease_ms)
@@ -138,7 +134,9 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
             while True:
                 await asyncio.sleep(0.01)
                 guard.renew()
-                phase = await asyncio.to_thread(current_phase)
+                # Read without a worker thread or the controller lock: renewing the
+                # lease must not wait behind camera, model or database work.
+                phase = (controller.session or {}).get("phase")
                 if (
                     config.mode == "HARDWARE"
                     and phase
@@ -154,9 +152,11 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
                     and time.monotonic() - controller.last_client > 3
                 ):
                     await asyncio.to_thread(controller.fault, "OPERATOR_SCREEN_DISCONNECTED")
-                if guard.failed and phase not in (None, "FAULT", "FINISHED", "DONE"):
-                    await asyncio.to_thread(controller.fault, guard.failed)
-                    guard.failed = None
+                if guard.failed:
+                    # Belongs to the moment it happened; never carried into a later job.
+                    failed, guard.failed = guard.failed, None
+                    if phase not in (None, "FAULT", "FINISHED", "DONE", "ABORTED"):
+                        await asyncio.to_thread(controller.fault, failed)
                 if hardware_monitor:
                     try:
                         await hardware_monitor.tick()
@@ -211,6 +211,8 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
             recovery = CameraRecovery(
                 camera, paused=lambda: (controller.session or {}).get("phase") == "CAMERA_WAIT")
             recovery.start()
+        if hasattr(vision, "warm_up") and vision.status().get("local_assets_present"):
+            threading.Thread(target=vision.warm_up, daemon=True, name="vision-warm-up").start()
         task = asyncio.create_task(watch())
         maintenance = asyncio.create_task(maintain())
         yield

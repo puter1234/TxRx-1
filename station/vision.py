@@ -108,6 +108,24 @@ class Vision:
         with self.model_lock:
             self._load()
 
+    def loading(self):
+        return self.recognizer is None and self.model_lock.locked()
+
+    def warm_up(self):
+        """Load the models in the background at start-up, with one reading for the GPU.
+
+        Loaded on first use instead, they held the first process test or job for
+        tens of seconds and stalled the whole station while they loaded.
+        """
+        import logging
+        try:
+            self.load()
+            self.prepare_locator()
+            from PIL import Image
+            self.recognizer.read_batch([Image.new("RGB", (128, 32), "white")])
+        except Exception as exc:
+            logging.getLogger(__name__).warning("VISION_WARM_UP_FAILED: %s", exc)
+
     def _load(self):
         if self.recognizer is not None:
             return

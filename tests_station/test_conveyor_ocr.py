@@ -141,6 +141,7 @@ def trial(tmp_path, monkeypatch):
                 app.state.bench._tick()
 
         def start(**settings):
+            settings.setdefault("sensor_gap_ms", 0)  # Sensors are stepped back to back here.
             body = SensorOcrSettings(conveyor_sync=True, **settings).model_dump()
             response = client.post("/api/bench/pipeline/start", json=body)
             assert response.status_code == 200, response.text
@@ -550,3 +551,22 @@ def test_trial_takes_over_manual_led_and_keeps_running_motor(trial):
     assert set(runs) == {"motor"} and runs["motor"]["id"] == motor
     # The sensor sequence now owns the LED: off until DI1.
     assert t.values[52] == 0 and t.state()["active"]
+
+
+def test_process_test_says_at_once_that_the_models_are_still_loading(trial):
+    trial.vision.loading = lambda: True
+    body = SensorOcrSettings(conveyor_sync=True, frame_count=1).model_dump()
+    response = trial.client.post("/api/bench/pipeline/start", json=body)
+    assert response.status_code == 409 and "불러오는 중" in response.text
+    assert not trial.state()["active"] and not trial.app.state.bench.runs
+
+
+def test_conveyor_trial_takes_a_short_sensor_flicker_as_the_same_product(trial):
+    trial.start(frame_count=1, capture_delay_ms=0, sensor_gap_ms=5000)
+    for raw in (0, 1, 0):
+        trial.sensor(1, raw)
+    assert trial.state()["detected"] == 1 and trial.state()["active"]
+    trial.sensor(1, 1)
+    trial.sensor(2, 0)
+    wait_for(lambda: trial.state()["count"] == 1)
+    assert trial.state()["error"] is None

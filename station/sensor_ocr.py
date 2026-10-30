@@ -30,6 +30,9 @@ class SensorOcrSettings(Model):
     pattern: str = Field(default="", max_length=160)
     locator: Literal["yolo26", "stripes", "opencv"] = "yolo26"
     text_finder: Literal["basic", "lines", "detector"] = "basic"
+    # In conveyor mode a DI that clears for less than this and detects again is
+    # the same product, not the next one arriving early.
+    sensor_gap_ms: int = Field(default=300, ge=0, le=5000)
 
     @model_validator(mode="after")
     def valid_pattern(self):
@@ -81,6 +84,7 @@ class SensorOcrTest:
         self.latest_seq = 0
         self.run_id = ""
         self.raw_inputs = None
+        self.cleared_ns = [None, None]
         self.speed_deadline_ns = None
         self.output_serial = None
         bench.input_listeners.append(self.edge)
@@ -152,6 +156,7 @@ class SensorOcrTest:
                 with self.lock:
                     self.settings = settings
                     self.raw_inputs = list(raw)
+                    self.cleared_ns = [None, None]
                     self.speed_deadline_ns = None
                     self.output_serial = serial
                     if settings.conveyor_sync:
@@ -222,8 +227,15 @@ class SensorOcrTest:
         previous = self.raw_inputs[channel - 1]
         self.raw_inputs[channel - 1] = raw
         self.sensor_raw = self.raw_inputs[0]
-        if raw != 0 or previous == 0:
+        if raw != 0:
+            if previous == 0:
+                self.cleared_ns[channel - 1] = observed_ns
             return
+        if previous == 0:
+            return
+        cleared = self.cleared_ns[channel - 1]
+        if cleared is not None and observed_ns - cleared < self.settings.sensor_gap_ms * 1_000_000:
+            return  # A short clear inside one product.
         if channel == 2:
             self.bench.sequence_output("led", False, self.output_serial)
             if self.physical is None:

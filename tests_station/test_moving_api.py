@@ -130,8 +130,8 @@ def prepare(line, channels=(), target=2, **flow):
     kind = "condition" if channels else "vision" if flow.get("counter", "sensor") != "sensor" else "simple"
     preset = WorkPreset(id="test-work", name="공정 시험", kind=kind,
         brand_id="hazzys" if channels else "__simple__", channels=list(channels),
-        flow=FlowSettings(capture_delay_ms=0, rfid_delay_ms=0, di1_debounce_ms=5, di2_debounce_ms=5,
-                          result_timeout_ms=1000, departure_timeout_ms=2000, **flow))
+        flow=FlowSettings(**{"capture_delay_ms": 0, "rfid_delay_ms": 0, "di1_debounce_ms": 5, "di2_debounce_ms": 5,
+                             "sensor_gap_ms": 0, "result_timeout_ms": 1000, "departure_timeout_ms": 2000, **flow}))
     response = line.client.post("/api/presets", json={"preset": preset.model_dump()})
     assert response.status_code == 200, response.text
     response = line.client.post("/api/presets/test-work/start", json={"preset_revision": 1,

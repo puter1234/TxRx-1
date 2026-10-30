@@ -76,12 +76,23 @@ class LeaseGuard:
         if hasattr(self.io, "renew"):
             self.io.renew()
 
+    def outputs_on(self):
+        try:
+            snap = self.io.snapshot()
+        except Exception:
+            return True
+        return bool(snap.get("motor_requested") or snap.get("led_requested"))
+
     def run(self):
         while not self.closed.wait(min(self.lease / 4, 0.05)):
             if time.monotonic() - self.last > self.lease:
-                self.failed = "IO_LEASE_EXPIRED"
+                # A pause with every output off stopped nothing. Recording it
+                # anyway failed whichever job was started next.
+                running = not hasattr(self.io, "snapshot") or self.outputs_on()
                 try:
                     self.io.stop()
+                    if running:
+                        self.failed = "IO_LEASE_EXPIRED"
                 except Exception as exc:
                     self.failed = str(exc)
 

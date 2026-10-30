@@ -19,13 +19,16 @@ class SensorEdge:
         self.armed = False
         self.fired = False
 
-    def update(self, raw, now, debounce_ms):
+    def update(self, raw, now, debounce_ms, gap_ms=0):
         if raw != self.value:
             self.value, self.changed = raw, now
         if now - self.changed + 1e-9 < debounce_ms / 1000:
             return False
         if raw == 1:
-            self.armed, self.fired = True, False
+            # Only a clear lasting the sensor gap ends a product; a shorter one
+            # followed by a new detection is still the same product.
+            if now - self.changed + 1e-9 >= gap_ms / 1000:
+                self.armed, self.fired = True, False
         elif raw == 0 and self.armed and not self.fired:
             self.fired, self.armed = True, False
             return True
@@ -149,7 +152,8 @@ class FlowCycle(HardwareCycle):
         raw = snap.get("di_raw")
         hits = [False, False]
         if raw:
-            hits = [self.edges[i].update(raw[i], now, getattr(cfg, f"di{i + 1}_debounce_ms")) for i in range(2)]
+            hits = [self.edges[i].update(raw[i], now, getattr(cfg, f"di{i + 1}_debounce_ms"), cfg.sensor_gap_ms)
+                    for i in range(2)]
             # Light is controlled by raw sensor edges, independent of inference/debounce.
             if s["phase"] in ("FEEDING", "CAMERA_WAIT"):
                 if raw[0] == 0 and self.raw_previous and self.raw_previous[0] != 0:

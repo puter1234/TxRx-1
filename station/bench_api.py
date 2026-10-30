@@ -81,6 +81,11 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
     # The test emergency stop also ends a wappen counting trial.
     bench.stop_listeners.append(lambda reason: vision_trial.cancel.set())
 
+    def models_ready():
+        # Waiting here would hold the screen for the whole load; say so at once instead.
+        if getattr(app.state.vision, "loading", lambda: False)():
+            raise Conflict("검사 모델을 불러오는 중입니다. 잠시 후 다시 시도하세요.")
+
     def available(allow_led=False, allow_outputs=False, camera_only=False, allow_test=False):
         state = controller.snapshot()
         session = state["session"]
@@ -164,6 +169,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
     @app.post("/api/bench/pipeline/start")
     async def start_pipeline(body: SensorOcrSettings, request: Request):
         permitted(request)
+        models_ready()
         def execute():
             app.state.vision.load()
             sensor_ocr.save_settings(body)
@@ -372,6 +378,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
     @app.post("/api/bench/ocr/read")
     async def read_ocr(request: Request, body: OcrRead | None = None):
         permitted(request)
+        models_ready()
 
         def execute():
             if not camera.status().get("connected"):

@@ -58,7 +58,8 @@ class Vision:
 def rig(controller, monkeypatch, recipe=None, **settings):
     io = IO()
     c = Controller(controller.store, io, StationConfig())
-    flow = FlowSettings(di1_debounce_ms=0, di2_debounce_ms=0, **settings)
+    # Steps sensors a few ms apart; the same-product gap is tested on its own.
+    flow = FlowSettings(**{"di1_debounce_ms": 0, "di2_debounce_ms": 0, "sensor_gap_ms": 0, **settings})
     r = recipe or Recipe(kind="simple", brand_id="__simple__", brand_revision=1, targets={}, channels=[])
     r.flow = flow
     c.new_session(r)
@@ -82,6 +83,40 @@ def test_sensor_debounce_requires_clear_and_counts_once():
     assert not edge.update(0, 3.015, 20)
     assert edge.update(0, 3.04, 20)
     assert not edge.update(0, 4, 20)
+
+
+def test_sensor_clear_shorter_than_the_gap_keeps_the_same_product():
+    edge = SensorEdge()
+    assert not edge.update(1, 0, 0, 300)
+    assert not edge.update(1, .31, 0, 300)
+    assert edge.update(0, .4, 0, 300)
+    assert not edge.update(1, .5, 0, 300)
+    assert not edge.update(1, .6, 0, 300)
+    assert not edge.update(0, .7, 0, 300)
+    assert not edge.update(1, 1, 0, 300)
+    assert not edge.update(1, 1.31, 0, 300)
+    assert edge.update(0, 1.4, 0, 300)
+
+
+def test_di1_flicker_within_one_product_counts_once(controller, monkeypatch):
+    c, io, _, cycle, clock = rig(controller, monkeypatch, sensor_gap_ms=300)
+    async def run():
+        await cycle.tick()
+        clock[0] += .31
+        await cycle.tick()
+        for raw in (0, 1, 0):
+            io.raw[0] = raw
+            clock[0] += .05
+            await cycle.tick()
+        assert io.on and c.session["fault"] is None
+        io.raw[0] = 1
+        clock[0] += .05
+        await cycle.tick()
+        io.raw[1] = 0
+        clock[0] += .05
+        await cycle.tick()
+        assert c.session["count"] == 1 and c.session["fault"] is None
+    asyncio.run(run())
 
 
 def test_simple_count_ignores_camera_and_waits_for_di2(controller, monkeypatch):

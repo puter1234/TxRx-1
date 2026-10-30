@@ -197,3 +197,27 @@ def test_real_parseq_without_network(tmp_path, monkeypatch):
     assert result["observations"]["ocr"]["text"] == target
     assert not result["failures"]
     assert "barcode" not in result["observations"]
+
+
+def test_warm_up_loads_the_models_and_reads_once(monkeypatch):
+    from station.vision import Vision
+    v = Vision(locator="opencv")
+    calls = []
+    def load():
+        calls.append("load")
+        v.recognizer = type("R", (), {"read_batch": lambda self, images: calls.append(len(images)) or []})()
+    monkeypatch.setattr(v, "load", load)
+    monkeypatch.setattr(v, "prepare_locator", lambda locator=None: calls.append("locator"))
+    v.warm_up()
+    assert calls == ["load", "locator", 1]
+    assert not v.loading()
+
+
+def test_warm_up_failure_is_only_logged(monkeypatch):
+    from station.vision import Vision
+    v = Vision(locator="opencv")
+    def broken():
+        raise RuntimeError("no model")
+    monkeypatch.setattr(v, "load", broken)
+    v.warm_up()
+    assert v.recognizer is None

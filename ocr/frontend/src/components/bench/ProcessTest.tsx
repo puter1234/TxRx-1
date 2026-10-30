@@ -14,7 +14,8 @@ type Job = { id: string; number: number; state: string; counted: boolean; frames
   missed_frames: number; capture_error: string | null; matched_text: string | null };
 export type ProcessSettings = { conveyor_sync: boolean; low_speed_ms: number; capture_delay_ms: number;
   capture_interval_ms: number; departure_timeout_ms: number; frame_count: number;
-  sensor_channel: number; active_raw: number; pattern: string; locator: Locator; text_finder: TextFinder };
+  sensor_channel: number; active_raw: number; pattern: string; locator: Locator; text_finder: TextFinder;
+  sensor_gap_ms: number };
 type TextFinder = "basic" | "lines" | "detector";
 type State = { active: boolean; busy: boolean; error: string | null; stop_reason?: string | null; detected: number;
   count: number; passed: number; failed: number; await_clear: boolean; jobs: Job[]; settings?: ProcessSettings };
@@ -35,6 +36,7 @@ const settingsProblem = (s: ProcessSettings) => {
   if (!within(s.low_speed_ms, 0, 60000)) return "저속 유지 0~60000";
   if (!within(s.capture_delay_ms, 0, 60000)) return "촬영 지연 0~60000";
   if (!within(s.departure_timeout_ms, 100, 120000)) return "DI2 도착 제한 100~120000";
+  if (!within(s.sensor_gap_ms ?? 300, 0, 5000)) return "센서 끊김 허용 0~5000";
   if (s.capture_delay_ms + (s.frame_count - 1) * s.capture_interval_ms >= s.departure_timeout_ms)
     return "마지막 사진 시각이 DI2 도착 제한보다 늦음";
   return "";
@@ -219,6 +221,7 @@ export default function ProcessTest({ bench, locked, onShow, onSettings }: {
             {number("frame_count", "사진 장수", 1, 100)}
             {draft.frame_count > 1 && number("capture_interval_ms", "사진 간격 (ms)", 0, 10000)}
             {draft.conveyor_sync && number("departure_timeout_ms", "DI2 도착 제한 (ms)", 100, 120000)}
+            {draft.conveyor_sync && number("sensor_gap_ms", "센서 끊김 허용 (ms)", 0, 5000)}
           </div>
           {!draft.conveyor_sync && (
             <div className="grid grid-cols-2 gap-4">

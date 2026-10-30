@@ -79,3 +79,24 @@ def test_lease_guard_stops_without_controller_progress():
         assert io.stopped.wait(1)
     finally:
         guard.close()
+
+
+@pytest.mark.parametrize("running", [False, True])
+def test_lease_guard_records_a_pause_only_while_outputs_run(running):
+    class IO:
+        def __init__(self):
+            self.stopped = threading.Event()
+
+        def snapshot(self):
+            return {"motor_requested": running, "led_requested": False}
+
+        def stop(self):
+            self.stopped.set()
+
+    io = IO()
+    guard = LeaseGuard(io, 100)
+    try:
+        assert io.stopped.wait(1)
+        assert guard.failed == ("IO_LEASE_EXPIRED" if running else None)
+    finally:
+        guard.close()

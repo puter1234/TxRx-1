@@ -56,7 +56,7 @@ beforeEach(() => {
   pipeline = { active: false, busy: false, error: null, stop_reason: null, jobs: [], detected: 0, count: 0, passed: 0,
     failed: 0, await_clear: false,
     settings: { conveyor_sync: true, low_speed_ms: 500, capture_delay_ms: 100, capture_interval_ms: 100,
-      departure_timeout_ms: 10000, frame_count: 3, sensor_channel: 1, active_raw: 0, pattern: "", locator: "opencv" } };
+      departure_timeout_ms: 10000, frame_count: 3, sensor_channel: 1, active_raw: 0, pattern: "", locator: "opencv", sensor_gap_ms: 300 } };
   vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:camera");
   vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
   vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, blob: async () => new Blob(["frame"]), headers: new Headers() })));
@@ -313,6 +313,15 @@ it("still saves a camera change made just before leaving the tab", async () => {
   fireEvent.click(screen.getByRole("tab", { name: "공정 시험" }));
   await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/bench/camera/apply",
     expect.objectContaining({ profile: expect.objectContaining({ controls: expect.objectContaining({ focus_absolute: 11 }) }) })));
+});
+
+it("saves how long a sensor may clear within one product", async () => {
+  render(<ProcessTest bench={hook()} locked={false} onShow={() => {}} onSettings={() => {}} />);
+  await screen.findByRole("button", { name: "시험 시작" });
+  expect(screen.getByLabelText("센서 끊김 허용 (ms)")).toHaveProperty("value", "300");
+  fireEvent.change(screen.getByLabelText("센서 끊김 허용 (ms)"), { target: { value: "500" } });
+  await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/bench/pipeline/settings",
+    expect.objectContaining({ sensor_gap_ms: 500 }), "PUT"));
 });
 
 it("offers the text finder only with the model locator and saves the choice", async () => {
