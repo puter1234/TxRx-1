@@ -443,6 +443,7 @@ function General() {
               type="password"
               autoComplete={auto as string}
               value={value as string}
+              disabled={!idle}
               onChange={(e) => (set as (v: string) => void)(e.target.value)}
             />
           </label>
