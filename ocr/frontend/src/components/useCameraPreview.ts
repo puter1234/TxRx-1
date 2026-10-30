@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
 
+// A watching eye needs no more than this. Pulling every camera frame kept a slow
+// screen so busy that taps and status updates waited behind the pictures.
+const PREVIEW_FPS = 10;
+
 export function useCameraPreview(connected: boolean) {
   const [url, setUrl] = useState("");
   const [failed, setFailed] = useState(false);
   const [frame, setFrame] = useState({ seq: "", revision: "" });
   useEffect(() => {
     if (!connected) { setUrl(""); setFailed(false); return; }
-    let alive = true, current = "", fps = 30;
+    let alive = true, current = "", fps = PREVIEW_FPS;
     let timer: ReturnType<typeof setTimeout>, deadline: ReturnType<typeof setTimeout>;
     let abort: AbortController | undefined;
     const next = async () => {
@@ -20,7 +24,7 @@ export function useCameraPreview(connected: boolean) {
         const nextUrl = URL.createObjectURL(await response.blob());
         if (!alive) { URL.revokeObjectURL(nextUrl); return; }
         const requested = Number(response.headers?.get("X-Camera-Fps"));
-        if (requested >= 1 && requested <= 120) fps = requested;
+        if (requested >= 1 && requested <= 120) fps = Math.min(requested, PREVIEW_FPS);
         const previous = current;
         current = nextUrl; setUrl(nextUrl); setFailed(false);
         setFrame({ seq: response.headers?.get("X-Camera-Frame") || "",
