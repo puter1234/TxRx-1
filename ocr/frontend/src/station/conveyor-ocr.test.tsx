@@ -76,6 +76,24 @@ it("saves timings and starts physical OCR without a GPIO-number field", async ()
   expect(bench.stop).toHaveBeenCalled();
 });
 
+it("keeps the chosen text finder and sends it with the model locator only", async () => {
+  const view = render(<SensorPipelineTest bench={bench} locked={false}/>);
+  await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/bench/pipeline"));
+  expect(screen.getByLabelText("글자 위치 찾기")).toHaveProperty("value", "basic");
+  fireEvent.change(screen.getByLabelText("글자 위치 찾기"), { target: { value: "detector" } });
+  fireEvent.click(screen.getByRole("button", { name: "설정 저장" }));
+  await screen.findByText("설정을 저장했습니다.");
+  view.unmount();
+  render(<SensorPipelineTest bench={bench} locked={false}/>);
+  await waitFor(() => expect(screen.getByLabelText("글자 위치 찾기")).toHaveProperty("value", "detector"));
+  fireEvent.change(screen.getByLabelText("바코드 위치 검출"), { target: { value: "stripes" } });
+  expect(screen.queryByLabelText("글자 위치 찾기")).toBeNull();
+  fireEvent.change(screen.getByLabelText("바코드 위치 검출"), { target: { value: "yolo26" } });
+  fireEvent.click(screen.getByRole("button", { name: "시험 시작" }));
+  await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/bench/pipeline/start",
+    expect.objectContaining({ locator: "yolo26", text_finder: "detector" })));
+});
+
 it("supports one photo and retains the original selected-sensor trial", async () => {
   render(<SensorPipelineTest bench={bench} locked={false}/>);
   await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/bench/pipeline"));

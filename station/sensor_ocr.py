@@ -29,6 +29,7 @@ class SensorOcrSettings(Model):
     active_raw: int = Field(default=0, ge=0, le=1)
     pattern: str = Field(default="", max_length=160)
     locator: Literal["yolo26", "stripes", "opencv"] = "yolo26"
+    text_finder: Literal["basic", "lines", "detector"] = "basic"
 
     @model_validator(mode="after")
     def valid_pattern(self):
@@ -111,6 +112,12 @@ class SensorOcrTest:
             raise Conflict("카메라 해상도를 확인할 수 없습니다.")
         if hasattr(self.vision, "prepare_capture"):
             self.vision.prepare_capture(status, settings.locator)
+        if settings.locator == "yolo26" and settings.text_finder == "detector":
+            from tagreader.text_detector import get_detector
+            try:
+                get_detector()
+            except Exception as exc:
+                raise Conflict(f"글자 검출 모델을 불러오지 못했습니다: {exc}") from exc
         budget = min(1024**3, int(psutil.virtual_memory().available * 0.25))
         maximum = min(100, budget // (int(width) * int(height) * 3))
         if settings.frame_count > maximum:
@@ -408,7 +415,8 @@ class SensorOcrTest:
                 job, frame = selected
                 crops = []
                 result = self.vision.test_auto(frame["image"], include_previews=False, crop_images=crops,
-                                               locator=self.settings.locator)
+                                               locator=self.settings.locator,
+                                               text_finder=self.settings.text_finder)
                 texts = [line["text"] for read in result["reads"] for line in read["lines"] if line["text"].strip()]
                 matched = next((text for text in texts if self.pattern is None or
                                 self.pattern.fullmatch(re.sub(r"\s+", "", text))), None)

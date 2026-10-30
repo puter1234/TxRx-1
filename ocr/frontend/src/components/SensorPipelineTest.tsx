@@ -16,7 +16,8 @@ type Job = { id: string; number: number; state: string; counted: boolean; collec
   frames: Frame[]; missed_frames: number; capture_error: string | null; matched_text: string | null };
 type Settings = { conveyor_sync: boolean; low_speed_ms: number; capture_delay_ms: number;
   capture_interval_ms: number; departure_timeout_ms: number; frame_count: number;
-  sensor_channel: number; active_raw: number; pattern: string; locator: Locator };
+  sensor_channel: number; active_raw: number; pattern: string; locator: Locator; text_finder: TextFinder };
+type TextFinder = "basic" | "lines" | "detector";
 type State = { active: boolean; busy: boolean; error: string | null; stop_reason?: string | null; detected: number; count: number;
   passed: number; failed: number; sensor_raw: number | null; await_clear: boolean; jobs: Job[]; settings?: Settings };
 const states: Record<string, string> = {
@@ -35,6 +36,7 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
   const [selection, setSelection] = useState<{ job: string; seq: number } | null>(null);
   const [actualSize, setActualSize] = useState(false);
   const [locator, setLocator] = useState<Locator>("yolo26");
+  const [textFinder, setTextFinder] = useState<TextFinder>("basic");
   useEffect(() => {
     let alive = true, timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
@@ -47,6 +49,7 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
             setLinked(s.conveyor_sync); setCount(s.frame_count); setChannel(s.sensor_channel);
             setActiveRaw(s.active_raw); setPattern(s.pattern); setLowMs(s.low_speed_ms);
             setLocator(s.locator ?? "yolo26");
+            setTextFinder(s.text_finder ?? "basic");
             setDelayMs(s.capture_delay_ms); setIntervalMs(s.capture_interval_ms); setDepartureMs(s.departure_timeout_ms);
           }
         }
@@ -63,7 +66,8 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
   const manualOutputs = linked && !running && Object.keys(bench.state?.runs || {}).length > 0;
   const settings: Settings = { conveyor_sync: linked, low_speed_ms: lowMs, capture_delay_ms: delayMs,
     capture_interval_ms: intervalMs, departure_timeout_ms: departureMs, frame_count: count,
-    sensor_channel: linked ? 1 : channel, active_raw: linked ? 0 : signal, pattern, locator };
+    sensor_channel: linked ? 1 : channel, active_raw: linked ? 0 : signal, pattern, locator,
+    text_finder: textFinder };
   const valid = Number.isInteger(count) && count >= 1 && count <= 100 && (!linked || (
     [lowMs, delayMs, intervalMs, departureMs].every(Number.isInteger) && lowMs >= 0 && lowMs <= 60000 &&
     delayMs >= 0 && delayMs <= 60000 && intervalMs >= 0 && intervalMs <= 10000 &&
@@ -90,6 +94,13 @@ export default function SensorPipelineTest({ bench, locked }: { bench: BenchHook
       </select>
     </label>
     <LocatorSelect value={locator} onChange={setLocator} disabled={running}/>
+    {locator === "yolo26" && <label className="block space-y-2 text-lg font-bold">글자 위치 찾기
+      <select aria-label="글자 위치 찾기" className="field block w-full" value={textFinder} disabled={running} onChange={e => setTextFinder(e.target.value as TextFinder)}>
+        <option value="basic">기존 방식</option>
+        <option value="lines">A 줄 찾기 개선</option>
+        <option value="detector">B 글자 검출 모델</option>
+      </select>
+    </label>}
     {linked && <div className="space-y-3">
       <p className="text-lg">DI1에서 저속과 LED 켜기, DI2에서 LED 끄기와 계수</p>
       <div className="grid grid-cols-2 gap-3">
