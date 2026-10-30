@@ -121,6 +121,26 @@ export function Sheet({
   );
 }
 
+// Confirmation inside the app, with large buttons, instead of the browser's own small dialog.
+export function useConfirm() {
+  const [ask, setAsk] = useState<{ title: string; action: string; resolve: (ok: boolean) => void } | null>(null);
+  const answer = (ok: boolean) => {
+    ask?.resolve(ok);
+    setAsk(null);
+  };
+  const confirm = (title: string, action: string) =>
+    new Promise<boolean>((resolve) => setAsk({ title, action, resolve }));
+  const dialog = ask && (
+    <Sheet title={ask.title} onClose={() => answer(false)}>
+      <div className="grid grid-cols-2 gap-5">
+        <button className="btn btn-danger btn-xl" onClick={() => answer(true)}>{ask.action}</button>
+        <button className="btn btn-outline btn-xl" onClick={() => answer(false)}>취소</button>
+      </div>
+    </Sheet>
+  );
+  return { confirm, dialog };
+}
+
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "clear", "0", "back"];
 
 export function Keypad({ onKey, disabled }: { onKey: (key: string) => void; disabled?: boolean }) {

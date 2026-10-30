@@ -121,7 +121,7 @@ class SensorOcrTest:
             raise Conflict(f"현재 해상도와 메모리에서는 최대 {maximum}프레임까지 지정할 수 있습니다.")
         with self.bench.lock:
             if self.busy():
-                raise Conflict("이전 파이프라인 시험이 끝나는 중입니다.")
+                raise Conflict("이전 공정 시험이 끝나는 중입니다.")
             if self.bench.cancel.is_set():
                 raise Conflict("시험 시작이 취소되었습니다.")
             if not self.bench.io:
@@ -170,7 +170,7 @@ class SensorOcrTest:
                     self.capture_thread.start()
                     self.ocr_thread.start()
             except Exception:
-                self.bench.stop("파이프라인 시험 시작 실패")
+                self.bench.stop("공정 시험 시작 실패")
                 raise
         return self.status()
 
@@ -314,7 +314,7 @@ class SensorOcrTest:
             while not self.cancel.wait(0.002):
                 status = self.camera.status()
                 if not status.get("connected"):
-                    raise RuntimeError("파이프라인 시험 중 카메라 연결 끊김")
+                    raise RuntimeError("공정 시험 중 카메라 연결 끊김")
                 with self.lock:
                     self.latest_seq = int(status.get("frames", self.latest_seq))
                     job = next((j for j in self.jobs if j["collecting"]), None)

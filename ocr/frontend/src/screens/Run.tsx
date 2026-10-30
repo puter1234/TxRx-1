@@ -232,7 +232,7 @@ export default function Run() {
           )}
           {!!blockers.length && (
             <div role="status" className="flex flex-wrap items-center gap-4">
-              {blockers.map((b) => (
+              {[...new Set(blockers.map(errorText))].map((b) => (
                 <span key={b} className="rounded-2xl border-2 border-danger bg-danger-bg px-5 py-3 text-[26px] font-extrabold text-danger">{b}</span>
               ))}
               {cameraBlocked && !cameraOn(equipment) && <CameraOnButton />}

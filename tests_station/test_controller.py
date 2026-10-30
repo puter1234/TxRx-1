@@ -56,6 +56,18 @@ def test_failure_latches_stop_until_explicit_reset(controller, recipe):
     assert c.session["count"] == 1
 
 
+def test_photo_test_inspects_again_right_after_reset(controller, recipe):
+    from station.schema import FlowSettings
+    c = controller
+    recipe.flow = FlowSettings()
+    c.new_session(recipe)
+    assert execute(c, recipe, observations={})["status"] == "FAIL"
+    assert c.session["phase"] == "HOLD" and c.session["active_product"]
+    c.command(command(c, "reset"), "test")
+    assert c.session["phase"] == "READY"
+    assert execute(c, recipe)["attempt"] == 2 and c.session["count"] == 1
+
+
 def test_cancel_inference_late_result_never_counts(controller, recipe):
     c = controller
     c.new_session(recipe)

@@ -145,7 +145,10 @@ describe("worker and admin flows", () => {
     render(<MemoryRouter><App /></MemoryRouter>);
     for (const name of ["단순 계수", "조건 계수", "작업 기록", "설정"]) expect(screen.getByRole("button", { name })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "단순 계수" }));
-    expect(await enabled("와펜")).toBeTruthy();
+    // The photo test mode cannot count wappen; the tile says so instead of opening a dead end.
+    const wappen = await screen.findByRole("button", { name: /와펜/ });
+    expect(wappen).toHaveProperty("disabled", true);
+    expect(wappen.textContent).toContain("사진 시험 모드");
     await user.click(screen.getByRole("button", { name: "옷" }));
     await user.click(screen.getByRole("button", { name: "40" }));
     expect(screen.queryByRole("button", { name: "도움말" })).toBeNull();

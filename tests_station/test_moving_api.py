@@ -412,6 +412,27 @@ def test_stop_write_failure_at_target_remains_faulted_until_reset(line, monkeypa
         failing[0] = False
 
 
+def test_missing_setup_records_are_one_reason_for_the_worker(line):
+    prepare(line)
+    line.app.state.controller.config.commissioning.signed_by = ""
+    blockers = line.client.get("/api/status").json()["blockers"]
+    assert blockers == ["설치 점검 기록 없음"]
+
+
+def test_reset_during_a_held_field_stop_says_why_and_keeps_the_fault(line):
+    prepare(line, target=2)
+    issue(line, "start")
+    line.gpio.values[107] = 0
+    fault = wait_state(line, lambda s: s["session"]["phase"] == "FAULT")["session"]["fault"]
+    response = issue(line, "reset", expected=409)
+    assert response.json()["detail"] == "현장 정지/새 START 상태를 확인하세요."
+    session = line.client.get("/api/status").json()["session"]
+    assert (session["phase"], session["fault"]) == ("FAULT", fault)
+    line.gpio.values[107] = 1
+    issue(line, "reset")
+    assert line.client.get("/api/status").json()["session"]["fault"] is None
+
+
 @pytest.mark.parametrize("manual_stop", [False, True])
 def test_camera_reconnect_preserves_product_and_obeys_manual_stop(line, monkeypatch, manual_stop):
     prepare(line, ("ocr", "rfid"), target=1, reconnect_interval_ms=100)

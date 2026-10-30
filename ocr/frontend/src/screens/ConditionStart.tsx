@@ -62,7 +62,14 @@ export default function ConditionStart() {
         : "final";
   const option = current || missing;
   const target = w.countMode === "target" ? w.target : null;
-  const anyCheck = CHECKS.some((c) => w.checks[c.key]);
+  // Checks follow the brand as it is now; a redo can carry a check the brand
+  // no longer has, which the server would refuse.
+  const kept: Checks = brand
+    ? { rfid: w.checks.rfid && brand.caps.rfid, ocr: w.checks.ocr && brand.caps.ocr,
+        barcode_tag: w.checks.barcode_tag && brand.caps.barcode_tag, barcode_poly: w.checks.barcode_poly && brand.caps.barcode_poly }
+    : w.checks;
+  const checks = brand && !CHECKS.some((c) => kept[c.key]) ? ({ ...brand.caps } as Checks) : kept;
+  const anyCheck = CHECKS.some((c) => checks[c.key]);
   const filtered = useMemo(
     () => brands.filter((b) => b.name.toLowerCase().includes(query.trim().toLowerCase())),
     [brands, query],
@@ -103,7 +110,7 @@ export default function ConditionStart() {
           testRun: w.testRun,
           brandId: brand.id,
           brandName: brand.name,
-          checks: w.checks,
+          checks,
           countMode: target ? "target" : "continuous",
           target,
           targets: w.targets,
@@ -113,6 +120,8 @@ export default function ConditionStart() {
       nav("/run");
     } catch (e) {
       reportError(e);
+      // Settings changed in 설정 meanwhile: the next press uses the fresh list.
+      presets.retry();
       if (!ended(useApp.getState().snapshot?.session)) nav("/run");
     } finally {
       setStarting(false);
@@ -194,11 +203,16 @@ export default function ConditionStart() {
             </label>
           )}
           <div className="grid grid-cols-3 gap-6">
-            {filtered.map((b) => (
-              <button key={b.id} className="choice min-h-[180px] w-full !text-[52px]" aria-pressed={b.id === w.brandId} onClick={() => chooseBrand(b.id)}>
-                {b.name}
-              </button>
-            ))}
+            {filtered.map((b) => {
+              // A brand without product values cannot be counted by condition yet.
+              const unset = !b.source.options.length || b.source.options.some((o) => !o.values.length);
+              return (
+                <button key={b.id} className="choice min-h-[180px] w-full flex-col !text-[52px]" aria-pressed={b.id === w.brandId} disabled={unset} onClick={() => chooseBrand(b.id)}>
+                  {b.name}
+                  {unset && <span className="text-[28px] font-extrabold text-danger">설정 필요</span>}
+                </button>
+              );
+            })}
           </div>
           {!brands.length && <Notice tone="warn">등록된 브랜드 없음</Notice>}
         </div>

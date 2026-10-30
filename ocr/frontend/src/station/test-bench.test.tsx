@@ -272,6 +272,23 @@ it("counts wappen on the live camera with one press, starting from zero", async 
   expect(screen.getByText("3")).toBeTruthy();
 });
 
+it("stops a wappen trial left running when another tab is opened", async () => {
+  mount("wappen");
+  fireEvent.click(await screen.findByRole("button", { name: "시험 시작" }));
+  await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/bench/vision/start", { preset_id: "wappen" }));
+  await screen.findByRole("button", { name: "시험 정지" });
+  fireEvent.click(screen.getByRole("tab", { name: "RFID" }));
+  await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/bench/vision/stop", {}));
+});
+
+it("still saves a camera change made just before leaving the tab", async () => {
+  mount("quality");
+  fireEvent.click(await screen.findByRole("button", { name: "초점 늘리기" }));
+  fireEvent.click(screen.getByRole("tab", { name: "공정 시험" }));
+  await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/bench/camera/apply",
+    expect.objectContaining({ profile: expect.objectContaining({ controls: expect.objectContaining({ focus_absolute: 11 }) }) })));
+});
+
 const hook = () => ({
   state: { connected: true, sensors: [{ channel: 1, raw: 1 }, { channel: 2, raw: 1 }], cooldown_ms: { motor: 0 } },
   busy: false, action: (fn: () => Promise<unknown>) => fn(), adoptRuns: vi.fn(), stop: vi.fn(), refresh: vi.fn(),

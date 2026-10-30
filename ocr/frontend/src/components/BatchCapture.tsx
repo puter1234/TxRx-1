@@ -9,6 +9,8 @@ export default function BatchCapture({ bench, locked }: { bench: BenchHook; lock
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const active = useRef(false);
+  // A batch the user stopped is not reported as a failure.
+  const stopped = useRef(false);
   const batch = bench.state?.batch;
   useEffect(() => { api("/bench/batches/latest").then(setResult).catch(() => {}); }, []);
   useEffect(() => {
@@ -25,9 +27,9 @@ export default function BatchCapture({ bench, locked }: { bench: BenchHook; lock
     };
   }, []);
   const shoot = () => bench.action(async () => {
-    setError(""); setPending(true); setResult(null); active.current = true;
+    setError(""); setPending(true); setResult(null); active.current = true; stopped.current = false;
     try { setResult(await api("/bench/camera/batch", { count, interval_ms: interval })); }
-    catch (e) { setError((e as Error).message); }
+    catch (e) { if (!stopped.current) setError((e as Error).message); }
     finally { setPending(false); active.current = false; }
   });
   return <div className="space-y-3">
@@ -36,7 +38,7 @@ export default function BatchCapture({ bench, locked }: { bench: BenchHook; lock
     <p className="text-lg font-bold tabular-nums">최소 {((count - 1) * interval / 1000).toFixed(1)}초</p>
     <div className="flex flex-wrap gap-3">
       <button className="btn btn-primary" disabled={locked || bench.busy || bench.state?.native_busy || bench.state?.rfid_busy || bench.state?.sensor_ocr?.busy || !bench.state?.camera?.connected || !Number.isInteger(count) || count < 1 || count > 500 || !Number.isInteger(interval) || interval < 0 || interval > 10000 || (count - 1) * interval >= 300000} onClick={shoot}>촬영 시작</button>
-      {(pending || batch?.active) && <button className="btn btn-outline" onClick={() => api("/bench/camera/batch/cancel", {}).catch(e => setError(e.message))}>촬영 중지</button>}
+      {(pending || batch?.active) && <button className="btn btn-outline" onClick={() => { stopped.current = true; api("/bench/camera/batch/cancel", {}).catch(e => setError(e.message)); }}>촬영 중지</button>}
     </div>
     {(pending || batch?.active) && <p role="status" className="text-xl font-bold">{batch?.completed || 0} / {batch?.target || count}장 저장 중</p>}
     {error && <p role="alert" className="text-lg font-bold text-danger">{error}</p>}

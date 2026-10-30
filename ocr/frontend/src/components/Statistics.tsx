@@ -56,6 +56,13 @@ export default function Statistics() {
       alive = false;
     };
   }, [params, reload]);
+  const brandName = (id: string) => brands.find((b) => b.id === id)?.name;
+  const works = presets
+    .filter((p) => (brand ? p.brand_id === brand : p.kind !== "condition" || brandName(p.brand_id)))
+    .map((p) => ({
+      id: p.id,
+      name: (p.kind === "condition" ? `${brandName(p.brand_id)} ${p.name}` : p.name) + (p.enabled ? "" : " (사용 안 함)"),
+    }));
   const currentData = loadedParams === params ? data : null;
   const rows = currentData?.[kind] || [];
   const canExport = validRange && !busy && !loadError && currentData !== null;
@@ -100,7 +107,10 @@ export default function Statistics() {
             aria-label="통계 브랜드"
             className="field"
             value={brand}
-            onChange={(e) => setBrand(e.target.value)}
+            onChange={(e) => {
+              setBrand(e.target.value);
+              setPreset("");
+            }}
           >
             <option value="">전체</option>
             {brands.map((b) => (
@@ -119,7 +129,7 @@ export default function Statistics() {
             onChange={(e) => setPreset(e.target.value)}
           >
             <option value="">전체</option>
-            {presets.map((p) => (
+            {works.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
               </option>
@@ -171,10 +181,10 @@ export default function Statistics() {
                   "합격",
                   "불합격",
                   "보정",
-                  "DI1",
-                  "DI2",
-                  "비전",
-                  "재연결",
+                  "DI1 감지",
+                  "DI2 통과",
+                  "비전 통과",
+                  "카메라 재연결",
                   "운전 (시간)",
                   "정지 (시간)",
                 ].map((v) => (

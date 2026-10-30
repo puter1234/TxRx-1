@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Plus, Trash2, Save, Upload, Download } from "lucide-react";
 import OptionValues from "../components/OptionValues";
 import { isColorOption } from "../lib/optionColors";
-import { api, Field, download, uuid } from "./shared";
+import { api, Field, download, readSettings, uuid } from "./shared";
+import { useConfirm } from "../ui/kit";
 import type { Action, Brand, Option } from "./shared";
 
 const empty = (): Brand => ({
@@ -55,28 +56,35 @@ export default function Config({
   const timer = useRef<ReturnType<typeof setTimeout>>();
   const complete = !!draft.id && !!draft.name.trim() && !draft.options.some((o) => !o.values.length);
   useEffect(() => setSaveError(""), [draft]);
+  const pending = embedded && !locked && complete && saveState !== "saving" && !saveError && JSON.stringify(draft) !== saved;
+  const saveNow = async () => {
+    setSaveState("saving");
+    const sent = draft;
+    try {
+      const updated = await api<Brand>("/brands", {
+        brand: sent, expected_revision: existing ? sent.revision : null, reason: "브랜드 설정 변경",
+      });
+      setSaved(JSON.stringify(updated));
+      setExisting(true);
+      setDraft((d) => (JSON.stringify(d) === JSON.stringify(sent) ? updated : { ...d, revision: updated.revision }));
+      setSaveState("saved");
+      await refresh();
+    } catch (e) {
+      setSaveState("");
+      setSaveError((e as Error).message);
+    }
+  };
   useEffect(() => {
     clearTimeout(timer.current);
-    if (!embedded || locked || !complete || saveState === "saving" || saveError || JSON.stringify(draft) === saved) return;
-    timer.current = setTimeout(async () => {
-      setSaveState("saving");
-      const sent = draft;
-      try {
-        const updated = await api<Brand>("/brands", {
-          brand: sent, expected_revision: existing ? sent.revision : null, reason: "브랜드 설정 변경",
-        });
-        setSaved(JSON.stringify(updated));
-        setExisting(true);
-        setDraft((d) => (JSON.stringify(d) === JSON.stringify(sent) ? updated : { ...d, revision: updated.revision }));
-        setSaveState("saved");
-        await refresh();
-      } catch (e) {
-        setSaveState("");
-        setSaveError((e as Error).message);
-      }
-    }, 800);
+    if (!pending) return;
+    timer.current = setTimeout(() => void saveNow(), 800);
     return () => clearTimeout(timer.current);
   }, [draft, locked, saveState, saveError]);
+  // Leaving within the wait still saves the last change.
+  const flushRef = useRef<() => void>(() => {});
+  flushRef.current = () => { if (pending) void saveNow(); };
+  useEffect(() => () => flushRef.current(), []);
+  const { confirm, dialog } = useConfirm();
   const optionKey =
     (
       {
@@ -110,7 +118,7 @@ export default function Config({
         throw new Error("파일 크기 8MB 초과");
       const parsed = await api<Brand>(
         "/brands/validate",
-        JSON.parse(await file.text()),
+        await readSettings(file),
       );
       setDraft(parsed);
       setExisting(brands.some((b) => b.id === parsed.id));
@@ -178,10 +186,11 @@ export default function Config({
             />
           </Field>
         )}
-        <fieldset disabled={role !== "admin"} className="card relative p-6">
+        {dialog}
+        <fieldset disabled={role !== "admin" || (embedded && locked)} className="card relative p-6">
           {embedded ? (
             <p role="status" className={"mb-2 text-[24px] font-extrabold " + (saveError || !complete ? "text-danger" : "text-ink-700")}>
-              {saveError || (!draft.name.trim() ? "브랜드 이름 필요" : !complete ? "값 없는 항목 있음"
+              {saveError || (locked ? "" : !draft.name.trim() ? "브랜드 이름 필요" : !complete ? "값 없는 항목 있음"
                 : saveState === "saving" || JSON.stringify(draft) !== saved ? "저장 중" : saveState === "saved" ? "저장됨" : "")}
             </p>
           ) : (
@@ -365,12 +374,7 @@ export default function Config({
                     disabled={locked}
                     onClick={() =>
                       action(async () => {
-                        if (
-                          !window.confirm(
-                            `${draft.name} 설정을 삭제할까요?`,
-                          )
-                        )
-                          return;
+                        if (!(await confirm(`${draft.name} 삭제`, "삭제"))) return;
                         await api(
                           `/brands/${encodeURIComponent(draft.id)}?revision=${draft.revision}&reason=${encodeURIComponent(reason || "브랜드 삭제 확인")}`,
                           undefined,

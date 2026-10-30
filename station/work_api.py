@@ -39,12 +39,16 @@ def prepare_session(controller, vision, monitor, recipe, actor):
         recipe = controller.resolve_recipe(recipe)
         if controller.config.mode == "HARDWARE" and recipe.default_flow and recipe.flow is None:
             recipe = recipe.model_copy(update={"flow": FlowSettings()})
-        if "ocr" in recipe.channels:
-            vision.load()
-        if set(recipe.channels) & {"ocr", "barcode"} and hasattr(vision, "prepare_locator"):
-            vision.prepare_locator()
-            if monitor and monitor.camera:
-                vision.prepare_capture(monitor.camera.status())
+        try:
+            if "ocr" in recipe.channels:
+                vision.load()
+            if set(recipe.channels) & {"ocr", "barcode"} and hasattr(vision, "prepare_locator"):
+                vision.prepare_locator()
+                if monitor and monitor.camera:
+                    vision.prepare_capture(monitor.camera.status())
+        except (ImportError, OSError, RuntimeError) as exc:
+            # A missing model or package is an installation problem; nothing is stopped or faulted.
+            raise Conflict("검사 모델을 확인하세요.") from exc
         if monitor and recipe.flow:
             monitor.prepare(recipe.model_dump())
         result = controller.new_session(recipe, actor)

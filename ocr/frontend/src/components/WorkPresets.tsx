@@ -44,6 +44,9 @@ export const defaults = {
   match_distance: 0.15,
   track_lost_ms: 500,
 };
+// A default shown on an empty list is saved only once someone changes it, so
+// opening this screen never creates settings by itself.
+const untouched = new Set<string>();
 const fresh = (): Preset => ({
   id: "work-" + Date.now().toString(36),
   name: "단순 계수",
@@ -137,7 +140,12 @@ function PresetEditor({
           (p) => p.kind === kind && (!brandId || p.brand_id === brandId),
         );
         setRows(rows);
-        setDraft((d) => d || rows[0] || initial());
+        setDraft((d) => {
+          if (d || rows[0]) return d || rows[0];
+          const first = initial();
+          untouched.add(first.id);
+          return first;
+        });
       })
       .catch((e) => { if (alive) setLoadError(e.message); })
       .finally(() => { if (alive) setLoading(false); });
@@ -149,14 +157,17 @@ function PresetEditor({
   const changed = (next: Partial<Preset>) => {
     setMessage("");
     setSaveError("");
-    setDraft((d) => d && { ...d, ...next });
+    setDraft((d) => {
+      if (d) untouched.delete(d.id);
+      return d && { ...d, ...next };
+    });
   };
   const flow = (key: string, value: any) =>
     draft && changed({ flow: { ...draft.flow, [key]: value } });
   const original = rows.find((r) => r.id === draft?.id);
   const dirty = JSON.stringify(original) !== JSON.stringify(draft);
   const save = async () => {
-    if (!draft || busy) return;
+    if (!draft || busy) return false;
     setBusy(true);
     setMessage("저장 중");
     try {
@@ -184,9 +195,12 @@ function PresetEditor({
       setDraft((d) => (d && d.id === result.id && JSON.stringify({ ...d, revision: 0 }) !== JSON.stringify({ ...draft, revision: 0 })
         ? { ...d, revision: result.revision } : result));
       setMessage("저장됨");
+      untouched.delete(result.id);
+      return true;
     } catch (e) {
       setMessage("");
       setSaveError((e as Error).message);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -195,12 +209,20 @@ function PresetEditor({
   // Only numeric fields can be left blank; the model path may stay empty.
   const complete = !!draft?.name.trim() && Object.entries(draft?.flow ?? {}).every(([key, v]) =>
     typeof (defaults as Record<string, unknown>)[key] !== "number" || (typeof v === "number" && Number.isFinite(v)));
+  const pristine = !!draft && untouched.has(draft.id);
+  // Two settings with one name would look the same on the worker screen.
+  const taken = !!draft && rows.some((r) => r.id !== draft.id && r.name.trim() === draft.name.trim());
+  const pending = dirty && complete && !taken && !busy && !saveError && !pristine;
   useEffect(() => {
     clearTimeout(timer.current);
-    if (!dirty || !complete || busy || saveError) return;
+    if (!pending) return;
     timer.current = setTimeout(() => void save(), 700);
     return () => clearTimeout(timer.current);
   }, [draft, busy, saveError]);
+  // Leaving within the wait still saves the last change.
+  const flushRef = useRef<() => void>(() => {});
+  flushRef.current = () => { if (pending) void save(); };
+  useEffect(() => () => flushRef.current(), []);
   const number = (key: string, label: string, step = 1, min = 0, max?: number) => (
     <label key={key} className="block text-xl font-extrabold">
       {label}
@@ -482,18 +504,20 @@ function PresetEditor({
         </div>
       </section>
       <footer className="sticky bottom-0 z-10 flex items-center gap-4 rounded-2xl border-2 border-line bg-white p-5 shadow-lg">
-        <p role="status" className={"mr-auto text-[26px] font-extrabold " + (saveError || !complete ? "text-danger" : "")}>
-          {saveError || (!draft.name.trim() ? "설정 이름 필요" : !complete ? "빈 칸 있음" : dirty ? "저장 중" : message || "저장됨")}
+        <p role="status" className={"mr-auto text-[26px] font-extrabold " + (saveError || (!pristine && (!complete || taken)) ? "text-danger" : "")}>
+          {saveError || (pristine ? "" : !draft.name.trim() ? "설정 이름 필요" : taken ? "같은 이름 있음" : !complete ? "빈 칸 있음" : dirty ? "저장 중" : message || "저장됨")}
         </p>
         <button
           className="btn btn-outline btn-lg"
-          disabled={dirty || busy || !draft.enabled}
-          onClick={() =>
+          disabled={busy || !draft.enabled || !complete || taken || !!saveError}
+          onClick={async () => {
+            // An untouched default is saved when it is first tried.
+            if (dirty && !(await save())) return;
             // The bench has no conveyor flow engine: wappen settings are tried on the live camera there.
             nav(draft.kind === "vision" && mode === "REPLAY"
               ? "/settings?section=test&mode=wappen&preset=" + encodeURIComponent(draft.id)
-              : (draft.kind === "condition" ? "/condition" : "/simple") + "?preset=" + encodeURIComponent(draft.id) + "&test=1")
-          }
+              : (draft.kind === "condition" ? "/condition" : "/simple") + "?preset=" + encodeURIComponent(draft.id) + "&test=1");
+          }}
         >
           시험 계수
         </button>

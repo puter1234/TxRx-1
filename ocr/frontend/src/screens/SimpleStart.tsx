@@ -56,11 +56,19 @@ export default function SimpleStart() {
   const session = useApp((s) => s.snapshot?.session);
   const online = useApp((s) => s.connected);
   const brands = useApp((s) => s.brands);
+  // Wappen jobs are counted by the conveyor flow, which the photo test mode
+  // does not run; they are tried on the live camera in 설정, 시험 instead.
+  const replay = useApp((s) => s.snapshot?.mode) === "REPLAY";
 
   const choices = kind ? presets.rows.filter((p) => p.kind === kind) : [];
   const preset = choices.find((p) => p.id === presetId) ?? (choices.length === 1 ? choices[0] : undefined);
   const brand = preset && preset.brand_id !== "__simple__" ? brands.find((b) => b.id === preset.brand_id)?.source : undefined;
   const wappenReady = presets.rows.some((p) => p.kind === "vision");
+  const wappenBlocked = replay ? "사진 시험 모드" : !presets.loading && !wappenReady ? "설정 필요" : "";
+  useEffect(() => {
+    // An address or redo that asks for wappen shows the choice with its reason instead.
+    if (kind === "vision" && wappenBlocked) setKind(null);
+  }, [kind, wappenBlocked]);
   const pickPreset = kind && choices.length > 1 && !preset;
   const ready = !!kind && !presets.loading && !presets.error && (kind === "simple" || !!preset) &&
     (!brand || brand.options.every((o) => o.values.includes(targets[o.key])));
@@ -93,6 +101,8 @@ export default function SimpleStart() {
       nav("/run");
     } catch (e) {
       reportError(e);
+      // Settings changed in 설정 meanwhile: the next press uses the fresh list.
+      presets.retry();
       if (!ended(useApp.getState().snapshot?.session)) nav("/run");
     } finally {
       setStarting(false);
@@ -146,8 +156,8 @@ export default function SimpleStart() {
           <Tile
             icon={Award}
             label="와펜"
-            status={!presets.loading && !wappenReady ? "설정 필요" : undefined}
-            disabled={presets.loading || !wappenReady}
+            status={wappenBlocked || undefined}
+            disabled={presets.loading || !!wappenBlocked}
             onClick={() => setKind("vision")}
           />
         </div>

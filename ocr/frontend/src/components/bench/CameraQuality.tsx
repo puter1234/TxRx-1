@@ -59,7 +59,7 @@ export default function CameraQuality({ bench, locked }: { bench: BenchHook; loc
         first.current = { mode, values };
         setError("");
         // A camera that was never set up is turned on with the chosen device right away.
-        if (!saved) schedule({ mode, values }, 0);
+        if (!saved && !locked) schedule({ mode, values }, 0);
       })
       .catch((e) => alive && setError(e.message));
     return () => {
@@ -110,6 +110,13 @@ export default function CameraQuality({ bench, locked }: { bench: BenchHook; loc
     clearTimeout(timer.current);
     timer.current = setTimeout(flush, delay);
   };
+  // Leaving within the wait still sends the last change.
+  const flushRef = useRef(flush);
+  flushRef.current = flush;
+  useEffect(() => () => {
+    clearTimeout(timer.current);
+    void flushRef.current();
+  }, []);
   const change = (next: Draft, delay?: number) => {
     setDraft(next);
     setStatus("");
@@ -164,7 +171,8 @@ export default function CameraQuality({ bench, locked }: { bench: BenchHook; loc
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
         <p role="status" className={"text-[22px] font-extrabold " + (error ? "text-danger" : "text-ink-700")}>
-          {error || (status === "saving" ? "저장 중" : status === "saved" ? "저장됨" : locked ? "작업 진행 중" : "")}
+          {error || (status === "saving" ? "저장 중" : status === "saved" ? "저장됨" : locked ? "작업 진행 중"
+            : bench.state?.sensor_ocr?.busy ? "공정 시험 중" : "")}
         </p>
         {first.current && JSON.stringify(first.current) !== JSON.stringify(draft) && (
           <button className="btn btn-outline ml-auto" disabled={locked} onClick={() => first.current && change(first.current, 0)}>처음 값으로</button>

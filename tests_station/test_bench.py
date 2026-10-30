@@ -456,6 +456,49 @@ def test_clear_motor_error_allows_retry_without_reconnect_or_cooldown_bypass(rig
     assert pulse(c, target, 10).status_code == 200
 
 
+def test_inputs_left_by_a_closed_test_screen_are_released(rig):
+    c, app = rig
+    b = app.state.bench
+    c.post("/api/bench/io/connect", json={})
+    assert pulse(c, "led", 10).status_code == 200
+    # Running outputs are never released this way; they have their own heartbeat.
+    b.seen_at -= 60
+    time.sleep(0.1)
+    assert b.io is not None
+    c.post("/api/bench/led/off", json={})
+    time.sleep(0.1)
+    c.get("/api/bench")
+    time.sleep(0.1)
+    assert b.io is not None
+    b.seen_at -= 60
+    deadline = time.time() + 2
+    while b.io is not None and time.time() < deadline:
+        time.sleep(0.02)
+    assert b.io is None and not b.busy()
+    assert any(e["kind"] == "BENCH_RELEASED" for e in app.state.store.events())
+
+
+def test_leaving_the_test_screen_ends_a_test_error(rig):
+    c, app = rig
+    b = app.state.bench
+    c.post("/api/bench/io/connect", json={})
+    b.error = "LED 시험 중 접촉기 켜짐"
+    assert b.busy()
+    assert c.post("/api/bench/close", json={}).status_code == 200
+    assert b.error is None and not b.busy()
+
+
+def test_errors_are_korean_without_python_text(rig):
+    c, app = rig
+    response = c.post("/api/bench/camera/batch", json={"count": 500, "interval_ms": 10000})
+    assert response.status_code == 422
+    assert response.json()["detail"] == "촬영 간격과 장수를 줄여 총 촬영 시간이 5분 미만이 되게 하세요."
+    response = c.post("/api/bench/camera/batch", json={"count": 0, "interval_ms": 0})
+    assert response.status_code == 422 and response.json()["detail"] == "입력 형식을 확인하세요."
+    response = c.delete("/api/brands/none?revision=1")
+    assert response.status_code == 404 and response.json()["detail"] == "메이커를 찾을 수 없습니다."
+
+
 def test_clear_error_opens_the_inputs_itself(rig):
     c, app = rig
     b = app.state.bench

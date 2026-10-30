@@ -94,7 +94,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
             if io_state.get("motor_requested") is True or io_state.get("km2_on") is True:
                 raise Conflict("컨베이어를 정지한 뒤 카메라를 조정하세요.")
         if sensor_ocr.busy() and not allow_test:
-            raise Conflict("파이프라인 시험을 먼저 정지하세요.")
+            raise Conflict("공정 시험을 먼저 정지하세요.")
         if production_busy() or maintenance_active.is_set() or bench.native_busy or bench.rfid_busy:
             raise Conflict("진행 중인 점검이 끝난 후 다시 시도하세요.")
         if bench.runs and not allow_outputs and not (allow_led and set(bench.runs) == {"led"}):
@@ -132,6 +132,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
 
     @app.get("/api/bench")
     def state():
+        bench.watched()
         trial = vision_trial.status()
         return {**bench.status(), "camera": camera.status(), "batch": dict(batch),
                 "sensor_ocr": sensor_ocr.status(details=False),
@@ -173,7 +174,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
     @app.post("/api/bench/pipeline/stop")
     def stop_pipeline(request: Request):
         permitted(request)
-        bench.stop("파이프라인 시험 중지")
+        bench.stop("공정 시험 중지")
         return sensor_ocr.status()
 
     @app.get("/api/bench/pipeline/frames/{job_id}/{sequence}")
@@ -290,7 +291,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
         with controller.lock, bench.lock:
             editable()
             if sensor_ocr.busy():
-                raise Conflict("파이프라인 시험 중입니다. 정지는 언제든 가능합니다.")
+                raise Conflict("공정 시험 중입니다. 정지는 언제든 가능합니다.")
             if production_busy() or maintenance_active.is_set() or bench.native_busy:
                 raise Conflict("진행 중인 점검이 끝난 후 다시 시도하세요.")
             return bench.pulse(**body.model_dump())
@@ -322,7 +323,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
             if production_busy() or maintenance_active.is_set():
                 raise Conflict("작업 종료 후 LED를 시험하세요.")
             if sensor_ocr.busy():
-                return bench.stop("LED 끄기로 파이프라인 시험 중지")
+                return bench.stop("LED 끄기로 공정 시험 중지")
             return bench.led_off()
 
     @app.post("/api/bench/motor/off")
@@ -333,7 +334,7 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
             if production_busy() or maintenance_active.is_set():
                 raise Conflict("작업 종료 후 모터를 시험하세요.")
             if sensor_ocr.busy():
-                return bench.stop("모터 끄기로 파이프라인 시험 중지")
+                return bench.stop("모터 끄기로 공정 시험 중지")
             return bench.output_off("motor")
 
     @app.post("/api/bench/stop")
@@ -456,6 +457,8 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
         permitted(request)
         def execute():
             camera.close()
+            # Switched off on purpose: stay off after a restart too.
+            store.put("camera_wanted", False)
             return camera.status()
         return await native(execute, allow_outputs=True, camera_only=True)
 

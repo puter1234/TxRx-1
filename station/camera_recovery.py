@@ -5,8 +5,10 @@ import time
 
 
 class CameraRecovery:
-    def __init__(self, camera, interval=2.0, longest=10.0):
+    def __init__(self, camera, interval=2.0, longest=10.0, paused=lambda: False):
         self.camera, self.interval, self.longest = camera, interval, longest
+        # True while someone else (a running job) is reconnecting the camera.
+        self.paused = paused
         self.closed = threading.Event()
         self.waiting = False
         self.failures = 0
@@ -18,7 +20,7 @@ class CameraRecovery:
 
     def tick(self, now):
         camera = self.camera
-        if not camera.wanted or camera.status().get("connected"):
+        if not camera.wanted or self.paused() or camera.status().get("connected"):
             self.waiting, self.failures = False, 0
             return
         if not self.waiting:

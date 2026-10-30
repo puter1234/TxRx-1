@@ -187,3 +187,17 @@ def test_schema_and_maker_crud_without_internet(tmp_path, monkeypatch, brand):
         )
         assert client.delete("/api/brands/other?revision=2").status_code == 200
         assert client.get("/api/health/ready").json()["hardware_ready"] is False
+
+
+def test_a_missing_inspection_model_is_named_when_a_job_starts(tmp_path, brand, recipe):
+    app = create_app(tmp_path)
+    def missing():
+        raise ModuleNotFoundError("No module named torch", name="torch")
+    app.state.vision.load = missing
+    with TestClient(app) as client:
+        login(client)
+        app.state.store.save_brand(brand.model_dump(), None, "test")
+        response = client.post("/api/sessions", json={**recipe.model_dump(), "channels": ["ocr"]})
+        assert (response.status_code, response.json()["detail"]) == (409, "검사 모델을 확인하세요.")
+        state = client.get("/api/status").json()
+        assert state["session"] is None and not state["stop_fault"]

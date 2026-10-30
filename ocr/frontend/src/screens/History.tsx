@@ -21,15 +21,18 @@ export default function History() {
   const [loading, setLoading] = useState(true);
   const [more, setMore] = useState(false);
   const [selected, setSelected] = useState<Session | null>(null);
+  const [failed, setFailed] = useState(false);
 
   const load = async (offset: number) => {
     setLoading(true);
+    setFailed(false);
     try {
       const page = await api<{ sessions: Session[] }>("/history?offset=" + offset);
       setRows((old) => (offset ? [...old, ...page.sessions] : page.sessions));
       setMore(page.sessions.length === PAGE);
     } catch (e) {
       reportError(e);
+      setFailed(true);
     } finally {
       setLoading(false);
     }
@@ -50,7 +53,11 @@ export default function History() {
               <article className="card flex items-center gap-8 p-6">
                 <span className="w-40 shrink-0 text-[36px] font-black tabular-nums">{time(s.created_at)}</span>
                 <div className="min-w-0 flex-1 space-y-2">
-                  <p className="truncate text-[36px] font-black">{jobTitle(s)}</p>
+                  <p className="flex items-center gap-4 text-[36px] font-black">
+                    <span className="truncate">{jobTitle(s)}</span>
+                    {s.phase === "ABORTED" && <span className="shrink-0 rounded-xl bg-warn px-3 py-1 text-[24px] font-extrabold">중단</span>}
+                    {s.recipe.test_run && <span className="shrink-0 rounded-xl border-2 border-ink-500 px-3 py-1 text-[24px] font-extrabold">시험</span>}
+                  </p>
                   {s.recipe.kind !== "simple" && s.recipe.kind !== "vision" && (
                     <div className="flex flex-wrap gap-3">
                       {s.brand.options.map((o) => (
@@ -78,7 +85,10 @@ export default function History() {
             </div>
           );
         })}
-        {!loading && !rows.length && <p className="py-16 text-center text-[40px] font-black text-ink-700">기록 없음</p>}
+        {!loading && !rows.length && !failed && <p className="py-16 text-center text-[40px] font-black text-ink-700">기록 없음</p>}
+        {!loading && failed && (
+          <button className="btn btn-outline btn-lg w-full" onClick={() => load(rows.length)}>다시 불러오기</button>
+        )}
         {loading && <p role="status" className="py-8 text-center text-[32px] font-extrabold">불러오는 중</p>}
         {more && !loading && (
           <button className="btn btn-outline btn-lg w-full" onClick={() => load(rows.length)}>

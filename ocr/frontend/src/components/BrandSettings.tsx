@@ -2,8 +2,9 @@ import { useState } from "react";
 import { ArrowLeft, Plus, Settings, Trash2, Upload } from "lucide-react";
 import Config from "../station/Config";
 import WorkPresets from "./WorkPresets";
-import { api, uuid, type Brand } from "../station/shared";
+import { api, readSettings, uuid, type Brand } from "../station/shared";
 import { brandView, reportError } from "../lib/station";
+import { useConfirm } from "../ui/kit";
 
 const checks = [
   ["ocr", "OCR"],
@@ -25,6 +26,7 @@ export default function BrandSettings({
   const [tab, setTab] = useState("product");
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  const { confirm, dialog } = useConfirm();
   const brand = brands.find((b) => b.id === selected);
   const action = async (fn: () => Promise<unknown>) => {
     if (busy) return;
@@ -49,6 +51,7 @@ export default function BrandSettings({
   if (brand)
     return (
       <div className="space-y-6">
+        {dialog}
         <div className="flex items-center gap-6">
           <button className="btn btn-outline btn-lg" onClick={() => setSelected(null)}>
             <ArrowLeft size={32} />
@@ -82,6 +85,7 @@ export default function BrandSettings({
     );
   return (
     <div className="space-y-6">
+      {dialog}
       <div className="flex flex-wrap items-center gap-4">
         <h2 className="mr-auto text-[36px] font-black">브랜드</h2>
         <form
@@ -137,9 +141,9 @@ export default function BrandSettings({
                 if (file)
                   void action(async () => {
                     if (file.size > 8 * 1024 * 1024) throw new Error("파일 크기 8MB 초과");
-                    const imported = await api<Brand>("/brands/validate", JSON.parse(await file.text()));
+                    const imported = await api<Brand>("/brands/validate", await readSettings(file));
                     const current = brands.find((b) => b.id === imported.id);
-                    if (current && !window.confirm(`${current.name} 설정을 가져온 파일로 변경할까요?`)) return;
+                    if (current && !(await confirm(`${current.name} 설정 바꾸기`, "바꾸기"))) return;
                     const saved = await save({ ...imported, revision: current?.revision || 1 }, !!current);
                     setSelected(saved.id);
                     setTab("product");
@@ -195,8 +199,8 @@ export default function BrandSettings({
                 className="btn btn-outline btn-lg text-danger"
                 aria-label={`${b.name} 삭제`}
                 disabled={locked || busy}
-                onClick={() => {
-                  if (window.confirm(`${b.name} 설정을 삭제할까요?`))
+                onClick={async () => {
+                  if (await confirm(`${b.name} 삭제`, "삭제"))
                     void action(async () => {
                       await api(
                         `/brands/${encodeURIComponent(b.id)}?revision=${b.revision}&reason=${encodeURIComponent("브랜드 삭제")}`,

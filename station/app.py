@@ -200,11 +200,16 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
     @asynccontextmanager
     async def lifespan(app):
         recovery = None
-        if config.mode == "REPLAY" and isinstance(camera, CameraManager):
+        if isinstance(camera, CameraManager):
             from .camera_recovery import CameraRecovery
-            # A saved camera comes on by itself after a restart, like in HARDWARE mode.
-            camera.wanted = camera.wanted or bool(camera.saved)
-            recovery = CameraRecovery(camera)
+            if config.mode == "REPLAY":
+                # A saved camera comes on by itself after a restart, like in HARDWARE
+                # mode, unless it was switched off on purpose.
+                camera.wanted = bool(camera.saved) and store.get("camera_wanted", True)
+            # A job waiting for its camera reconnects it on the job's own schedule;
+            # at any other time a dropped camera comes back here.
+            recovery = CameraRecovery(
+                camera, paused=lambda: (controller.session or {}).get("phase") == "CAMERA_WAIT")
             recovery.start()
         task = asyncio.create_task(watch())
         maintenance = asyncio.create_task(maintain())
@@ -291,21 +296,31 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
             response.headers["Cache-Control"] = "no-store"
         return response
 
+    def readable(errors):
+        # Our validators write Korean behind pydantic's "Value error, "; the
+        # rest of pydantic's text is English and stays in "errors" only.
+        messages = [e["msg"].removeprefix("Value error, ") for e in errors if e.get("type") == "value_error"]
+        return " ".join(dict.fromkeys(messages)) or "입력 형식을 확인하세요."
+
     @app.exception_handler(ValueError)
     async def bad_value(request, exc):
+        from pydantic import ValidationError
+
+        detail = readable(exc.errors()) if isinstance(exc, ValidationError) else str(exc)
         return JSONResponse(
-            {"detail": str(exc)}, status_code=409 if isinstance(exc, Conflict) else 422
+            {"detail": detail}, status_code=409 if isinstance(exc, Conflict) else 422
         )
 
     @app.exception_handler(KeyError)
     async def missing(request, exc):
-        return JSONResponse({"detail": str(exc)}, status_code=404)
+        # str(KeyError) keeps Python's quote marks around the message.
+        return JSONResponse({"detail": str(exc.args[0]) if exc.args else "찾을 수 없습니다."}, status_code=404)
 
     @app.exception_handler(RequestValidationError)
     async def invalid(request, exc):
         return JSONResponse(
             {
-                "detail": "입력 형식을 확인하세요.",
+                "detail": readable(exc.errors()),
                 "errors": [
                     {"field": ".".join(map(str, e["loc"])), "message": e["msg"]}
                     for e in exc.errors()

@@ -13,6 +13,10 @@ from .schema import Model
 from .controller import Conflict
 from .motor import MOTOR_RESTART_SECONDS, restart_message
 
+# Test inputs held by a screen that is gone (browser closed, network lost)
+# would block production; they are released after this long without a look.
+UNWATCHED_SECONDS = 10
+
 
 class BenchSetup(Model):
     do_on_raw: int | None = Field(default=None, ge=0, le=1)
@@ -204,6 +208,7 @@ class Bench:
         self.input_listeners = []
         self.tick_listeners = []
         self.stop_listeners = []
+        self.seen_at = time.monotonic()
         self.last_rfid = None
         self.closed = threading.Event()
         self.thread = threading.Thread(target=self._watch, daemon=True, name="device-test-watchdog")
@@ -518,6 +523,12 @@ class Bench:
                 self.io = None
             self.last = {}
             self.stop_wait_until = None
+            if self.error:
+                # Outputs are off and the contactor confirmed stop, or the
+                # check above refused. A leftover test error would otherwise
+                # block production with no screen left to clear it.
+                self.store.event("BENCH_ERROR_CLEARED", {"error": self.error, "reason": "점검 종료"})
+                self.error = None
             self.error = None
             return self.status()
 
@@ -574,10 +585,29 @@ class Bench:
             for listener in self.tick_listeners:
                 listener(time.monotonic_ns())
 
+    def watched(self):
+        """A test screen is looking at the bench."""
+        self.seen_at = time.monotonic()
+
+    def _release_unwatched(self):
+        if self.io is None or self.runs or self.native_busy or self.rfid_busy:
+            return
+        if time.monotonic() - self.seen_at < UNWATCHED_SECONDS:
+            return
+        with self.lock:
+            if self.io is None or self.runs or self.native_busy or self.rfid_busy:
+                return
+            try:
+                self.disconnect()
+            except Conflict:
+                return  # The contactor has not confirmed stop yet; try again later.
+            self.store.event("BENCH_RELEASED", {"reason": "시험 화면 없음"})
+
     def _watch(self):
         while not self.closed.wait(0.01):
             try:
                 self._tick()
+                self._release_unwatched()
             except Exception as exc:
                 with self.lock:
                     self.error = str(exc)

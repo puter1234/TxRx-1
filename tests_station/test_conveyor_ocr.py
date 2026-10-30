@@ -356,7 +356,7 @@ def test_trial_restart_waits_five_seconds_without_delaying_stop(trial):
     assert t.client.post("/api/bench/motor/off", json={}).status_code == 200
     assert t.values[51] == 0
     wait_for(lambda: not t.state()["busy"])
-    assert t.state()["stop_reason"] == "모터 끄기로 파이프라인 시험 중지"
+    assert t.state()["stop_reason"] == "모터 끄기로 공정 시험 중지"
     b = t.app.state.bench
     deadline = b.next_output_at["motor"]
     assert 4500 < b.status()["cooldown_ms"]["motor"] <= 5000
@@ -381,7 +381,7 @@ def test_cancelled_ocr_does_not_leave_frame_label_reading(trial):
     assert t.client.post("/api/bench/pipeline/stop", json={}).status_code == 200
     result = t.state()
     assert result["busy"] and not result["active"]
-    assert result["stop_reason"] == "파이프라인 시험 중지"
+    assert result["stop_reason"] == "공정 시험 중지"
     assert result["jobs"][0]["frames"][0]["state"] == "cancelled"
     assert all(t.values[pin] == 0 for pin in (50, 51, 52))
     t.vision.release.set()

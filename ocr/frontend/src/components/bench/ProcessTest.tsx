@@ -19,18 +19,26 @@ type State = { active: boolean; busy: boolean; error: string | null; stop_reason
   count: number; passed: number; failed: number; await_clear: boolean; jobs: Job[]; settings?: ProcessSettings };
 
 // Stops the user asked for need no message.
-const USER_STOPS = new Set(["정지", "파이프라인 시험 중지", "점검 종료"]);
+const USER_STOPS = new Set(["정지", "공정 시험 중지", "점검 종료"]);
 
 const JOB_STATE: Record<string, string> = {
   waiting: "대기", reading: "읽는 중", passed: "읽음", failed: "못 읽음", cancelled: "중지", skipped: "생략", no_match: "형식 다름",
 };
 
-const validSettings = (s: ProcessSettings) =>
-  Number.isInteger(s.frame_count) && s.frame_count >= 1 && s.frame_count <= 100 && (!s.conveyor_sync || (
-    [s.low_speed_ms, s.capture_delay_ms, s.capture_interval_ms, s.departure_timeout_ms].every(Number.isInteger) &&
-    s.low_speed_ms >= 0 && s.low_speed_ms <= 60000 && s.capture_delay_ms >= 0 && s.capture_delay_ms <= 60000 &&
-    s.capture_interval_ms >= 0 && s.capture_interval_ms <= 10000 && s.departure_timeout_ms >= 100 &&
-    s.departure_timeout_ms <= 120000 && s.capture_delay_ms + (s.frame_count - 1) * s.capture_interval_ms < s.departure_timeout_ms));
+// What is wrong with the settings, in the words of the field, or "" when they can run.
+const settingsProblem = (s: ProcessSettings) => {
+  const within = (v: number, min: number, max: number) => Number.isInteger(v) && v >= min && v <= max;
+  if (!within(s.frame_count, 1, 100)) return "사진 장수 1~100";
+  if (s.frame_count > 1 && !within(s.capture_interval_ms, 0, 10000)) return "사진 간격 0~10000";
+  if (!s.conveyor_sync) return "";
+  if (!within(s.low_speed_ms, 0, 60000)) return "저속 유지 0~60000";
+  if (!within(s.capture_delay_ms, 0, 60000)) return "촬영 지연 0~60000";
+  if (!within(s.departure_timeout_ms, 100, 120000)) return "DI2 도착 제한 100~120000";
+  if (s.capture_delay_ms + (s.frame_count - 1) * s.capture_interval_ms >= s.departure_timeout_ms)
+    return "마지막 사진 시각이 DI2 도착 제한보다 늦음";
+  return "";
+};
+const validSettings = (s: ProcessSettings) => !settingsProblem(s);
 
 // Sensor-linked OCR test on the conveyor. One button starts it; the server opens
 // the inputs, turns the camera on and takes over manual outputs by itself.
@@ -40,6 +48,7 @@ export default function ProcessTest({ bench, locked, onShow, onSettings }: {
   const [state, setState] = useState<State | null>(null);
   const [draft, setDraft] = useState<ProcessSettings | null>(null);
   const [saved, setSaved] = useState<"" | "saving" | "saved">("");
+  const [saveError, setSaveError] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>();
   useEffect(() => {
@@ -68,23 +77,34 @@ export default function ProcessTest({ bench, locked, onShow, onSettings }: {
   }, [draft]);
 
   const running = !!state?.busy;
+  const pendingRef = useRef<ProcessSettings | null>(null);
+  const saveNow = async (next: ProcessSettings) => {
+    pendingRef.current = null;
+    setSaved("saving");
+    try {
+      await api("/bench/pipeline/settings", next, "PUT");
+      setSaved("saved");
+    } catch (e) {
+      setSaved("");
+      setSaveError((e as Error).message);
+    }
+  };
   const change = (patch: Partial<ProcessSettings>) => {
     if (!draft) return;
     const next = { ...draft, ...patch };
     setDraft(next);
     setSaved("");
+    setSaveError("");
     clearTimeout(timer.current);
+    pendingRef.current = null;
     if (!validSettings(next)) return;
-    timer.current = setTimeout(async () => {
-      setSaved("saving");
-      try {
-        await api("/bench/pipeline/settings", next, "PUT");
-        setSaved("saved");
-      } catch {
-        setSaved("");
-      }
-    }, 500);
+    pendingRef.current = next;
+    timer.current = setTimeout(() => void saveNow(next), 500);
   };
+  // Leaving within the wait still saves the last change.
+  useEffect(() => () => {
+    if (pendingRef.current) void saveNow(pendingRef.current);
+  }, []);
 
   // The latest product follows automatically until the user picks one.
   const jobs = state?.jobs ?? [];
@@ -108,7 +128,8 @@ export default function ProcessTest({ bench, locked, onShow, onSettings }: {
   const di = (channel: number) => bench.state?.sensors.find((s) => s.channel === channel)?.raw;
   const occupied = draft.conveyor_sync && bench.state?.connected && (di(1) === 0 || di(2) === 0);
   const motorWait = Math.ceil((bench.state?.cooldown_ms?.motor || 0) / 1000);
-  const valid = validSettings(draft);
+  const problem = settingsProblem(draft);
+  const valid = !problem;
   const blocked = locked ? "작업 진행 중" : occupied ? "센서 앞 제품 치우기" : motorWait > 0 ? `모터 재시작 ${motorWait}초` : !valid ? "시험 설정 확인" : "";
   const start = () =>
     bench.action(async () => {
@@ -139,6 +160,7 @@ export default function ProcessTest({ bench, locked, onShow, onSettings }: {
           {blocked || "시험 시작"}
         </button>
       )}
+      {!valid && !running && <p role="alert" className="text-[24px] font-extrabold text-danger">{problem}</p>}
       {(state?.error || (state?.stop_reason && !USER_STOPS.has(state.stop_reason))) && !running && (
         <p role="alert" className="text-[24px] font-extrabold text-danger">{state.error || state.stop_reason}</p>
       )}
@@ -180,7 +202,8 @@ export default function ProcessTest({ bench, locked, onShow, onSettings }: {
       <details className="rounded-2xl border-2 border-line bg-white p-4">
         <summary className="cursor-pointer text-[24px] font-extrabold">
           시험 설정 <span className="text-[20px] text-ink-700">{summary}</span>
-          {saved && <span className="ml-3 text-[20px] text-ok">{saved === "saving" ? "저장 중" : "저장됨"}</span>}
+          {saveError ? <span className="ml-3 text-[20px] text-danger">{saveError}</span>
+            : saved && <span className="ml-3 text-[20px] text-ok">{saved === "saving" ? "저장 중" : "저장됨"}</span>}
         </summary>
         <div className="mt-5 space-y-5">
           <div role="group" aria-label="시험 방식" className="grid grid-cols-2 gap-3">
@@ -227,7 +250,6 @@ export default function ProcessTest({ bench, locked, onShow, onSettings }: {
             <input className="field" disabled={running} value={draft.pattern} placeholder="[A-Z]{4}[0-9]{3}"
               onChange={(e) => change({ pattern: e.target.value })} />
           </label>
-          {!valid && <p role="alert" className="text-[22px] font-extrabold text-danger">마지막 사진 시각이 DI2 도착 제한보다 늦음</p>}
         </div>
       </details>
     </div>

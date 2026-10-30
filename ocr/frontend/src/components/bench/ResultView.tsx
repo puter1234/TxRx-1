@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import InspectionImage from "../InspectionImage";
 import { LocationSummary, type LocationDiagnostics } from "../BarcodeLocation";
 
@@ -24,6 +24,9 @@ const ms = (v: unknown) => (typeof v === "number" ? `${v.toFixed(1)} ms` : "");
 // A photo, text reading or process-test frame, shown in a sheet over the test screen.
 export default function ResultView({ shown }: { shown: Shown }) {
   const [actual, setActual] = useState(false);
+  // Only the latest reading's photo is kept; an older one is gone.
+  const [gone, setGone] = useState(false);
+  useEffect(() => setGone(false), [shown.url]);
   return (
     <section aria-label="결과" className="space-y-4">
       {shown.note && <p role="alert" className="text-[24px] font-extrabold text-danger">{shown.note}</p>}
@@ -54,10 +57,13 @@ export default function ResultView({ shown }: { shown: Shown }) {
           </div>
           {shown.diagnostics ? (
             <InspectionImage key={shown.url} src={shown.url} diagnostics={shown.diagnostics} actualSize={actual} />
+          ) : gone ? (
+            <p className="rounded-xl bg-ink-900 p-10 text-center text-[28px] font-black text-white">사진 없음</p>
           ) : (
             <div className="max-h-[62vh] overflow-auto rounded-xl bg-ink-900">
               <img key={shown.url} src={shown.url} alt={shown.title} className={actual ? "max-w-none" : "max-h-[62vh] w-full object-contain"}
-                style={actual && shown.size ? { width: shown.size.width, height: shown.size.height } : undefined} />
+                style={actual && shown.size ? { width: shown.size.width, height: shown.size.height } : undefined}
+                onError={() => setGone(true)} />
             </div>
           )}
         </>

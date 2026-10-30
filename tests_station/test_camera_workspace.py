@@ -385,6 +385,30 @@ def test_saved_camera_comes_on_after_restart_and_retries_until_it_works(tmp_path
         pass
 
 
+def test_camera_switched_off_stays_off_after_restart(tmp_path):
+    from fastapi.testclient import TestClient
+    from station.app import create_app
+    from station.bench import Bench
+    from tests_station.test_bench import FakeGPIO
+    def start():
+        app = create_app(tmp_path, bench_factory=lambda c, io, s: Bench(c, io, s, gpio_factory=FakeGPIO))
+        app.state.camera.backend, app.state.camera.stream_factory = FakeBackend(), FakeStream
+        return app
+    first = start()
+    with TestClient(first) as client:
+        client.post("/api/auth/setup", json={"password": "123456"})
+        apply(client, first)
+        assert client.post("/api/bench/camera/disconnect", json={}).status_code == 200
+    second = start()
+    with TestClient(second) as client:
+        assert second.state.camera.saved and not second.state.camera.wanted
+        client.post("/api/auth/login", json={"password": "123456"})
+        assert client.post("/api/bench/camera/connect", json={}).status_code == 200
+    third = start()
+    with TestClient(third):
+        assert third.state.camera.wanted
+
+
 def test_reconnecting_with_same_settings_keeps_the_revision(rig):
     from station.camera_recovery import CameraRecovery
     client, app = rig
@@ -410,3 +434,23 @@ def test_explicit_off_stops_reconnecting(rig):
     recovery.tick(100)
     recovery.tick(200)
     assert camera.stream is None and not camera.wanted
+
+
+def test_camera_recovery_leaves_a_waiting_job_to_reconnect_its_camera(rig):
+    from station.camera_recovery import CameraRecovery
+    client, app = rig
+    apply(client, app)
+    camera = app.state.camera
+    phase = ["CAMERA_WAIT"]
+    recovery = CameraRecovery(camera, paused=lambda: phase[0] == "CAMERA_WAIT")
+    old = camera.stream
+    old.closed = True
+    recovery.tick(100)
+    recovery.tick(110)
+    assert camera.stream is old
+    # A stop ends the job's own reconnecting; the camera still comes back, the outputs do not.
+    phase[0] = "PAUSED"
+    recovery.tick(111)
+    recovery.tick(114)
+    assert camera.stream is not old and camera.status()["connected"]
+    assert not app.state.bench.runs

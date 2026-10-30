@@ -167,7 +167,9 @@ export async function refreshEquipment() {
   const snapshot = useApp.getState().snapshot;
   if (snapshot) acceptSnapshot(snapshot);
 }
-export const reportError = (e: unknown) =>
+export const reportError = (e: unknown) => {
+  // A lost connection is shown by the header badge, not as a message box.
+  if ((e as { offline?: boolean })?.offline) return;
   useApp
     .getState()
     .setError(
@@ -176,11 +178,15 @@ export const reportError = (e: unknown) =>
         ", ",
       ),
     );
+};
 const pending = new Map<string, any>();
 const active = new Set<string>();
 let stopGeneration = 0;
 export async function sendCommand(name: string, reason = "", delta?: number) {
   if (["stop", "pause", "finish"].includes(name)) stopGeneration++;
+  // Ending a job is safe in any state, so it uses the newest state rather than
+  // being refused because the screen had not caught up with the server yet.
+  if (name === "finish") await refresh().catch(() => {});
   const state = useApp.getState().snapshot,
     s = state?.session;
   if (!s) {

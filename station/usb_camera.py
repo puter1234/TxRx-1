@@ -565,6 +565,7 @@ class CameraManager:
         if self.saved:
             # A failed attempt still counts as a request; recovery keeps trying.
             self.wanted = True
+            self.store.put("camera_wanted", True)
             return self.apply(CameraProfile.model_validate(self.saved))
         if self.config.camera_source in ("CSI0", "CSI1"):
             from .hardware import Camera

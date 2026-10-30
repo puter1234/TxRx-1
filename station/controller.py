@@ -144,7 +144,12 @@ class Controller:
             required = ("feedback_timeout_ms", "signed_by", "evidence_reference",
                         "physical_permit_observed", "power_cycle_off_verified",
                         "process_kill_off_verified", "os_hang_off_verified", "stop_chain_verified")
-            reasons = [k for k in required if not getattr(self.config.commissioning, k)]
+            missing = [k for k in required if not getattr(self.config.commissioning, k)]
+        else:
+            missing = self.config.commissioning.blockers()
+        # Each setup item is listed on the equipment screen; the run screen needs only one reason.
+        reasons = ["설치 점검 기록 없음"] if missing else []
+        if recipe.get("flow"):
             if self.config.speed_line is None:
                 reasons.append("이 장비의 DO4 연결 정보가 없습니다.")
             reasons += self.io.blockers() + self.runtime_blockers()
@@ -154,7 +159,7 @@ class Controller:
             if self.session.get("active_product"):
                 reasons.append("이송 중이던 제품의 조치를 완료하세요.")
         else:
-            reasons = self.config.commissioning.blockers() + self.io.blockers() + self.runtime_blockers()
+            reasons += self.io.blockers() + self.runtime_blockers()
         return reasons
 
     def check_disk(self):
@@ -374,7 +379,11 @@ class Controller:
                     raise Conflict("작업자 확인 및 조치 내용을 입력하세요.")
                 self.stop_outputs()
                 if self.config.mode == "HARDWARE" and hasattr(self.io, "reset"):
-                    self.io.reset()
+                    try:
+                        self.io.reset()
+                    except RuntimeError as exc:
+                        # A held field stop refuses the reset; the job keeps its own fault.
+                        raise Conflict(str(exc)) from exc
                     self.stop_fault = None
                 reset_state = self.io.snapshot()
                 if (self.stop_fault or reset_state.get("km2_on") is True or
@@ -383,7 +392,9 @@ class Controller:
                           reset_state.get("km2_on") is not False))):
                     raise Conflict("출력 정지를 확인할 수 없습니다.")
                 # Reset clears the fault only. It never energizes the motor.
-                needs_removal = bool(s["recipe"].get("flow") and s["active_product"])
+                # Only a product on the conveyor must be removed first; the
+                # photo test has none, so it can be inspected again at once.
+                needs_removal = bool(s["recipe"].get("flow") and s["active_product"]) and self.config.mode == "HARDWARE"
                 s.update(phase="PAUSED" if needs_removal else "READY", fault=None)
                 self.complete_corrected_target()
                 self.epoch += 1

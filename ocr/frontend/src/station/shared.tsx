@@ -197,40 +197,48 @@ export const display = (v: unknown): string =>
         ? v
         : JSON.stringify(v);
 export const uuid = () => crypto.randomUUID();
+// A file that is not a settings export reads as Korean, not the browser's parser error.
+export async function readSettings(file: File) {
+  try {
+    return JSON.parse(await file.text());
+  } catch {
+    throw new Error("설정 파일이 아닙니다.");
+  }
+}
 export async function api<T = any>(
   path: string,
   body?: unknown,
   method?: string,
 ): Promise<T> {
   const form = body instanceof FormData;
-  const res = await fetch("/api" + path, {
-    method: method ?? (body === undefined ? "GET" : "POST"),
-    credentials: "same-origin",
-    headers:
-      body !== undefined && !form
-        ? { "Content-Type": "application/json" }
-        : undefined,
-    body: body === undefined ? undefined : form ? body : JSON.stringify(body),
-  });
-  const data = await res.json();
+  let res: Response;
+  try {
+    res = await fetch("/api" + path, {
+      method: method ?? (body === undefined ? "GET" : "POST"),
+      credentials: "same-origin",
+      headers:
+        body !== undefined && !form
+          ? { "Content-Type": "application/json" }
+          : undefined,
+      body: body === undefined ? undefined : form ? body : JSON.stringify(body),
+    });
+  } catch {
+    // The header already shows the lost connection; callers may still show this.
+    throw Object.assign(new Error("서버 연결 끊김"), { status: 0, offline: true });
+  }
+  const unreadable = Symbol();
+  const data = await res.json().catch(() => unreadable);
   if (res.status === 401 || res.status === 403)
     window.dispatchEvent(new Event("txrx-login-required"));
-  if (!res.ok)
+  if (!res.ok || data === unreadable) {
+    const body = data === unreadable ? null : data;
+    // Field-level validation details are English; they go to the console only.
+    if (body?.errors) console.warn(path, body.errors);
     throw Object.assign(
-      new Error(
-        (typeof data.detail === "string" ? data.detail : "요청 처리 실패") +
-          (data.errors
-            ? " " +
-              data.errors
-                .map(
-                  (v: { field: string; message: string }) =>
-                    v.field + ": " + v.message,
-                )
-                .join(" / ")
-            : ""),
-      ),
+      new Error(typeof body?.detail === "string" ? body.detail : "요청 처리 실패"),
       { status: res.status },
     );
+  }
   return data;
 }
 export function Field({

@@ -22,9 +22,15 @@ export function LoginGate({ onOk }: { onOk: () => void }) {
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   useEffect(() => {
-    api("/auth")
-      .then((r) => setConfigured(r.configured))
-      .catch((e) => setError(e.message));
+    // A server still starting up is checked again until it answers.
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const check = () =>
+      api("/auth")
+        .then((r) => { if (alive) { setConfigured(r.configured); setError(""); } })
+        .catch((e) => { if (alive) { setError(e.message); timer = setTimeout(check, 2000); } });
+    check();
+    return () => { alive = false; clearTimeout(timer); };
   }, []);
   const submit = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -200,20 +206,24 @@ function Devices() {
 }
 
 function Records() {
+  const [backup, setBackup] = useState("");
   return (
     <div className="space-y-6">
       <Statistics />
       <section className="card flex items-center gap-6 p-6">
         <h2 className="text-[32px] font-black">백업</h2>
+        {backup && <p role="status" className="text-[26px] font-extrabold text-ok">{backup}</p>}
         <button
           className="btn btn-outline btn-lg ml-auto"
           onClick={async () => {
+            setBackup("");
             try {
               const b = await api("/backup", {});
               const a = document.createElement("a");
               a.href = "/api/backups/" + b.name;
               a.download = b.name;
               a.click();
+              setBackup("백업 완료");
             } catch (e) {
               reportError(e);
             }
@@ -229,20 +239,62 @@ function Records() {
 }
 
 const EVENT_LABEL: Record<string, string> = {
-  COMMAND: "작업 조작",
-  INSPECTION_FINAL: "검사 완료",
-  SESSION_CREATED: "작업 시작",
-  MANUAL_ADJUSTMENT: "수량 보정",
-  BRAND_SAVED: "브랜드 저장",
+  ADMIN_INITIALIZED: "비밀번호 설정",
+  BACKUP_CREATED: "백업",
+  BACKUP_FAILED: "백업 실패",
+  BENCH_CAMERA_BATCH: "시험 여러 장 촬영",
+  BENCH_CAMERA_CAPTURE: "시험 사진",
+  BENCH_ERROR_CLEARED: "시험 오류 정리",
+  BENCH_OUTPUT_OFF: "시험 출력 끔",
+  BENCH_OUTPUT_START: "시험 출력 켬",
+  BENCH_OUTPUT_STOP: "시험 출력 정지",
+  BENCH_RELEASED: "시험 입력 반환",
+  BENCH_RFID_ERROR: "RFID 시험 오류",
+  BENCH_RFID_RESULT: "RFID 시험",
+  BENCH_RFID_SETUP_SAVED: "RFID 설정 저장",
+  BENCH_SETUP_SAVED: "입출력 설정 저장",
+  BENCH_VISION_TRIAL_START: "와펜 계수 시험",
   BRAND_DELETED: "브랜드 삭제",
+  BRAND_SAVED: "브랜드 저장",
+  CAMERA_CAPTURE_MISSED: "촬영 누락",
+  CAMERA_CLOSED: "카메라 끔",
+  CAMERA_CONTROLS_RESTORED: "카메라 초점 되돌림",
+  CAMERA_DISCONNECTED: "카메라 끊김",
+  CAMERA_RECONNECTED: "카메라 다시 연결",
+  CAMERA_RECOVERED: "카메라 재연결",
+  CAMERA_RETRY: "카메라 재연결 시도",
+  CAMERA_RETRY_FAILED: "카메라 재연결 실패",
+  CAMERA_SETTINGS_SAVED: "카메라 설정 저장",
+  CAMERA_STREAM_RESTART: "카메라 영상 다시 시작",
+  CAPTURE_FINISHED: "촬영 끝",
+  CAPTURE_READY: "촬영 준비",
+  CAPTURE_STARTED: "촬영 시작",
+  COMMAND: "작업 조작",
+  DAILY_BACKUP_CREATED: "자동 백업",
+  DATABASE_WRITE_FAILED: "기록 저장 실패",
+  DI1_DETECTED: "센서 1 감지",
+  DI2_DETECTED: "센서 2 감지",
+  FAULT: "장비 오류",
+  HIGH_SPEED_SELECTED: "고속 선택",
+  INSPECTION_ABORTED: "검사 중단",
+  INSPECTION_BEGIN: "검사 시작",
+  INSPECTION_FINAL: "검사 완료",
+  LOGIN: "설정 잠금 해제",
+  MANUAL_ADJUSTMENT: "수량 보정",
+  MODEL_SELECTED: "계수 모델 선택",
+  PASS_PHOTO_NOT_RETAINED: "통과 사진 저장 안 함",
+  PHOTO_POLICY_CHANGED: "통과 사진 저장 변경",
+  PHOTO_POLICY_FAILED: "통과 사진 저장 변경 실패",
   PRESET_SAVED: "계수 설정 저장",
   PROCESS_RESTART: "서버 재시작",
-  LOGIN: "설정 잠금 해제",
-  ADMIN_INITIALIZED: "비밀번호 설정",
-  CAMERA_SETTINGS_SAVED: "카메라 설정 저장",
-  CAMERA_RECOVERED: "카메라 재연결",
-  FAULT: "장비 오류",
-  BACKUP_CREATED: "백업",
+  PRODUCT_DEPARTED: "제품 통과",
+  RFID_FINISHED: "RFID 읽기 끝",
+  RFID_STARTED: "RFID 읽기 시작",
+  SESSION_CREATED: "작업 시작",
+  SPEED_WIRING_SAVED: "속도 배선 저장",
+  STOP_REQUESTED: "멈춤",
+  USER_CHANGED: "비밀번호 변경",
+  VISION_CROSSING: "와펜 계수선 통과",
 };
 
 function EventLog() {
@@ -292,7 +344,7 @@ function EventLog() {
         {events.map((e) => (
           <details key={e.seq} className="py-3">
             <summary className="cursor-pointer text-[26px] font-extrabold">
-              <span className="tabular-nums">{new Date(e.created_at).toLocaleTimeString("ko-KR")}</span> {EVENT_LABEL[e.kind] || e.kind}
+              <span className="tabular-nums">{new Date(e.created_at).toLocaleTimeString("ko-KR")}</span> {EVENT_LABEL[e.kind] || "기타"}
             </summary>
             <pre className="mt-3 overflow-auto whitespace-pre-wrap rounded-xl bg-panel p-4 text-[18px]">{JSON.stringify(e.body, null, 2)}</pre>
           </details>
@@ -343,6 +395,9 @@ function General() {
   };
   return (
     <div className="grid max-w-6xl grid-cols-2 gap-6">
+      {!idle && (
+        <p role="alert" className="col-span-2 rounded-2xl bg-warn-bg p-5 text-[26px] font-extrabold">작업 진행 중</p>
+      )}
       <section className="card space-y-6 p-6">
         <h2 className="text-[32px] font-black">통과 사진 저장</h2>
         <div role="group" aria-label="통과 사진 저장" className="grid grid-cols-2 gap-4">
