@@ -278,9 +278,14 @@ class Bench:
             self.error = None
             if self.production_io.snapshot().get("connected"):
                 # The production owner's verified polarity and permit mapping must agree.
-                for key in ("do_on_raw", "permit_line", "permit_active_raw"):
-                    if getattr(self.setup, key) != getattr(self.config, key):
-                        raise Conflict("생산 설정과 시험 설정의 출력 및 허가 입력이 다릅니다.")
+                production = {"do_on_raw": getattr(self.production_io, "do_on_raw", self.config.do_on_raw),
+                              "permit_line": self.config.permit_line,
+                              "permit_active_raw": self.config.permit_active_raw}
+                bench = {"do_on_raw": output_polarity(self.config, self.setup, "motor"),
+                         "permit_line": self.setup.permit_line,
+                         "permit_active_raw": self.setup.permit_active_raw}
+                if bench != production:
+                    raise Conflict("생산 설정과 시험 설정의 출력 및 허가 입력이 다릅니다.")
                 self.io = BorrowedGPIO(self.production_io)
             else:
                 if self.setup.permit_line in (*self.config.di_lines, *self.config.do_lines):

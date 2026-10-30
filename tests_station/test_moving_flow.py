@@ -658,6 +658,50 @@ def test_disconnected_optional_rfid_does_not_disable_gpio_at_startup(monkeypatch
         io.close()
 
 
+def test_documented_board_opens_production_io_without_a_permit_input(monkeypatch):
+    import enum
+    import sys
+    from station.hardware import GpioIO
+    class Direction(enum.Enum):
+        INPUT = 1
+        OUTPUT = 2
+    class Value(enum.Enum):
+        INACTIVE = 0
+        ACTIVE = 1
+    requested, written = {}, []
+    class Request:
+        def get_values(self, lines): return [Value.ACTIVE] * len(lines)
+        def get_value(self, line): pytest.fail("the board has no permit input")
+        def set_values(self, values): written.append(values)
+        def set_value(self, line, value): pass
+        def release(self): pass
+    def request_lines(chip, consumer, config):
+        requested.update(config)
+        return Request()
+    fake = SimpleNamespace(LineSettings=lambda **kw: kw, request_lines=request_lines)
+    monkeypatch.setitem(sys.modules, "gpiod", fake)
+    monkeypatch.setitem(sys.modules, "gpiod.line", SimpleNamespace(Direction=Direction, Value=Value))
+    monkeypatch.setattr("platform.system", lambda: "Linux")
+    io = GpioIO(StationConfig(mode="HARDWARE"))
+    try:
+        assert sorted(requested) == [50, 51, 52, 105, 106, 144]
+        assert requested[51]["output_value"] == Value.INACTIVE
+        snap = io.snapshot()
+        assert snap["connected"] and snap["physical_permit"] and io.feedback_ms == 3000
+        io.motor_ready_at = 0
+        io.motor(True)
+        assert written[-1][51] == Value.ACTIVE
+    finally:
+        io.close()
+
+
+def test_undocumented_wiring_still_needs_its_polarity_and_permit(monkeypatch):
+    from station.hardware import GpioIO
+    monkeypatch.setattr("platform.system", lambda: "Linux")
+    with pytest.raises(RuntimeError, match="출력 극성"):
+        GpioIO(StationConfig(mode="HARDWARE", do_lines=(53, 54)))
+
+
 def test_counter_can_return_to_previous_settings_after_failed_prepare(controller, monkeypatch):
     from station.schema import WorkPreset
     cycle = FlowCycle(controller, None, None, Vision())

@@ -12,21 +12,30 @@ from pathlib import Path
 
 from .rfid import Reader, InventoryCancelled
 from .motor import MOTOR_RESTART_SECONDS, restart_message
+from .bench import documented_wiring
+
+# The documented J4012 board (REV 1.1) has RUN24 hardwired, so there is no
+# permit input; DO1 and DO2 drive their relays at 1; the device tests allow the
+# contactor 3 s to answer. Values set in the configuration always win.
+DOCUMENTED_FEEDBACK_MS = 3000
 
 
 class GpioIO:
     def __init__(self, config):
         if platform.system() != "Linux":
             raise RuntimeError("J2 실물 I/O는 Jetson Linux에서만 사용합니다.")
+        documented = documented_wiring(config)
+        self.do_on_raw = config.do_on_raw if config.do_on_raw is not None else (1 if documented else None)
+        self.feedback_ms = config.commissioning.feedback_timeout_ms or (DOCUMENTED_FEEDBACK_MS if documented else None)
         if (
-            config.do_on_raw is None
-            or config.permit_line is None
-            or config.permit_active_raw is None
+            self.do_on_raw is None
+            or (config.permit_line is None and not documented)
+            or (config.permit_line is not None and config.permit_active_raw is None)
         ):
             raise RuntimeError("출력 극성과 물리 운전 허가 관측 입력이 미확정입니다.")
         if config.permit_line in (*config.di_lines, *config.do_lines):
             raise RuntimeError("운전 허가 입력을 기존 DI/DO에 중복 배정할 수 없습니다.")
-        if not config.commissioning.feedback_timeout_ms:
+        if not self.feedback_ms:
             raise RuntimeError("접촉기 응답 시간을 먼저 실측하세요.")
         import gpiod
         from gpiod.line import Direction, Value
@@ -52,10 +61,10 @@ class GpioIO:
         self.permit_epoch = 0
         self.prior_permit = None
         self.latest = {}
-        off = Value.ACTIVE if config.do_on_raw == 0 else Value.INACTIVE
+        off = Value.ACTIVE if self.do_on_raw == 0 else Value.INACTIVE
         mapping = {
             line: gpiod.LineSettings(direction=Direction.INPUT)
-            for line in (*config.di_lines, config.permit_line)
+            for line in (*config.di_lines, *([config.permit_line] if config.permit_line is not None else []))
         }
         mapping.update(
             {
@@ -93,7 +102,7 @@ class GpioIO:
             raise
 
     def _value(self, on):
-        raw = self.config.do_on_raw if on else 1 - self.config.do_on_raw
+        raw = self.do_on_raw if on else 1 - self.do_on_raw
         return self.Value.ACTIVE if raw else self.Value.INACTIVE
 
     def _outputs(self, motor, led):
@@ -119,7 +128,7 @@ class GpioIO:
 
     def _read(self):
         raw = [v.value for v in self.req.get_values(list(self.config.di_lines))]
-        permit = (
+        permit = self.config.permit_line is None or (
             self.req.get_value(self.config.permit_line).value
             == self.config.permit_active_raw
         )
@@ -160,7 +169,7 @@ class GpioIO:
                         self._outputs(False, False)
                     if (
                         time.monotonic() - self.changed
-                        > self.config.commissioning.feedback_timeout_ms / 1000
+                        > self.feedback_ms / 1000
                     ):
                         if self.requested and not snap["km2_on"]:
                             self.fault = "MOTOR_PERMIT_LOST"

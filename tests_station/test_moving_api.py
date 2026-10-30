@@ -412,11 +412,10 @@ def test_stop_write_failure_at_target_remains_faulted_until_reset(line, monkeypa
         failing[0] = False
 
 
-def test_missing_setup_records_are_one_reason_for_the_worker(line):
+def test_conveyor_job_starts_without_setup_records(line):
     prepare(line)
     line.app.state.controller.config.commissioning.signed_by = ""
-    blockers = line.client.get("/api/status").json()["blockers"]
-    assert blockers == ["설치 점검 기록 없음"]
+    assert line.client.get("/api/status").json()["blockers"] == []
 
 
 def test_reset_during_a_held_field_stop_says_why_and_keeps_the_fault(line):

@@ -9,6 +9,15 @@ from station.controller import Controller
 from station.devices import ReplayIO
 
 
+@pytest.fixture(autouse=True)
+def replay_config(tmp_path_factory, monkeypatch):
+    # The shipped config/station.json runs the real board. Tests use REPLAY
+    # unless they point TXRX_CONFIG at their own configuration.
+    path = tmp_path_factory.mktemp("config") / "station.json"
+    path.write_text(StationConfig().model_dump_json())
+    monkeypatch.setenv("TXRX_CONFIG", str(path))
+
+
 @pytest.fixture
 def brand():
     return Brand(

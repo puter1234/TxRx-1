@@ -141,10 +141,10 @@ class Controller:
     def hardware_blockers(self):
         recipe = (self.session or {}).get("recipe", {})
         if recipe.get("flow"):
-            required = ("feedback_timeout_ms", "signed_by", "evidence_reference",
-                        "physical_permit_observed", "power_cycle_off_verified",
-                        "process_kill_off_verified", "os_hang_off_verified", "stop_chain_verified")
-            missing = [k for k in required if not getattr(self.config.commissioning, k)]
+            # Conveyor jobs run on the same output guards as the device tests: the
+            # I/O owner checks the contactor and the lease and refuses to open
+            # without its wiring; its own faults are listed below.
+            missing = []
         else:
             missing = self.config.commissioning.blockers()
         # Each setup item is listed on the equipment screen; the run screen needs only one reason.

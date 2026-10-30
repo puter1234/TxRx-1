@@ -1,5 +1,5 @@
 {
-  "mode": "REPLAY",
+  "mode": "HARDWARE",
   "gpio_chip": "/dev/gpiochip0",
   "di_lines": [
     105,
