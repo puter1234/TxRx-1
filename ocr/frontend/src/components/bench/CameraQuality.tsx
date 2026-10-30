@@ -183,7 +183,13 @@ export default function CameraQuality({ bench, locked }: { bench: BenchHook; loc
         해상도
         <select className="field" value={mode} disabled={locked || !!bench.state?.sensor_ocr?.busy}
           onChange={(e) => change({ mode: Number(e.target.value), values }, 0)}>
-          {caps.modes.map((m, i) => <option key={i} value={i}>{modeLabel(m)}</option>)}
+          {caps.modes.map((m, i) => (
+            <option key={i} value={i}>
+              {modeLabel(m)}
+              {/* The same size and speed can come in two picture formats. */}
+              {caps.modes.some((o, j) => j !== i && modeLabel(o) === modeLabel(m)) ? `, ${m.pixel_format}` : ""}
+            </option>
+          ))}
         </select>
       </label>
       <div className="space-y-5">{editable.filter((c) => PRIMARY.test(c.name)).map(control)}</div>

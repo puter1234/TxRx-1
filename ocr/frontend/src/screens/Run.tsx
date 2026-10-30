@@ -230,6 +230,13 @@ export default function Run() {
               제품 뺐음
             </button>
           )}
+          {phase === "PAUSED" && state?.stop_fault && (
+            <button className="btn btn-primary btn-xl" disabled={!online || busy || !!state?.busy}
+              onClick={() => command("reset", "작업자 확인 후 오류 해제")}>
+              <RotateCcw size={44} strokeWidth={3} />
+              오류 해제
+            </button>
+          )}
           {!!blockers.length && (
             <div role="status" className="flex flex-wrap items-center gap-4">
               {[...new Set(blockers.map(errorText))].map((b) => (

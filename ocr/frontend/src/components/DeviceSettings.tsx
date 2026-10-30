@@ -92,15 +92,29 @@ export function WiringPanel({ bench }: { bench: BenchHook }) {
     <button className={"btn " + (setup[key] ? "btn-primary" : "btn-outline")} aria-pressed={!!setup[key]} disabled={disabled}
       onClick={() => void save({ [key]: !setup[key] })}>{label}</button>
   );
+  const editor = (
+    <div className="space-y-4 border-t-2 border-line pt-5">
+      {pick("출력 켜짐 신호", setup.do_on_raw, (v) => ({ do_on_raw: v }))}
+      {[0, 1].map((i) => pick(`센서 ${i + 1} 감지 신호`, setup.sensor_active_raw?.[i] ?? 0,
+        (v) => ({ sensor_active_raw: setup.sensor_active_raw.map((x: number | null, j: number) => (j === i ? v : x)) })))}
+      <div className="flex items-center gap-3">
+        <label htmlFor="permit-line" className="min-w-56 text-[22px] font-extrabold">운전 허가 GPIO</label>
+        <PermitLine value={setup.permit_line} disabled={disabled} onSave={(v) => void save({ permit_line: v })} />
+      </div>
+      {setup.permit_line != null && pick("운전 허가 신호", setup.permit_active_raw, (v) => ({ permit_active_raw: v }))}
+      <div className="flex flex-wrap gap-3">
+        {confirm("output_wiring_confirmed", "출력 배선 확인")}
+        {confirm("stop_circuit_confirmed", "정지 회로 확인")}
+      </div>
+    </div>
+  );
   return (
     <section className="card space-y-5 p-6">
       <div className="flex items-center gap-4">
         <h2 className="text-[32px] font-black">입출력</h2>
-        {!s.wiring_fixed && (
-          <p role="status" className={"ml-auto text-[22px] font-extrabold " + (error ? "text-danger" : "text-ink-700")}>
-            {error || (saving === "saving" ? "저장 중" : saving === "saved" ? "저장됨" : "")}
-          </p>
-        )}
+        <p role="status" className={"ml-auto text-[22px] font-extrabold " + (error ? "text-danger" : "text-ink-700")}>
+          {error || (saving === "saving" ? "저장 중" : saving === "saved" ? "저장됨" : "")}
+        </p>
       </div>
       <table className="w-full text-left text-[22px] font-extrabold">
         <tbody className="divide-y divide-line">
@@ -113,22 +127,13 @@ export function WiringPanel({ bench }: { bench: BenchHook }) {
           ))}
         </tbody>
       </table>
-      {!s.wiring_fixed && (
-        <div className="space-y-4 border-t-2 border-line pt-5">
-          {pick("출력 켜짐 신호", setup.do_on_raw, (v) => ({ do_on_raw: v }))}
-          {[0, 1].map((i) => pick(`센서 ${i + 1} 감지 신호`, setup.sensor_active_raw?.[i] ?? 0,
-            (v) => ({ sensor_active_raw: setup.sensor_active_raw.map((x: number | null, j: number) => (j === i ? v : x)) })))}
-          <div className="flex items-center gap-3">
-            <label htmlFor="permit-line" className="min-w-56 text-[22px] font-extrabold">운전 허가 GPIO</label>
-            <PermitLine value={setup.permit_line} disabled={disabled} onSave={(v) => void save({ permit_line: v })} />
-          </div>
-          {setup.permit_line != null && pick("운전 허가 신호", setup.permit_active_raw, (v) => ({ permit_active_raw: v }))}
-          <div className="flex flex-wrap gap-3">
-            {confirm("output_wiring_confirmed", "출력 배선 확인")}
-            {confirm("stop_circuit_confirmed", "정지 회로 확인")}
-          </div>
-        </div>
-      )}
+      {/* The documented board needs no changes; they stay one tap away, e.g. for a run-permit input. */}
+      {s.wiring_fixed ? (
+        <details>
+          <summary className="cursor-pointer text-[22px] font-extrabold">배선 바꾸기</summary>
+          {editor}
+        </details>
+      ) : editor}
     </section>
   );
 }

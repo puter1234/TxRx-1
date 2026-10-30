@@ -72,6 +72,18 @@ it("marks a brand without product values instead of letting a job start that the
   expect(screen.getByRole("button", { name: "헤지스" })).toHaveProperty("disabled", false);
 });
 
+it("clears an unconfirmed stop from a paused job", async () => {
+  const paused = { ...snapshot, revision: 5, mode: "HARDWARE", can_start: false, stop_fault: "IO_STOP_UNCONFIRMED: write failed",
+    blockers: ["IO_STOP_UNCONFIRMED: write failed"], session: job({ phase: "PAUSED", mode: "HARDWARE" }) } as Snapshot;
+  const fetcher = vi.fn(async (_path: string, _options?: RequestInit) => response(paused));
+  vi.stubGlobal("fetch", fetcher);
+  acceptSnapshot(paused);
+  render(<MemoryRouter initialEntries={["/run"]}><App /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole("button", { name: "오류 해제" }));
+  await waitFor(() => expect(fetcher.mock.calls.some(([path, o]) =>
+    path === "/api/commands" && JSON.parse(o?.body as string).action === "reset")).toBe(true));
+});
+
 it("shows no message box while the server cannot be reached", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("Failed to fetch"); }));
   const failure = await api("/presets").catch((e) => e);

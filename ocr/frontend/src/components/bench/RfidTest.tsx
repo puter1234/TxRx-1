@@ -33,11 +33,12 @@ export default function RfidTest({ bench, locked }: { bench: BenchHook; locked: 
   const needsPort = choices.length > 1 && !choices.some((p) => p.device === setup?.rfid_port);
   return (
     <div className="space-y-6">
-      {needsPort && (
+      {/* A wrong saved port that is still listed can be changed here too. */}
+      {choices.length > 1 && (
         <label className="block space-y-2 text-[22px] font-extrabold">
           RFID 리더 포트
           <select className="field" value={setup?.rfid_port || ""} disabled={locked} onChange={(e) => save({ rfid_port: e.target.value })}>
-            <option value="">고르기</option>
+            {needsPort && <option value="">고르기</option>}
             {choices.map((p) => <option key={p.device} value={p.device}>{p.name} ({p.device})</option>)}
           </select>
         </label>

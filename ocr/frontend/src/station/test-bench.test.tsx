@@ -18,10 +18,11 @@ let values: Record<string, number>;
 let ports: { device: string; name: string; usb: boolean }[];
 let rfidReply: () => any;
 let trial: any;
+let extraModes: any[];
 const saved = { device: "/dev/video0", width: 640, height: 480, fps: 30, pixel_format: "YUYV", controls: { focus_absolute: 10 } };
 const caps = () => ({
   revision: bench.camera.revision, saved_profile: bench.camera.saved_profile,
-  modes: [{ width: 640, height: 480, fps: 30, pixel_format: "YUYV" }],
+  modes: [{ width: 640, height: 480, fps: 30, pixel_format: "YUYV" }, ...extraModes],
   current: { width: 640, height: 480, fps: 30, pixel_format: "YUYV" },
   controls: Object.entries(values).map(([name, value]) => ({ name, value,
     type: name.endsWith("auto") ? "bool" : "int", min: 0, max: 100, step: 1, flags: "", menu: {} })),
@@ -36,6 +37,7 @@ const fetches = (path: string) => vi.mocked(fetch).mock.calls.filter(([p]) => p 
 beforeEach(() => {
   useApp.setState({ connected: true, snapshot: null, equipment: null } as any);
   values = { focus_absolute: 10, focus_auto: 0 };
+  extraModes = [];
   ports = [{ device: "/dev/ttyUSB0", name: "CP2102", usb: true }];
   rfidReply = () => ({ ok: true, tags: [{ epc: "E200", count: 3, max_rssi: -41 }], detail: "읽은 태그 1개" });
   trial = { active: false, total: 7, boxes: [], width: 0, height: 0, inference_ms: null, frames: 0, error: null, preset: null };
@@ -201,7 +203,7 @@ it("reads RFID tags with one press without a reader confirmation step", async ()
   expect((await screen.findByRole("alert")).textContent).toBe("RFID 응답이 없습니다.");
 });
 
-it("asks for the reader port only when several USB serial devices are plugged in", async () => {
+it("asks for the reader port when several USB serial devices are plugged in and lets it change later", async () => {
   ports = [{ device: "/dev/ttyTHS1", name: "n/a", usb: false }, { device: "/dev/ttyUSB0", name: "CP2102", usb: true },
     { device: "/dev/ttyUSB1", name: "CH340", usb: true }];
   mount("rfid");
@@ -210,8 +212,12 @@ it("asks for the reader port only when several USB serial devices are plugged in
   expect(screen.getByRole("button", { name: "태그 읽기" })).toHaveProperty("disabled", true);
   fireEvent.change(select, { target: { value: "/dev/ttyUSB1" } });
   await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/bench/rfid/setup", { rfid_port: "/dev/ttyUSB1" }, "PUT"));
-  await waitFor(() => expect(screen.queryByLabelText("RFID 리더 포트")).toBeNull());
-  expect(screen.getByRole("button", { name: "태그 읽기" })).toHaveProperty("disabled", false);
+  await waitFor(() => expect(screen.getByRole("button", { name: "태그 읽기" })).toHaveProperty("disabled", false));
+  const chosen = screen.getByLabelText("RFID 리더 포트");
+  expect(chosen).toHaveProperty("value", "/dev/ttyUSB1");
+  expect(within(chosen).queryByRole("option", { name: "고르기" })).toBeNull();
+  fireEvent.change(chosen, { target: { value: "/dev/ttyUSB0" } });
+  await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/bench/rfid/setup", { rfid_port: "/dev/ttyUSB0" }, "PUT"));
 });
 
 it("saves every camera change by itself and starts from the saved values", async () => {
@@ -226,6 +232,14 @@ it("saves every camera change by itself and starts from the saved values", async
   }), { timeout: 2000 });
   expect(await screen.findByText("저장됨")).toBeTruthy();
   expect(screen.queryByRole("button", { name: /적용|저장/ })).toBeNull();
+});
+
+it("tells apart two picture formats of the same size and speed", async () => {
+  extraModes = [{ width: 640, height: 480, fps: 30, pixel_format: "MJPG" }, { width: 1280, height: 720, fps: 30, pixel_format: "MJPG" }];
+  mount("quality");
+  const select = await screen.findByLabelText("해상도");
+  expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
+    "640 × 480, 초당 30장, YUYV", "640 × 480, 초당 30장, MJPG", "1280 × 720, 초당 30장"]);
 });
 
 it("keeps adjusting the camera during a process test but holds the resolution", async () => {
@@ -347,12 +361,13 @@ it("opens a product photo whose reading has no location details", () => {
   expect(screen.getByRole("button", { name: "판독 정보 저장" })).toBeTruthy();
 });
 
-it("lists the documented wiring without choices and saves another board's choices by themselves", async () => {
+it("folds the documented wiring choices away, keeps them reachable and saves each choice by itself", async () => {
   const h = { state: clone(bench), refresh: vi.fn().mockResolvedValue({}) } as any;
   const view = render(<WiringPanel bench={h} />);
   expect(screen.getByText("GPIO 51")).toBeTruthy();
   expect(screen.getAllByText("켜짐 신호 1")).toHaveLength(2);
-  expect(screen.queryByRole("button")).toBeNull();
+  expect(screen.getByText("배선 바꾸기").closest("details")?.open).toBe(false);
+  expect(screen.getByLabelText("운전 허가 GPIO")).toBeTruthy();
   h.state.wiring_fixed = false;
   view.rerender(<WiringPanel bench={{ ...h }} />);
   fireEvent.click(within(screen.getByRole("group", { name: "출력 켜짐 신호" })).getByRole("button", { name: "1" }));
