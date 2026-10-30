@@ -94,6 +94,25 @@ def test_same_48mp_frame_supplies_full_resolution_text_and_both_orientations(cam
     assert task.reads[0].lines[0]["quad_source"] == text_quad
 
 
+@pytest.mark.parametrize("finder", ["lines", "detector"])
+def test_text_finder_choice_replaces_only_the_line_search(camera_frame, locator, monkeypatch, finder):
+    from tagreader import text_lines
+    instance, calls, _, text_quad = locator
+    vendored = instance.extract_text
+
+    def chosen(*args):
+        calls.append(finder)
+        return vendored(*args)
+    monkeypatch.setitem(text_lines.FINDERS, finder, chosen)
+    reader = SimpleNamespace(read_batch=lambda images: [{"text": "AB12", "confidence": .99, "ms": 1} for _ in images])
+    diagnostics = {}
+    task = pipeline.process_task(camera_frame, reader, locator="yolo26", decode_values=False,
+                                 diagnostics=diagnostics, text_finder=finder)
+    assert calls == ["detect", "segment", finder, "text"]
+    assert diagnostics["stages"][0]["text_finder"] == finder
+    assert task.reads[0].lines[0]["quad_source"] == text_quad
+
+
 @pytest.mark.parametrize("size", [(4000, 3000), (1920, 1080), (7999, 6000)])
 def test_lower_resolution_is_rejected_before_loading_models(size, monkeypatch):
     def forbidden():

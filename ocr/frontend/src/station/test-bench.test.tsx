@@ -303,6 +303,16 @@ it("still saves a camera change made just before leaving the tab", async () => {
     expect.objectContaining({ profile: expect.objectContaining({ controls: expect.objectContaining({ focus_absolute: 11 }) }) })));
 });
 
+it("offers the text finder only with the model locator and saves the choice", async () => {
+  render(<ProcessTest bench={hook()} locked={false} onShow={() => {}} onSettings={() => {}} />);
+  await screen.findByRole("button", { name: "시험 시작" });
+  expect(screen.queryByLabelText("글자 위치 찾기")).toBeNull();
+  fireEvent.change(screen.getByLabelText("바코드 위치 찾기"), { target: { value: "yolo26" } });
+  fireEvent.change(screen.getByLabelText("글자 위치 찾기"), { target: { value: "lines" } });
+  await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/bench/pipeline/settings",
+    expect.objectContaining({ locator: "yolo26", text_finder: "lines" }), "PUT"));
+});
+
 const hook = () => ({
   state: { connected: true, sensors: [{ channel: 1, raw: 1 }, { channel: 2, raw: 1 }], cooldown_ms: { motor: 0 } },
   busy: false, action: (fn: () => Promise<unknown>) => fn(), adoptRuns: vi.fn(), stop: vi.fn(), refresh: vi.fn(),

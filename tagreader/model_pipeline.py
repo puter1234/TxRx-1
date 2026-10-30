@@ -60,7 +60,12 @@ class ModelLocator:
         self.extract_text = extract_text_regions
         self.lock = threading.Lock()
 
-    def locate(self, original, diagnostics, *, text=True):
+    def locate(self, original, diagnostics, *, text=True, text_finder="basic"):
+        if text_finder == "basic":
+            extract = self.extract_text
+        else:
+            from .text_lines import FINDERS
+            extract = FINDERS[text_finder]
         started = time.perf_counter()
         # This is the only full-frame resampling. Never replace the retained source.
         with stage("frame_resize"):
@@ -83,7 +88,7 @@ class ModelLocator:
                 regions = []
                 if text and result["instances"]:
                     with stage(f"text_regions roi={roi_index}"):
-                        candidates = self.extract_text(raw, result["instances"], roi,
+                        candidates = extract(raw, result["instances"], roi,
                                                        list(DETECTION_SIZE), list(SOURCE_SIZE))
                     regions = candidates["regions"]
                     text_ms += candidates["elapsed_ms"]
@@ -104,7 +109,7 @@ class ModelLocator:
             stages=[{"stage": "yolo26", "candidates": len(records), "tag_count": len(found["detections"]),
                 "working_width": DETECTION_SIZE[0], "working_height": DETECTION_SIZE[1],
                 "detect_ms": elapsed, "tag_ms": tag_ms, "segment_ms": segmentation_ms,
-                "text_ms": text_ms, "preprocess_ms": resize_ms,
+                "text_ms": text_ms, "text_finder": text_finder, "preprocess_ms": resize_ms,
                 "attempted": 0, "decoded": 0, "decode_ms": 0.}])
         return records
 
@@ -145,7 +150,7 @@ def decode_original(original, quad):
     return decode_quad(gray, points - [x0, y0])
 
 
-def process_frame(original, recognizer, *, diagnostics=None, decode_values=False):
+def process_frame(original, recognizer, *, diagnostics=None, decode_values=False, text_finder="basic"):
     from pipeline import TagRead, TaskResult
     from ocr.normalize import Verdict, compare, normalize_strict
     from .geometry import deskew_angle
@@ -156,7 +161,7 @@ def process_frame(original, recognizer, *, diagnostics=None, decode_values=False
     diagnostics = diagnostics if diagnostics is not None else {}
     with stage("locator.initialize"):
         locator = get_locator()
-    records = locator.locate(original, diagnostics, text=recognizer is not None)
+    records = locator.locate(original, diagnostics, text=recognizer is not None, text_finder=text_finder)
     location_ms = (time.perf_counter() - started) * 1000
     ocr_source = None
     preprocessing_ms = 0.

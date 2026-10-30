@@ -14,7 +14,8 @@ type Job = { id: string; number: number; state: string; counted: boolean; frames
   missed_frames: number; capture_error: string | null; matched_text: string | null };
 export type ProcessSettings = { conveyor_sync: boolean; low_speed_ms: number; capture_delay_ms: number;
   capture_interval_ms: number; departure_timeout_ms: number; frame_count: number;
-  sensor_channel: number; active_raw: number; pattern: string; locator: Locator };
+  sensor_channel: number; active_raw: number; pattern: string; locator: Locator; text_finder: TextFinder };
+type TextFinder = "basic" | "lines" | "detector";
 type State = { active: boolean; busy: boolean; error: string | null; stop_reason?: string | null; detected: number;
   count: number; passed: number; failed: number; await_clear: boolean; jobs: Job[]; settings?: ProcessSettings };
 
@@ -245,6 +246,16 @@ export default function ProcessTest({ bench, locked, onShow, onSettings }: {
               <option value="opencv">기존 방식</option>
             </select>
           </label>
+          {draft.locator === "yolo26" && (
+            <label className="block space-y-2 text-[22px] font-extrabold">
+              글자 위치 찾기
+              <select className="field" disabled={running} value={draft.text_finder ?? "basic"} onChange={(e) => change({ text_finder: e.target.value as TextFinder })}>
+                <option value="basic">기존 방식</option>
+                <option value="lines">A 줄 찾기 개선</option>
+                <option value="detector">B 글자 검출 모델</option>
+              </select>
+            </label>
+          )}
           <label className="block space-y-2 text-[22px] font-extrabold">
             상품코드 형식
             <input className="field" disabled={running} value={draft.pattern} placeholder="[A-Z]{4}[0-9]{3}"

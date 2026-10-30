@@ -97,6 +97,7 @@ def trial(tmp_path, monkeypatch):
 
         def __init__(self):
             self.locators = []
+            self.text_finders = []
             self.release = threading.Event()
             self.release.set()
             self.entered = threading.Event()
@@ -110,6 +111,7 @@ def trial(tmp_path, monkeypatch):
 
         def test_auto(self, image, *, crop_images, **kwargs):
             self.locators.append(kwargs.get("locator"))
+            self.text_finders.append(kwargs.get("text_finder"))
             self.entered.set()
             assert self.release.wait(3)
             reads = []
@@ -418,6 +420,26 @@ def test_sensor_trial_can_compare_existing_locator(trial):
     wait_for(lambda: trial.state()["passed"] == 1)
     assert trial.vision.locators == ["opencv"]
     assert trial.app.state.store.get("sensor_ocr_settings")["locator"] == "opencv"
+
+
+def test_sensor_trial_passes_the_chosen_text_finder(trial):
+    trial.start(frame_count=1, capture_delay_ms=0, text_finder="lines")
+    trial.sensor(1, 0)
+    wait_for(lambda: trial.state()["passed"] == 1)
+    assert trial.vision.text_finders == ["lines"]
+    assert trial.app.state.store.get("sensor_ocr_settings")["text_finder"] == "lines"
+
+
+def test_sensor_trial_stops_before_capture_when_the_text_detector_cannot_load(trial, monkeypatch):
+    import tagreader.text_detector as detector
+
+    def broken():
+        raise RuntimeError("글자 검출 모델 파일이 없습니다.")
+    monkeypatch.setattr(detector, "get_detector", broken)
+    body = SensorOcrSettings(conveyor_sync=True, frame_count=1, text_finder="detector").model_dump()
+    response = trial.client.post("/api/bench/pipeline/start", json=body)
+    assert response.status_code == 409 and "글자 검출 모델" in response.text
+    assert not trial.state()["active"]
 
 
 @pytest.mark.parametrize('frame_count', [1, 2])

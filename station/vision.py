@@ -251,14 +251,15 @@ class Vision:
         finally:
             self.lock.release()
 
-    def _auto_read(self, frame, *, diagnostics=None, decode_values=True, locator=None):
+    def _auto_read(self, frame, *, diagnostics=None, decode_values=True, locator=None, text_finder="basic"):
         self.load()
         import pipeline
         return pipeline.process_task(frame, self.recognizer, diagnostics=diagnostics,
-                                     decode_values=decode_values, locator=locator or self.locator)
+                                     decode_values=decode_values, locator=locator or self.locator,
+                                     text_finder=text_finder)
 
     @record_operation("test_auto")
-    def test_auto(self, frame, *, include_previews=True, crop_images=None, locator=None):
+    def test_auto(self, frame, *, include_previews=True, crop_images=None, locator=None, text_finder="basic"):
         """Run the selected locator and return the actual prepared OCR inputs."""
         if not self.lock.acquire(blocking=False):
             raise RuntimeError("이전 영상 처리가 아직 끝나지 않았습니다.")
@@ -270,7 +271,8 @@ class Vision:
             self.load()
             ms_model_load = (time.perf_counter() - model_started) * 1000
             diagnostics = {}
-            task = self._auto_read(frame, diagnostics=diagnostics, decode_values=False, locator=locator)
+            task = self._auto_read(frame, diagnostics=diagnostics, decode_values=False, locator=locator,
+                                   text_finder=text_finder)
             import cv2
             import importlib.metadata
             import tagreader
