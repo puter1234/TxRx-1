@@ -78,3 +78,19 @@ it("ignores late events from the disconnected socket", async () => {
   await vi.advanceTimersByTimeAsync(5000);
   expect(Socket.instances).toHaveLength(2);
 });
+
+it("loads the new screens when the server comes back after a restart", async () => {
+  const reload = vi.fn();
+  vi.stubGlobal("location", { ...window.location, reload });
+  dispose = connectWS();
+  await vi.advanceTimersByTimeAsync(0);
+  const first = Socket.instances[0];
+  const say = (socket: Socket, boot: string) => socket.onmessage?.({ data: JSON.stringify({ state: { boot_id: boot }, event_seq: 1 }) });
+  say(first, "boot-1");
+  say(first, "boot-1");
+  expect(reload).not.toHaveBeenCalled();
+  first.close();
+  await vi.advanceTimersByTimeAsync(1000);
+  say(Socket.instances[1], "boot-2");
+  expect(reload).toHaveBeenCalledTimes(1);
+});

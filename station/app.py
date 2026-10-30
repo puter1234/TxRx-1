@@ -824,6 +824,7 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
             return JSONResponse(
                 {"detail": "프론트엔드 빌드가 필요합니다."}, status_code=503
             )
-        return FileResponse(dist / "index.html")
+        # Always ask the server, so a screen opened after an update loads the new build.
+        return FileResponse(dist / "index.html", headers={"Cache-Control": "no-cache"})
 
     return app

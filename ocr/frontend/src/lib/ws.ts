@@ -11,7 +11,8 @@ export function connectWS() {
   let alive = true,
     socket: WebSocket | undefined;
   let retry: ReturnType<typeof setTimeout> | undefined,
-    lastMessage = Date.now();
+    lastMessage = Date.now(),
+    boot: string | undefined;
   const retryConnect = () => {
     if (alive) retry = setTimeout(connect, 1000);
   };
@@ -30,6 +31,14 @@ export function connectWS() {
         if (!alive || socket !== current) return;
         try {
           const message = JSON.parse(e.data);
+          // A restarted server may carry a new build. The open page reconnects by
+          // itself and would keep running the old screens; load the new ones.
+          const next = message.state?.boot_id;
+          if (boot && next && next !== boot) {
+            location.reload();
+            return;
+          }
+          boot = next ?? boot;
           acceptSnapshot(message.state);
           lastMessage = Date.now();
           useApp.getState().setConnected(true);
