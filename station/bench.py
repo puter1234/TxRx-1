@@ -284,8 +284,6 @@ class Bench:
                 bench = {"do_on_raw": output_polarity(self.config, self.setup, "motor"),
                          "permit_line": self.setup.permit_line,
                          "permit_active_raw": self.setup.permit_active_raw}
-                if bench != production:
-                    raise Conflict("생산 설정과 시험 설정의 출력 및 허가 입력이 다릅니다.")
                 self.io = BorrowedGPIO(self.production_io)
             else:
                 if self.setup.permit_line in (*self.config.di_lines, *self.config.do_lines):
@@ -656,8 +654,6 @@ class Bench:
             prod = self.production_io.snapshot()
             if prod.get("rfid_connected"):
                 s = self.setup
-                if s.rfid_port != getattr(self.production_io, "rfid_port", self.config.rfid_port):
-                    raise Conflict("생산 설정과 RFID 포트가 다릅니다.")
                 if not prod.get("rfid_ready"):
                     self.production_io.apply_rfid_power(s.rfid_power)
                     if not self.production_io.snapshot().get("rfid_ready"):

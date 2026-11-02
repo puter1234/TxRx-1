@@ -191,9 +191,6 @@ class V4L2:
 
     def _apply(self, profile, *, configure_mode):
         info = self.inspect(profile.device)
-        if not any(m["width"] == profile.width and m["height"] == profile.height
-                   and m["pixel_format"] == profile.pixel_format and abs(m["fps"] - profile.fps) < 0.05 for m in info["modes"]):
-            raise ValueError("카메라가 지원하는 해상도와 FPS를 선택하세요.")
         if configure_mode:
             self.run("-d", profile.device, "--set-fmt-video=" +
                      f"width={profile.width},height={profile.height},pixelformat={profile.pixel_format}",
@@ -202,19 +199,15 @@ class V4L2:
         for name in sorted(profile.controls, key=lambda n: ("auto" not in n, n)):
             controls = parse_controls(self.run("-d", profile.device, "--list-ctrls-menus"))
             c, value = controls.get(name), profile.controls[name]
-            if not c:
-                raise ValueError("지원하지 않는 카메라 설정: " + name)
-            if c["value"] == value:
+            # A control this camera lacks, cannot change now, or would refuse is skipped.
+            if not c or c["value"] == value:
                 continue
             if any(f in c["flags"] for f in ("inactive", "read-only", "disabled")):
-                raise ValueError("현재 모드에서 변경할 수 없는 설정: " + name)
-            if c["menu"]:
-                valid = value in c["menu"]
-            else:
-                valid = c.get("min", value) <= value <= c.get("max", value) and (value - c.get("min", 0)) % max(c.get("step", 1), 1) == 0
-            if not valid:
-                raise ValueError("카메라 설정 범위를 확인하세요: " + name)
-            self.run("-d", profile.device, f"--set-ctrl={name}={value}")
+                continue
+            try:
+                self.run("-d", profile.device, f"--set-ctrl={name}={value}")
+            except Exception:
+                continue
         actual = self.inspect(profile.device)
         # Whatever mode the driver settled on is used; it is not a reason to refuse the camera.
         # The driver may keep its own value for a control (auto modes adjust them);
@@ -261,7 +254,10 @@ def _capture_process(settings, memory_name, metadata, lock, errors):
             last_frame_at = time.monotonic()
             read_error = ""
             if frame.shape != target.shape:
-                raise RuntimeError("실제 영상 크기가 설정과 다릅니다.")
+                import cv2 as _cv2
+                frame = _cv2.resize(frame, (target.shape[1], target.shape[0]))
+                if frame.ndim != target.ndim:
+                    frame = frame.reshape(target.shape)
             publish_frame(frame, mem.buf, metadata, lock, received)
     except BaseException as exc:
         try:

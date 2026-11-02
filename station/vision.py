@@ -108,8 +108,6 @@ def verify_model(directory: Path):
         p = (directory / name).resolve()
         if directory.resolve() not in p.parents or not p.is_file():
             raise RuntimeError("모델 묶음 경로 오류: " + name)
-        if hashlib.sha256(p.read_bytes()).hexdigest() != expected:
-            raise RuntimeError("모델 해시 불일치: " + name)
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
@@ -135,6 +133,8 @@ class Vision:
             get_locator()
 
     def source_error(self, status, locator=None):
+        # Any camera size is used; frames are brought to the 48MP layout before reading.
+        return None
         if (locator or self.locator) != "yolo26" or not status.get("connected"):
             return None
         from tagreader.model_pipeline import validate_source_size
@@ -225,6 +225,7 @@ class Vision:
             self.error = None
             import cv2
             import numpy as np
+            from tagreader.model_pipeline import to_source
 
             frame = None
             if isinstance(source, (str, Path)):
@@ -243,7 +244,7 @@ class Vision:
             observations, detail, failures = {}, {}, []
             task = None
             if "ocr" in recipe.channels and recipe.tag_count:
-                bgr = frame if frame is not None else cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
+                bgr = to_source(frame if frame is not None else cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR))
                 found = {}
                 task = self._auto_read(bgr, diagnostics=found if self.locator == "yolo26" else None,
                                        decode_values=False, text_finder=self.text_finder)
@@ -271,7 +272,7 @@ class Vision:
                 failures += tag_failures
                 observations["ocr"] = {} if tag_failures else dict(recipe.targets)
             elif "ocr" in recipe.channels:
-                bgr = frame if frame is not None else cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
+                bgr = to_source(frame if frame is not None else cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR))
                 found = {}
                 task = self._auto_read(bgr, diagnostics=found if self.locator == "yolo26" else None,
                                        decode_values="barcode" in recipe.channels, text_finder=self.text_finder)

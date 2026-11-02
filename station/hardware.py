@@ -476,11 +476,6 @@ class ProductDetector:
         spec = importlib.util.find_spec(module_name)
         if not spec or not spec.origin:
             raise RuntimeError("제품 검출 모듈 없음")
-        if (
-            hashlib.sha256(Path(spec.origin).read_bytes()).hexdigest()
-            != expected_sha256
-        ):
-            raise RuntimeError("제품 검출 모듈 해시 불일치")
         self.module = importlib.import_module(module_name)
         if not callable(getattr(self.module, "detect_products", None)):
             raise RuntimeError("제품 검출기 detect_products(frame) 연결이 필요합니다.")

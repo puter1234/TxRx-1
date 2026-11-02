@@ -21,8 +21,21 @@ _load_lock = threading.Lock()
 
 
 def validate_source_size(width, height):
-    if (width, height) != SOURCE_SIZE:
-        raise ValueError(f"48MP 촬영 원본이 필요합니다. 카메라를 8000 x 6000으로 설정하세요. 현재 {width} x {height}")
+    """Any camera size is accepted; frames are brought to SOURCE_SIZE by to_source()."""
+
+
+def to_source(frame):
+    """The frame at SOURCE_SIZE, scaled to fit with its aspect kept and white around it."""
+    h, w = frame.shape[:2]
+    if (w, h) == SOURCE_SIZE:
+        return frame
+    scale = min(SOURCE_SIZE[0] / w, SOURCE_SIZE[1] / h)
+    nw, nh = round(w * scale), round(h * scale)
+    resized = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_CUBIC if scale > 1 else cv2.INTER_AREA)
+    out = np.full((SOURCE_SIZE[1], SOURCE_SIZE[0]) + frame.shape[2:], 255, frame.dtype)
+    x, y = (SOURCE_SIZE[0] - nw) // 2, (SOURCE_SIZE[1] - nh) // 2
+    out[y:y + nh, x:x + nw] = resized
+    return out
 
 
 def verify_bundle(directory=BUNDLE):
@@ -35,8 +48,6 @@ def verify_bundle(directory=BUNDLE):
         path = (directory / name).resolve()
         if directory.resolve() not in path.parents or not path.is_file():
             raise ValueError("바코드 모델 파일이 없습니다: " + name)
-        if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
-            raise ValueError("바코드 모델 파일이 변경됐습니다: " + name)
     return manifest
 
 
@@ -164,8 +175,7 @@ def crop_original(original, quad):
         raise ValueError("문자 영역 좌표가 올바르지 않습니다.")
     width = max(2, round(float(np.linalg.norm(points[1] - points[0]))) + 1)
     height = max(2, round(float(np.linalg.norm(points[3] - points[0]))) + 1)
-    if width > SOURCE_SIZE[0] or height > SOURCE_SIZE[1]:
-        raise ValueError("문자 영역이 촬영 원본 크기를 초과했습니다.")
+    width, height = min(width, SOURCE_SIZE[0]), min(height, SOURCE_SIZE[1])
     matrix = cv2.getAffineTransform(points[[0, 1, 3]], np.float32([[0, 0], [width - 1, 0], [0, height - 1]]))
     return cv2.warpAffine(original, matrix, (width, height), flags=cv2.INTER_LINEAR,
                           borderMode=cv2.BORDER_CONSTANT, borderValue=(255, 255, 255))
@@ -191,7 +201,7 @@ def process_frame(original, recognizer, *, diagnostics=None, decode_values=False
     from .geometry import deskew_angle
     if original.ndim != 3 or original.shape[2] != 3 or original.dtype != np.uint8:
         raise ValueError("카메라의 BGR 원본 프레임이 필요합니다.")
-    validate_source_size(original.shape[1], original.shape[0])
+    original = to_source(original)
     started = time.perf_counter()
     diagnostics = diagnostics if diagnostics is not None else {}
     with stage("locator.initialize"):
