@@ -50,6 +50,7 @@ export interface SessionConfig {
   target?: number | null;
   item?: ItemCond;
   targets?: Record<string, string>;
+  tagCount?: number;
 }
 
 export interface Mismatch {

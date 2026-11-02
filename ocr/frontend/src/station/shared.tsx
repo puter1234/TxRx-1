@@ -43,6 +43,7 @@ export type Recipe = {
   targets: Fields;
   channels: string[];
   target_count: number | null;
+  tag_count?: number | null;
 };
 export type Session = {
   id: string;
@@ -132,6 +133,8 @@ export const ERR: Record<string, string> = {
   REQUIRED_FIELD_MISSING: "필수 항목 미판독",
   TARGET_MISMATCH: "목표와 불일치",
   BARCODE_LABEL_MISMATCH: "가격택과 폴리백의 상품 정보 불일치",
+  TAG_COUNT_MISMATCH: "택/스티커 개수 불일치",
+  OCR_TAG_UNMATCHED: "기준과 맞는 문자가 없는 택",
   BARCODE_UNREGISTERED: "등록되지 않은 바코드",
   BARCODE_MISSING: "바코드 미판독",
   MULTIPLE_BARCODES: "바코드 수량 불일치",

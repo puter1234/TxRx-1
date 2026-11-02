@@ -14,6 +14,7 @@ export interface WizardState {
   color: string;
   size: string;
   targets: Record<string, string>;
+  tagCount: number;
 }
 
 const emptyChecks: Checks = {
@@ -35,6 +36,7 @@ const initialWizard: WizardState = {
   color: "",
   size: "",
   targets: {},
+  tagCount: 1,
 };
 
 interface AppStore {

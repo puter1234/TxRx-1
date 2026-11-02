@@ -134,6 +134,23 @@ def get_locator():
         return _instance
 
 
+LINE_MARGIN = 0.3  # detector boxes end at the ink; this much of the line height is added at each end
+
+
+def widen(quad, ratio=LINE_MARGIN):
+    """The same box, longer at both ends of its reading direction."""
+    p = np.asarray(quad, dtype=np.float64).reshape(4, 2)
+    along, across = p[1] - p[0], p[3] - p[0]
+    if np.linalg.norm(across) > np.linalg.norm(along):  # a vertical line reads along its long side
+        along, across = across, along
+    length = np.linalg.norm(along)
+    if length == 0:
+        return p.tolist()
+    shift = along / length * ratio * np.linalg.norm(across)
+    ends = [-1, 1, 1, -1] if np.linalg.norm(p[1] - p[0]) >= np.linalg.norm(p[3] - p[0]) else [-1, -1, 1, 1]
+    return (p + np.outer(ends, shift)).tolist()
+
+
 def crop_original(original, quad):
     """Sample full-resolution source pixels at the recovered text orientation."""
     points = np.asarray(quad, dtype=np.float32).reshape(4, 2)
@@ -196,7 +213,10 @@ def process_frame(original, recognizer, *, diagnostics=None, decode_values=False
         if recognizer is not None:
             for region in record["regions"]:
                 # quad_target belongs to this very source frame, never a second capture.
-                crop = cv2.cvtColor(crop_original(ocr_source, region["quad_target"]), cv2.COLOR_GRAY2BGR)
+                quad = region["quad_target"]
+                if region.get("finder") in ("detector", "whole"):
+                    quad = widen(quad)  # model boxes can clip the first and last characters
+                crop = cv2.cvtColor(crop_original(ocr_source, quad), cv2.COLOR_GRAY2BGR)
                 if region.get("finder") == "whole" and crop.shape[0] > 1.5 * crop.shape[1]:
                     # A vertical line on the tag: lay it down; both directions are read below.
                     crop = cv2.rotate(crop, cv2.ROTATE_90_CLOCKWISE)

@@ -9,9 +9,9 @@ import { useConfirm } from "../ui/kit";
 const checks = [
   ["ocr", "OCR"],
   ["rfid", "RFID"],
-  ["barcode_tag", "가격택"],
-  ["barcode_poly", "폴리백"],
 ] as const;
+// What the brand turned on, before RFID waits for registered tags (brandView).
+const ownCaps = (b: Brand) => b.caps ?? { ocr: true, rfid: true, barcode_tag: false, barcode_poly: false };
 
 export default function BrandSettings({
   brands,
@@ -172,11 +172,11 @@ export default function BrandSettings({
                     type="checkbox"
                     aria-label={`${b.name} ${label}`}
                     className="h-8 w-8 cursor-pointer accent-brand-600"
-                    checked={brandView(b).caps[key]}
+                    checked={ownCaps(b)[key]}
                     disabled={locked || busy}
                     onChange={(e) => {
                       const enabled = e.target.checked;
-                      void action(() => save({ ...b, caps: { ...brandView(b).caps, [key]: enabled } }, true));
+                      void action(() => save({ ...b, caps: { ...ownCaps(b), [key]: enabled } }, true));
                     }}
                   />
                   {label}

@@ -38,6 +38,11 @@ class Device(Model):
     device: str = Field(min_length=1, max_length=240)
 
 
+class RfidRegister(Model):
+    brand_id: str = Field(min_length=1, max_length=48)
+    targets: dict[str, str] = Field(min_length=1, max_length=30)
+
+
 class OcrRead(Model):
     locator: Literal["yolo26", "stripes", "opencv"] = "yolo26"
 
@@ -355,6 +360,34 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
     async def rfid(request: Request):
         permitted(request)
         return await native(bench.rfid_test, allow_outputs=True)
+
+    @app.post("/api/bench/rfid/register")
+    async def rfid_register(body: RfidRegister, request: Request):
+        """Read one tag and remember it as a product with the chosen option values."""
+        actor = permitted(request, ("admin",))
+        from .schema import Brand
+        brand = Brand.model_validate(store.brand(body.brand_id))
+        choices = {o.key: o.values for o in brand.options}
+        if set(body.targets) != set(choices) or any(v not in choices[k] for k, v in body.targets.items()):
+            raise ValueError("항목마다 값을 하나씩 고르세요.")
+        result = await native(bench.rfid_test, allow_outputs=True)
+        tags = result.get("tags") or []
+        if not tags:
+            raise Conflict("RFID 태그가 읽히지 않았습니다.")
+        if len(tags) > 1:
+            raise Conflict(f"RFID 태그가 {len(tags)}개 읽혔습니다. 한 개만 올려 주세요.")
+        epc = str(tags[0]["epc"]).strip().upper()
+        with controller.lock:
+            editable()
+            current = Brand.model_validate(store.brand(body.brand_id))
+            records = dict(current.decoder.records) if current.decoder.kind == "lookup" else {}
+            replaced = records.get(epc)
+            records[epc] = dict(body.targets)
+            updated = current.model_copy(update={"decoder": current.decoder.model_copy(
+                update={"kind": "lookup", "records": records})})
+            saved = store.save_brand(Brand.model_validate(updated.model_dump()).model_dump(), current.revision,
+                                     actor, "RFID 태그 등록")
+        return {"epc": epc, "values": body.targets, "replaced": replaced, "count": len(records), "brand": saved}
 
     @app.post("/api/bench/ocr")
     async def ocr(request: Request):

@@ -14,8 +14,6 @@ import { useEnabledPresets } from "./SimpleStart";
 const CHECKS: { key: keyof Checks; label: string }[] = [
   { key: "ocr", label: "문자" },
   { key: "rfid", label: "RFID" },
-  { key: "barcode_tag", label: "가격택 바코드" },
-  { key: "barcode_poly", label: "폴리백 바코드" },
 ];
 
 export default function ConditionStart() {
@@ -111,6 +109,7 @@ export default function ConditionStart() {
           brandId: brand.id,
           brandName: brand.name,
           checks,
+          tagCount: w.tagCount || 1,
           countMode: target ? "target" : "continuous",
           target,
           targets: w.targets,
@@ -252,6 +251,23 @@ export default function ConditionStart() {
                 ))}
               </div>
             </section>}
+            {checks.ocr && (
+              <section aria-labelledby="tags-title">
+                <h2 id="tags-title" className="mb-5 text-[36px] font-black">택/스티커</h2>
+                <div role="group" aria-labelledby="tags-title" className="flex flex-wrap gap-4">
+                  {[1, 2, 3, 4].map((n) => (
+                    <button
+                      key={n}
+                      className="choice !min-h-[124px] min-w-[180px] !text-[44px] tabular-nums"
+                      aria-pressed={(w.tagCount || 1) === n}
+                      onClick={() => setW({ tagCount: n })}
+                    >
+                      {n}개
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
           </div>
           {hardware && needsCamera("condition", checkedChannels(w.checks)) && <CameraBox className="h-[460px]" />}
         </div>

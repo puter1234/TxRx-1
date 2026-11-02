@@ -70,6 +70,8 @@ class SensorOcrTest:
                 bench.store.get("sensor_ocr_settings", {"conveyor_sync": True}))
             # Upgrade the existing trial to the installed models once. Later
             # explicit comparisons with the older locators remain saved.
+            if hasattr(vision, "text_finder"):
+                vision.text_finder = self.settings.text_finder
             if not bench.store.get("sensor_ocr_yolo26_enabled", False):
                 self.settings = self.settings.model_copy(update={"locator": "yolo26"})
                 bench.store.put("sensor_ocr_settings", self.settings.model_dump())
@@ -98,6 +100,8 @@ class SensorOcrTest:
                 raise Conflict("시험을 정지한 뒤 설정을 저장하세요.")
             self.bench.store.put("sensor_ocr_settings", settings.model_dump())
             self.settings = settings
+            if hasattr(self.vision, "text_finder"):
+                self.vision.text_finder = settings.text_finder
             return settings.model_dump()
 
     def busy(self):

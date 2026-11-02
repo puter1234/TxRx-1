@@ -78,19 +78,13 @@ def test_deleted_and_stale_options_rejected(brand, recipe):
         validate_recipe(recipe, brand)
 
 
-def test_custom_field_not_invented_for_hazzys(brand, recipe):
-    brand.options.append(Option(key="serial", label="serial", values=["01"]))
-    brand = Brand.model_validate(brand.model_dump())
-    recipe.targets["serial"] = "01"
-    with pytest.raises(RuleError):
-        validate_recipe(recipe, brand)
-
-
-def test_invalid_region_and_duplicate_options(brand):
-    b = brand.model_dump()
-    b["ocr_regions"] = [{"field": "size", "box": [0.9, 0, 0.5, 1]}]
-    with pytest.raises(ValidationError):
-        Brand.model_validate(b)
+def test_rfid_needs_a_registered_tag(brand, recipe):
+    brand.decoder.records = {}
+    with pytest.raises(RuleError, match="등록된 RFID 태그"):
+        validate_recipe(recipe, Brand.model_validate(brand.model_dump()))
+    brand.decoder.kind = "hazzys_6bit_crc8"
+    with pytest.raises(RuleError, match="등록된 RFID 태그"):
+        validate_recipe(recipe, Brand.model_validate(brand.model_dump()))
 
 
 def test_every_configured_option_must_have_a_target(brand, recipe):

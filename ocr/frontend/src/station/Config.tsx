@@ -327,27 +327,23 @@ export default function Config({
                   옵션 추가
                 </button>
               </div>
+              {existing && (
+                <RfidTags
+                  brand={draft}
+                  locked={locked}
+                  onSaved={(b) => {
+                    setDraft(b);
+                    setSaved(JSON.stringify(b));
+                    void refresh();
+                  }}
+                  onRemove={(epc) => {
+                    const records = { ...draft.decoder.records };
+                    delete records[epc];
+                    setDraft({ ...draft, decoder: { ...draft.decoder, records } });
+                  }}
+                />
+              )}
               <div className="space-y-4 border-t border-line pt-5">
-                <h3 className="text-[28px] font-black">RFID 설정</h3>
-                <Field label="RFID 해독 방식">
-                  <select
-                    className="field"
-                    value={draft.decoder.kind}
-                    onChange={(e) =>
-                      setDraft({
-                        ...draft,
-                        decoder: {
-                          ...draft.decoder,
-                          kind: e.target.value as Brand["decoder"]["kind"],
-                        },
-                      })
-                    }
-                  >
-                    <option value="none">미등록</option>
-                    <option value="hazzys_6bit_crc8">헤지스 제공 규칙</option>
-                    <option value="lookup">저장된 RFID 규칙</option>
-                  </select>
-                </Field>
                 <Field label="메모">
                   <textarea
                     className="field min-h-24 py-3"
@@ -396,5 +392,88 @@ export default function Config({
         </fieldset>
       </div>
     </div>
+  );
+}
+
+type Registered = { epc: string; replaced: Record<string, string> | null; count: number; brand: Brand };
+
+// A tag read here is remembered as a product with the chosen values; 조건 계수 checks RFID against these.
+function RfidTags({ brand, locked, onSaved, onRemove }: {
+  brand: Brand; locked: boolean; onSaved: (b: Brand) => void; onRemove: (epc: string) => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const records = brand.decoder.kind === "lookup" ? Object.entries(brand.decoder.records) : [];
+  const ready = brand.options.length > 0 && brand.options.every((o) => o.values.includes(values[o.key]));
+  const label = (key: string) => brand.options.find((o) => o.key === key)?.label || key;
+  const read = async () => {
+    setBusy(true);
+    setMessage("");
+    try {
+      const r = await api<Registered>("/bench/rfid/register", { brand_id: brand.id, targets: values });
+      onSaved(r.brand);
+      setMessage((r.replaced ? "다시 등록됨 " : "등록됨 ") + r.epc);
+    } catch (e) {
+      setMessage((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section aria-labelledby="rfid-title" className="space-y-4 border-t border-line pt-5">
+      <div className="flex flex-wrap items-center gap-4">
+        <h3 id="rfid-title" className="mr-auto text-[28px] font-black">RFID 태그 {records.length}개</h3>
+        {!adding && (
+          <button className="btn btn-primary" disabled={locked || !brand.options.length} onClick={() => { setAdding(true); setMessage(""); }}>
+            <Plus size={20} />
+            RFID 태그 추가하기
+          </button>
+        )}
+      </div>
+      {adding && (
+        <div className="card space-y-4 p-5">
+          <div className="grid gap-4 sm:grid-cols-3">
+            {brand.options.map((o) => (
+              <label key={o.key} className="space-y-1 text-[20px] font-extrabold">
+                {o.label}
+                <select
+                  aria-label={o.label}
+                  className="field"
+                  value={values[o.key] || ""}
+                  onChange={(e) => setValues({ ...values, [o.key]: e.target.value })}
+                >
+                  <option value="" disabled>고르기</option>
+                  {o.values.map((v) => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </label>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <button className="btn btn-primary" disabled={!ready || busy || locked} onClick={() => void read()}>
+              {busy ? "읽는 중" : "태그 읽기"}
+            </button>
+            <button className="btn btn-outline" disabled={busy} onClick={() => setAdding(false)}>닫기</button>
+            {message && <span role="status" className="text-[20px] font-extrabold">{message}</span>}
+          </div>
+        </div>
+      )}
+      {records.length > 0 && (
+        <ul className="space-y-2">
+          {records.map(([epc, fields]) => (
+            <li key={epc} className="flex flex-wrap items-center gap-3 rounded-xl border border-line px-4 py-2">
+              <span className="mr-auto text-[18px] font-bold">
+                {Object.entries(fields).map(([k, v]) => `${label(k)} ${v}`).join(", ")}
+              </span>
+              <code className="text-[15px] text-ink-700">{epc}</code>
+              <button className="value-action" aria-label={`${epc} 삭제`} disabled={locked} onClick={() => onRemove(epc)}>
+                <Trash2 size={20} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }

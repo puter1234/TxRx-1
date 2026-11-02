@@ -193,6 +193,7 @@ class WorkPreset(Model):
 
     @model_validator(mode="after")
     def coherent(self):
+        self.channels = [c for c in self.channels if c != "barcode"]  # Barcode reading is switched off.
         if "rfid" in self.channels:
             self.flow.validate_rfid_timing()
         if len(self.channels) != len(set(self.channels)):
@@ -216,6 +217,8 @@ class Recipe(Model):
     channels: list[Literal["ocr", "rfid", "barcode"]] = Field(max_length=3)
     barcode_targets: list[Literal["tag", "poly"]] = Field(default_factory=lambda: ["tag"], max_length=2)
     target_count: int | None = Field(default=None, ge=1, le=1000000)
+    # Tags or stickers each product carries; OCR must find that many, each with a match.
+    tag_count: int | None = Field(default=None, ge=1, le=10)
     preset_id: str | None = None
     preset_revision: int | None = None
     flow: FlowSettings | None = None
@@ -225,6 +228,8 @@ class Recipe(Model):
 
     @model_validator(mode="after")
     def channels_unique(self):
+        # Barcode reading is switched off; saved presets and jobs that asked for it run without it.
+        self.channels = [c for c in self.channels if c != "barcode"]
         if "rfid" in self.channels and self.flow:
             self.flow.validate_rfid_timing()
         if self.kind == "condition" and (not self.targets or not self.channels):

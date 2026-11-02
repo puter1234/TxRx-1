@@ -157,8 +157,9 @@ it("keeps product edits while opening the same brand's timing settings and saves
   expect(saved.brand_id).toBe("brand");
   expect(saved.flow.capture_delay_ms).toBe(380);
   expect(saved.flow).toMatchObject({ rfid_delay_ms: 200, rfid_attempts: 5, rfid_interval_ms: 80 });
-  expect(saved.channels).toEqual(["rfid", "ocr", "barcode"]);
-  expect(saved.barcode_targets).toEqual(["tag", "poly"]);
+  // Barcode reading is switched off; only checks the brand can run are saved.
+  expect(saved.channels).toEqual(["ocr", "rfid"]);
+  expect(saved.channels).not.toContain("barcode");
   await user.click(screen.getByRole("tab", { name: "상품 조건" }));
   expect(screen.getByRole("button", {name: "사이즈 090 수정"})).toBeTruthy();
   expect(screen.queryByText("설정 변경 사유")).toBeNull();
@@ -241,8 +242,8 @@ it("starts the chosen brand with its saved timing and selected checks in one act
   );
   await user.click(await screen.findByRole("button", { name: "브랜드 A" }));
   await user.click(screen.getByRole("button", { name: "095" }));
-  for (const check of ["문자", "가격택 바코드", "폴리백 바코드"])
-    await user.click(screen.getByRole("button", { name: check }));
+  expect(screen.queryByRole("button", { name: "가격택 바코드" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "문자" }));
   // The last remaining check cannot be switched off.
   expect(screen.getByRole("button", { name: "RFID" })).toHaveProperty("disabled", true);
   await user.click(screen.getByRole("button", { name: "시작" }));

@@ -72,24 +72,48 @@ def test_operator_can_start_default_hardware_flow_without_admin(line, recipe, ki
     assert response.json()["session"]["recipe"]["flow"]["low_speed_ms"] == 500
 
 
-@pytest.mark.parametrize("targets,codes,poly_size,expected", [
-    (["tag"], ["TAG"], "095", None),
-    (["poly"], ["BAG"], "095", None),
-    (["tag", "poly"], ["BAG", "TAG"], "095", None),
-    (["tag", "poly"], ["TAG", "BAG"], "100", "BARCODE_LABEL_MISMATCH"),
-    (["tag", "poly"], ["TAG"], "095", "BARCODE_MISSING"),
-    (["poly"], ["TAG"], "095", "BARCODE_UNREGISTERED"),
+def test_barcode_reading_is_switched_off():
+    recipe = Recipe(brand_id="b", brand_revision=1, targets={"size": "095"}, channels=["ocr", "barcode"])
+    assert recipe.channels == ["ocr"]
+    with pytest.raises(ValueError):
+        Recipe(brand_id="b", brand_revision=1, targets={"size": "095"}, channels=["barcode"])
+
+@pytest.mark.parametrize("found,lines,expected", [
+    (2, {0: ["HUTS6C612N3095", "W279,000"], 1: ["HUTS6C612N3095"]}, []),
+    (2, {0: ["HUTS6C612N3095"], 1: ["W279,000"]}, ["OCR_TAG_UNMATCHED"]),
+    (1, {0: ["HUTS6C612N3095"]}, ["TAG_COUNT_MISMATCH"]),
+    (3, {0: ["HUTS6C612N3095"], 1: ["HUTS6C612N3095"], 2: ["HUTS6C612BK095"]}, ["TAG_COUNT_MISMATCH", "OCR_TAG_UNMATCHED"]),
 ])
-def test_label_targets_require_their_own_registered_reads(monkeypatch, targets, codes, poly_size, expected):
-    import tagreader
-    monkeypatch.setattr(tagreader, "read_tag", lambda image: [SimpleNamespace(text=code) for code in codes])
-    brand = Brand(id="labels", name="Labels", options=[{"key": "size", "label": "사이즈", "values": ["095", "100"]}],
-                  barcode_records={"TAG": {"size": "095"}}, barcode_poly_records={"BAG": {"size": poly_size}})
-    recipe = Recipe(brand_id=brand.id, brand_revision=1, targets={"size": "095"}, channels=["barcode"], barcode_targets=targets)
-    result = Vision(locator="opencv").inspect_frame(np.zeros((20, 20, 3), dtype=np.uint8), brand, recipe)
-    if expected:
-        assert result["failures"][0]["code"] == expected
-        assert "barcode" not in result["observations"]
-    else:
-        assert result["failures"] == []
-        assert result["observations"]["barcode"] == {"size": "095"}
+def test_each_tag_or_sticker_needs_one_line_with_the_target(brand, found, lines, expected):
+    recipe = Recipe(brand_id="hazzys", brand_revision=1, targets={"style": "HUTS6C612", "color": "N3", "size": "095"},
+                    channels=["ocr"], tag_count=2)
+    vision = Vision()
+    vision.load = lambda: None
+
+    def read(frame, *, diagnostics=None, **kwargs):
+        diagnostics["tags"] = [{"roi": [0, 0, 1, 1]}] * found
+        reads = [SimpleNamespace(lines=[{"text": t, "confidence": .9, "roi_index": i} for t in texts], barcode=None)
+                 for i, texts in lines.items()]
+        return SimpleNamespace(reads=reads, ms_ocr=1, error=None)
+    vision._auto_read = read
+    result = vision.inspect_frame(np.zeros((20, 20, 3), np.uint8), brand, recipe)
+    assert [f["code"] for f in result["failures"]] == expected
+    assert result["observations"]["ocr"] == ({} if expected else recipe.targets)
+    assert result["details"]["tag_count"] == found
+
+
+def test_rfid_tag_is_registered_with_the_chosen_values(line, monkeypatch):
+    epc = "E28011700000020F1A2B3C4D"
+    monkeypatch.setattr(line.app.state.bench, "rfid_test", lambda: {"tags": [{"epc": epc.lower()}]})
+    targets = {"style": "HUTS6C612", "color": "BK", "size": "100"}
+    response = line.client.post("/api/bench/rfid/register", json={"brand_id": "hazzys", "targets": targets})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["epc"] == epc and body["brand"]["decoder"]["kind"] == "lookup"
+    assert body["brand"]["decoder"]["records"][epc] == targets
+    # A second tag on the antenna is refused instead of guessing which one was meant.
+    monkeypatch.setattr(line.app.state.bench, "rfid_test", lambda: {"tags": [{"epc": "AA"}, {"epc": "BB"}]})
+    again = line.client.post("/api/bench/rfid/register", json={"brand_id": "hazzys", "targets": targets})
+    assert again.status_code == 409 and "한 개만" in again.text
+    wrong = line.client.post("/api/bench/rfid/register", json={"brand_id": "hazzys", "targets": {"size": "100"}})
+    assert wrong.status_code == 422

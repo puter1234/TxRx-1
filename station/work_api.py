@@ -24,6 +24,7 @@ class WorkStart(Model):
     brand_revision: int = Field(default=1, ge=1)
     targets: dict[str, str] = Field(default_factory=dict, max_length=30)
     target_count: int | None = Field(default=None, ge=1, le=1000000)
+    tag_count: int | None = Field(default=None, ge=1, le=10)
     test_run: bool = False
     channels: list[Literal["ocr", "rfid", "barcode"]] | None = None
     barcode_targets: list[Literal["tag", "poly"]] | None = None
@@ -113,7 +114,7 @@ def install_work_api(app, controller, permitted, vision, monitor):
         recipe = Recipe(kind=preset.kind, brand_id=preset.brand_id, brand_revision=body.brand_revision,
                         channels=preset.channels if body.channels is None else body.channels,
                         barcode_targets=preset.barcode_targets if body.barcode_targets is None else body.barcode_targets,
-                        targets=body.targets, target_count=body.target_count,
+                        targets=body.targets, target_count=body.target_count, tag_count=body.tag_count,
                         preset_id=preset.id, preset_revision=preset.revision, flow=preset.flow,
                         work_name=preset.name, test_run=body.test_run)
         return prepare_session(controller, vision, monitor, recipe, actor)

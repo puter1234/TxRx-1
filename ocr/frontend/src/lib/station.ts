@@ -16,14 +16,17 @@ export const runPath = (kind?: string) =>
 // PAUSED and recovery states may still own a product and remain protected.
 export const cameraEditable = (s: Snapshot | null | undefined) =>
   !s?.busy && (ended(s?.session) || (s?.session?.phase === "READY" && !s.session.active_product));
+// RFID counts only once tags were read and registered for the brand; barcode reading is off.
+export const rfidRegistered = (b: StationBrand) =>
+  b.decoder.kind === "lookup" ? Object.keys(b.decoder.records).length : 0;
 export const brandView = (b: StationBrand): Brand => ({
   ...b,
   source: b,
-  caps: b.caps || {
-    ocr: true,
-    rfid: b.decoder.kind !== "none",
-    barcode_tag: Object.keys(b.barcode_records).length > 0,
-    barcode_poly: Object.keys(b.barcode_poly_records || {}).length > 0,
+  caps: {
+    ocr: b.caps ? b.caps.ocr : true,
+    rfid: (b.caps ? b.caps.rfid : true) && rfidRegistered(b) > 0,
+    barcode_tag: false,
+    barcode_poly: false,
   },
 });
 export const configView = (s: Session): SessionConfig => ({
@@ -43,6 +46,7 @@ export const configView = (s: Session): SessionConfig => ({
   },
   countMode: s.recipe.target_count ? "target" : "continuous",
   target: s.recipe.target_count,
+  tagCount: s.recipe.tag_count ?? undefined,
   item: {
     sku: s.recipe.targets.style || "",
     color: s.recipe.targets.color || "",
@@ -265,6 +269,7 @@ export async function startSession(config: SessionConfig, run = false) {
       target_count: config.countMode === "target" ? config.target || null : null,
       test_run: config.testRun || false,
       ...(config.mode === "condition" && config.checks ? { channels, barcode_targets: barcodeTargets } : {}),
+      ...(config.mode === "condition" && config.checks?.ocr ? { tag_count: config.tagCount || 1 } : {}),
     };
   } else {
   if (config.mode === "vision") throw new Error("와펜 계수 설정 없음");
@@ -296,6 +301,7 @@ export async function startSession(config: SessionConfig, run = false) {
       },
       channels,
       barcode_targets: barcodeTargets,
+      tag_count: config.checks?.ocr ? config.tagCount || 1 : null,
       default_flow: true,
       test_run: config.testRun || false,
       target_count:

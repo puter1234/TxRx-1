@@ -5,36 +5,6 @@ from pathlib import Path
 import pytest
 
 
-def test_live_frame_matches_saved_png_without_model(tmp_path, monkeypatch):
-    import cv2
-    import numpy as np
-    import tagreader
-
-    from station.schema import Brand, Recipe
-    from station.vision import Vision
-
-    frame = np.zeros((24, 36, 3), dtype=np.uint8)
-    frame[:, :18] = (17, 83, 241)
-    path = tmp_path / "frame.png"
-    assert cv2.imwrite(str(path), frame)
-    seen = []
-
-    def read_tag(image):
-        seen.append(image.copy())
-        return []
-
-    monkeypatch.setattr(tagreader, "read_tag", read_tag)
-    brand = Brand(id="test", name="Test", options=[{"key": "color", "label": "Color", "values": ["red"]}])
-    recipe = Recipe(brand_id="test", brand_revision=1, targets={"color": "red"}, channels=["barcode"])
-    vision = Vision(locator="opencv")
-
-    live = vision.inspect_frame(frame, brand, recipe)
-    saved = vision.inspect(path, brand, recipe)
-
-    assert live == saved
-    assert len(seen) == 2 and np.array_equal(seen[0], seen[1])
-
-
 def test_live_test_and_production_ocr_use_the_camera_crop(monkeypatch):
     import numpy as np
 

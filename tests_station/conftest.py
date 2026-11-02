@@ -28,7 +28,9 @@ def brand():
             {"key": "color", "label": "색상", "values": ["N3", "BK"]},
             {"key": "size", "label": "사이즈", "values": ["095", "100"]},
         ],
-        decoder={"kind": "hazzys_6bit_crc8"},
+        # RFID works only for tags registered with their values (RFID 태그 추가하기).
+        decoder={"kind": "lookup", "records": {
+            "1D44D280281B70D75A8DF0000E114D7A": {"style": "HUTS6C612", "color": "N3", "size": "095"}}},
     )
 
 

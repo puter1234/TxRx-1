@@ -72,6 +72,8 @@ class Vision:
     def __init__(self, model_dir: Path | None = None, *, locator="yolo26"):
         self.directory = model_dir or ROOT / "models/parseq"
         self.locator = locator
+        # The text finder chosen in the process test also reads production frames.
+        self.text_finder = "basic"
         self.recognizer = None
         self.lock = threading.Lock()
         self.model_lock = threading.Lock()
@@ -193,9 +195,35 @@ class Vision:
                 raise ValueError("검사 영상은 4,800만 화소 이하만 지원합니다.")
             observations, detail, failures = {}, {}, []
             task = None
-            if "ocr" in recipe.channels:
+            if "ocr" in recipe.channels and recipe.tag_count:
                 bgr = frame if frame is not None else cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
-                task = self._auto_read(bgr, decode_values="barcode" in recipe.channels)
+                found = {}
+                task = self._auto_read(bgr, diagnostics=found, decode_values=False, text_finder=self.text_finder)
+                lines = [line for read in task.reads for line in read.lines]
+                detail["ocr_lines"] = lines
+                detail["ocr_ms"] = task.ms_ocr
+                detail["ocr_device"] = str(getattr(self.recognizer, "device", "unknown"))
+                detail["ocr_error"] = task.error
+                # Every tag or sticker must be there, and each must carry one line that
+                # reads as the target product; other lines on it (price, size) are ignored.
+                tags = len(found["tags"]) if "tags" in found else len(task.reads)
+                by_tag = {}
+                for index, read in enumerate(task.reads):
+                    for line in read.lines:
+                        by_tag.setdefault(line.get("roi_index", index), []).append(line)
+                matched = [key for key, group in by_tag.items()
+                           if any(_serial_fields(line["text"], brand) == recipe.targets for line in group)]
+                detail["tag_count"], detail["tags_matched"] = tags, len(matched)
+                tag_failures = []
+                if tags != recipe.tag_count:
+                    tag_failures.append({"code": "TAG_COUNT_MISMATCH", "expected": str(recipe.tag_count), "actual": str(tags)})
+                if len(matched) < tags:
+                    tag_failures.append({"code": "OCR_TAG_UNMATCHED", "actual": f"{len(matched)}/{tags}"})
+                failures += tag_failures
+                observations["ocr"] = {} if tag_failures else dict(recipe.targets)
+            elif "ocr" in recipe.channels:
+                bgr = frame if frame is not None else cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
+                task = self._auto_read(bgr, decode_values="barcode" in recipe.channels, text_finder=self.text_finder)
                 candidates = []
                 for read in task.reads:
                     for line in read.lines:
