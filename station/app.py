@@ -783,15 +783,23 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
                 }
             )
             if "rfid" in recipe.channels:
-                if len(tags) != 1:
-                    failures.append(
-                        {"code": "RFID_MISSING" if not tags else "MULTIPLE_RFID_TAGS"}
-                    )
-                else:
+                decoded = []
+                for tag in tags:
                     try:
-                        observations["rfid"] = decode_epc(brand, tags[0])
-                    except RuleError as exc:
-                        failures.append({"code": str(exc)})
+                        decoded.append(decode_epc(brand, tag))
+                    except RuleError:
+                        pass
+                if not tags:
+                    failures.append({"code": "RFID_MISSING"})
+                elif not decoded:
+                    failures.append({"code": "RFID_UNREGISTERED"})
+                else:
+                    # Any tag that is the target product passes.
+                    observations["rfid"] = next(
+                        (d for d in decoded
+                         if all(d.get(k) == v for k, v in recipe.targets.items())),
+                        decoded[0],
+                    )
             inspection["rfid_epcs"] = tags
             if image is not None:
                 data = await image.read(20 * 1024 * 1024 + 1)

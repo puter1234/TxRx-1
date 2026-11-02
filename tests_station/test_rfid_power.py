@@ -63,7 +63,7 @@ def test_saved_power_reaches_existing_reader_reconnection_and_production(line, m
         powers.append(line.io.reader.power)
         return [{"epc": EPC}]
 
-    monkeypatch.setattr(line.io.reader, "inventory_once", read)
+    monkeypatch.setattr(line.io.reader, "inventory", read)
     prepare(line, ("rfid",))
     issue(line, "start")
     assert c.put("/api/bench/rfid/setup", json={"rfid_power": 1500}).status_code == 409

@@ -6,7 +6,7 @@ import uuid
 
 from .runtime import HardwareCycle
 from .schema import FlowSettings, Recipe
-from .rules import decode_epc, judge
+from .rules import decode_epc, judge, RuleError
 from .counting import ObjectCounter, file_sha256
 from .storage import utc
 
@@ -389,6 +389,14 @@ class FlowCycle(HardwareCycle):
                 p["inspection"].setdefault("captures", []).append({"timing": meta})
         self.event("CAPTURE_FINISHED", {"count": len(p["frames"])})
 
+    @staticmethod
+    def rfid_match(brand, epc, recipe):
+        try:
+            fields = decode_epc(brand, epc)
+        except RuleError:
+            return False
+        return all(fields.get(k) == v for k, v in recipe.targets.items())
+
     async def read_rfid(self, p):
         recipe = Recipe.model_validate(p["inspection"]["recipe"])
         cfg = recipe.flow
@@ -409,7 +417,9 @@ class FlowCycle(HardwareCycle):
             attempt = {"attempt": p["rfid_attempts"], "after_trigger_ms": actual_delay, "status": "reading"}
             p["inspection"].setdefault("rfid_reads", []).append(attempt)
             try:
-                result = await self.offload(self.io.inventory_once, cfg.rfid_interval_ms, self.cancel)
+                # Several rounds over the whole interval, as the device test reads: one
+                # round alone often answers "no tag" when two tags reply at once.
+                result = await self.offload(self.io.inventory, cfg.rfid_interval_ms, self.cancel)
             except asyncio.CancelledError:
                 attempt["status"] = "cancelled"
                 raise
@@ -418,21 +428,35 @@ class FlowCycle(HardwareCycle):
                 raise
             if not self.live():
                 return
-            unique = {r["epc"]: r for r in result}
-            attempt.update(status="read" if unique else "missing", tags=list(unique.values()))
-            if unique:
+            for r in result:
+                unique.setdefault(r["epc"], r)
+            attempt.update(status="read" if result else "missing", tags=list(result))
+            if any(self.rfid_match(p["brand"], epc, recipe) for epc in unique):
                 break
         # Preserve both the attempt budget and a completed read through camera
-        # reconnection. A first read is judged as-is, never retried to find a pass.
+        # reconnection.
         p["rfid_done"] = True
         p["inspection"]["rfid"] = list(unique.values())
-        if len(unique) != 1:
-            self.fail("RFID_MISSING" if not unique else "MULTIPLE_RFID_TAGS")
+        # Any tag that is the target product passes, whatever else was read with it.
+        match = next((epc for epc in unique if self.rfid_match(p["brand"], epc, recipe)), None)
+        if match:
+            p["observations"]["rfid"] = dict(recipe.targets)
+            p["inspection"]["rfid_match"] = match
+        elif not unique:
+            self.fail("RFID_MISSING")
         else:
-            p["observations"]["rfid"] = decode_epc(p["brand"], next(iter(unique)))
-            failures = judge(recipe.model_copy(update={"channels": ["rfid"]}), p["observations"])
-            if failures:
-                p["failures"].extend(failures)
+            decoded = []
+            for epc in unique:
+                try:
+                    decoded.append(decode_epc(p["brand"], epc))
+                except RuleError:
+                    pass
+            if not decoded:
+                self.fail("RFID_UNREGISTERED", ", ".join(unique))
+            else:
+                p["observations"]["rfid"] = decoded[0]
+                failures = judge(recipe.model_copy(update={"channels": ["rfid"]}), p["observations"])
+                p["failures"].extend(failures or [{"code": "TARGET_MISMATCH", "channel": "rfid"}])
                 self.c.stop_outputs()
         self.event("RFID_FINISHED", {"tags": len(unique), "attempts": p.get("rfid_attempts", 0)})
 

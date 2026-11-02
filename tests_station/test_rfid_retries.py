@@ -30,8 +30,8 @@ def test_product_retries_at_selected_interval_and_stops_at_first_read(controller
         calls.append((clock[0], timeout))
         return [{"epc": EPC}] if len(calls) == success_at else []
 
-    io.inventory_once = read_once
-    io.inventory = lambda *args: pytest.fail("Production must not call the 100-round bench inventory")
+    io.inventory = read_once
+    io.inventory_once = lambda *args: pytest.fail("Production reads every round in the interval")
 
     async def run():
         await cycle.tick()
@@ -59,16 +59,16 @@ def test_product_retries_at_selected_interval_and_stops_at_first_read(controller
 
 
 @pytest.mark.parametrize("multiple", [False, True])
-def test_first_wrong_or_multiple_tag_result_is_not_retried(controller, recipe, monkeypatch, multiple):
+def test_wrong_tags_are_read_again_and_fail_only_without_any_match(controller, recipe, monkeypatch, multiple):
     recipe.targets["size"] = "100"
     c, io, _, cycle, clock = rig(controller, monkeypatch, recipe, rfid_attempts=5)
     calls = []
 
-    def read_once(*args):
+    def read(*args):
         calls.append(1)
         return [{"epc": EPC}] + ([{"epc": "AABB"}] if multiple else [])
 
-    io.inventory_once = read_once
+    io.inventory = read
 
     async def run():
         await cycle.tick()
@@ -76,8 +76,30 @@ def test_first_wrong_or_multiple_tag_result_is_not_retried(controller, recipe, m
         await cycle.tick()
         clock[0] += .1
         await cycle.read_rfid(cycle.pending)
-        assert len(calls) == 1 and not io.on
-        assert cycle.pending["failures"][0]["code"] == ("MULTIPLE_RFID_TAGS" if multiple else "TARGET_MISMATCH")
+        assert len(calls) == 5 and not io.on
+        assert cycle.pending["failures"][0]["code"] == "TARGET_MISMATCH"
+
+    asyncio.run(run())
+
+
+def test_any_matching_tag_passes_among_other_tags(controller, recipe, monkeypatch):
+    c, io, _, cycle, clock = rig(controller, monkeypatch, recipe, rfid_attempts=3)
+    calls = []
+
+    def read(*args):
+        calls.append(1)
+        return [{"epc": "AABB"}, {"epc": EPC}, {"epc": "CCDD"}]
+
+    io.inventory = read
+
+    async def run():
+        await cycle.tick()
+        io.raw[0] = 0
+        await cycle.tick()
+        clock[0] += .1
+        await cycle.read_rfid(cycle.pending)
+        assert len(calls) == 1 and io.on and not cycle.pending["failures"]
+        assert cycle.pending["observations"]["rfid"] == recipe.targets
 
     asyncio.run(run())
 
@@ -113,7 +135,7 @@ def test_camera_recovery_keeps_product_attempt_budget_and_reader_ready(line, mon
             raise InventoryCancelled("test camera interruption")
         return [{"epc": EPC}] if success else []
 
-    monkeypatch.setattr(line.io.reader, "inventory_once", read_once)
+    monkeypatch.setattr(line.io.reader, "inventory", read_once)
     prepare(line, ("ocr", "rfid"), rfid_attempts=2, rfid_interval_ms=50, reconnect_interval_ms=100)
     issue(line, "start")
     line.gpio.sensor(1, 0)
@@ -145,7 +167,7 @@ def test_manual_stop_during_retry_gap_prevents_more_reads(line, monkeypatch):
         calls.append(time.monotonic())
         return []
 
-    monkeypatch.setattr(line.io.reader, "inventory_once", miss)
+    monkeypatch.setattr(line.io.reader, "inventory", miss)
     prepare(line, ("rfid",), rfid_attempts=3, rfid_interval_ms=200)
     issue(line, "start")
     line.gpio.sensor(1, 0)
