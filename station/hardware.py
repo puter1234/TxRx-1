@@ -172,7 +172,8 @@ class GpioIO:
                         > self.feedback_ms / 1000
                     ):
                         if self.requested and not snap["km2_on"]:
-                            self.fault = "MOTOR_PERMIT_LOST"
+                            # The contactor never reported running (DI3), not a lost permit.
+                            self.fault = "KM2_FEEDBACK_MISSING"
                             self._outputs(False, False)
                         elif not self.requested and snap["km2_on"]:
                             self.fault = "KM2_FEEDBACK_STUCK"

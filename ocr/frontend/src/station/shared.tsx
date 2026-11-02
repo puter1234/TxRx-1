@@ -157,6 +157,7 @@ export const ERR: Record<string, string> = {
   PRODUCT_DEPARTURE_TIMEOUT: "제품 배출 확인 시간 초과",
   INSPECTION_TIMEOUT: "검사 시간 초과",
   KM2_FEEDBACK_STUCK: "접촉기 정지 신호 미확인",
+  KM2_FEEDBACK_MISSING: "접촉기 가동 응답 없음",
   DATABASE_WRITE_FAILED: "검사 기록 저장 실패",
   SERVICE_SHUTDOWN: "프로그램 종료로 중단",
   RFID_ERROR: "RFID 읽기 오류",
