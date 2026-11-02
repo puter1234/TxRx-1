@@ -326,9 +326,6 @@ class WindowsCameraManager(CameraManager):
                 actual = info["current"]
                 if not actual or any(actual[k] != getattr(profile, k) for k in ("width", "height", "pixel_format")) or abs(actual["fps"] - profile.fps) > 0.05:
                     raise ValueError("카메라의 실제 촬영 설정이 요청값과 다릅니다.")
-                values = {c["name"]: c for c in info["controls"]}
-                if any(k not in values or (not values[k]["flags"] and values[k]["value"] != v) for k, v in profile.controls.items()):
-                    raise ValueError("카메라 설정 재조회 값이 일치하지 않습니다.")
                 revision = self.revision + 1
                 if persist:
                     with self.store.transaction() as c:

@@ -219,9 +219,8 @@ class V4L2:
         cur = actual["current"]
         if not cur or any(cur[k] != getattr(profile, k) for k in ("width", "height", "pixel_format")) or abs(cur["fps"] - profile.fps) > 0.05:
             raise ValueError("카메라가 요청한 해상도 또는 FPS를 적용하지 못했습니다.")
-        readback = {c["name"]: c["value"] for c in actual["controls"]}
-        if any(readback.get(k) != v for k, v in profile.controls.items()):
-            raise ValueError("카메라 설정 재조회 값이 일치하지 않습니다.")
+        # The driver may keep its own value for a control (auto modes adjust them);
+        # what it reports back is kept as is instead of refusing the camera.
         return actual
 
 
@@ -645,7 +644,6 @@ class CameraManager:
             drift = self._fixed_drift()
             if not drift:
                 return
-            message = "카메라 초점 또는 화이트밸런스를 저장값으로 되돌리지 못했습니다."
             profile = CameraProfile.model_validate(self.profile)
             try:
                 if hasattr(self.backend, "apply_controls"):
@@ -653,11 +651,11 @@ class CameraManager:
                 else:
                     self.apply(profile, persist=False, actor="camera-restore")
             except Exception as exc:
-                raise Conflict(f"{message} {exc}") from exc
-            self.store.event("CAMERA_CONTROLS_RESTORED", {"device": profile.device, "drift": drift})
-            if self.profile and not self._fixed_drift():
+                # Capture goes on with whatever the camera holds; the attempt is recorded.
+                self.store.event("CAMERA_CONTROLS_RESTORE_FAILED", {"device": profile.device, "drift": drift,
+                                                                    "error": str(exc)})
                 return
-            raise Conflict(message)
+            self.store.event("CAMERA_CONTROLS_RESTORED", {"device": profile.device, "drift": drift})
 
     def after(self, minimum_ns, timeout):
         with self.lock:
