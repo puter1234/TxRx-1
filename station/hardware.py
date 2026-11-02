@@ -43,6 +43,9 @@ class GpioIO:
         if not hasattr(gpiod, "request_lines"):
             raise RuntimeError("libgpiod Python 2.x API가 필요합니다.")
         self.config = config
+        self.rfid_port = config.rfid_port
+        # Where the device tests found the reader, (port, power); set by the app.
+        self.rfid_source = None
         self.lock = threading.RLock()
         self.closed = threading.Event()
         self.Value = Value
@@ -81,7 +84,7 @@ class GpioIO:
             if config.rfid_port:
                 try:
                     # Initialization checks the reader's replies itself, as the device test does.
-                    self.reader = Reader(config.rfid_port)
+                    self.reader = Reader(self.rfid_port)
                     self.reader.initialize(config.rfid_power)
                 except Exception as exc:
                     # A disconnected optional reader does not take GPIO offline.
@@ -240,13 +243,13 @@ class GpioIO:
             snap = self._read()
             if snap["km2_on"] or not snap["physical_permit"]:
                 raise RuntimeError("현장 정지/새 START 상태를 확인하세요.")
-            if self.config.rfid_port and getattr(self, "require_rfid", True) and not self.snapshot().get("rfid_ready"):
+            if self.rfid_port and getattr(self, "require_rfid", True) and not self.snapshot().get("rfid_ready"):
                 if self.reader:
                     try:
                         self.reader.close()
                     except Exception:
                         pass  # The unplugged descriptor may reject STOP.
-                self.reader = Reader(self.config.rfid_port)
+                self.reader = Reader(self.rfid_port)
                 self.reader.initialize(self.config.rfid_power)
                 self.rfid_error = None
             self.fault = None
@@ -264,7 +267,7 @@ class GpioIO:
         snap["rfid_connected"] = bool(
             self.reader
             and self.reader.port.is_open
-            and Path(self.config.rfid_port).exists()
+            and Path(self.rfid_port).exists()
         )
         snap["rfid_ready"] = bool(snap["rfid_connected"] and self.reader.initialized)
         snap["rfid_error"] = self.reader.last_error if self.reader else self.rfid_error
@@ -281,6 +284,38 @@ class GpioIO:
             + ([] if s.get("physical_permit") else ["물리 START 허가 확인 필요"])
             + ([restart_message(s["motor_restart_ms"])] if s["motor_restart_ms"] else [])
         )
+
+    def ensure_rfid(self):
+        """Open the reader where the device tests last found it, if it is not ready yet.
+
+        The reader opened at start-up may have been absent, unplugged or renamed since;
+        a job that reads RFID tries again here instead of waiting for a restart.
+        """
+        if self.snapshot().get("rfid_ready"):
+            return
+        port, power = self.rfid_source() if self.rfid_source else (self.rfid_port, self.config.rfid_power)
+        if not port:
+            raise RuntimeError("RFID 리더를 찾을 수 없습니다. 장비 시험에서 RFID를 한 번 읽어 주세요.")
+        with self.lock:
+            if self.reader:
+                try:
+                    self.reader.close()
+                except Exception:
+                    pass
+                self.reader = None
+            try:
+                self.reader = Reader(port)
+                self.reader.initialize(power)
+            except Exception as exc:
+                self.rfid_error = str(exc)
+                if self.reader:
+                    try:
+                        self.reader.close()
+                    except Exception:
+                        pass
+                self.reader = None
+                raise RuntimeError("RFID 리더가 응답하지 않습니다.") from exc
+            self.rfid_port, self.rfid_error = port, None
 
     def apply_rfid_power(self, power):
         if self.reader:

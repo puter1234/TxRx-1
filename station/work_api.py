@@ -34,6 +34,11 @@ def prepare_session(controller, vision, monitor, recipe, actor):
     if set(recipe.channels) & {"ocr", "barcode"} and getattr(vision, "loading", lambda: False)():
         # Loading under the controller lock would stall every screen until it ends.
         raise Conflict("검사 모델을 불러오는 중입니다. 잠시 후 다시 시작하세요.")
+    if "rfid" in recipe.channels and hasattr(controller.io, "ensure_rfid"):
+        try:
+            controller.io.ensure_rfid()
+        except RuntimeError as exc:
+            raise Conflict(str(exc)) from exc
     # All creation routes must check ownership before touching the active model.
     with controller.lock:
         if controller.session and controller.session["phase"] not in ("DONE", "FINISHED", "ABORTED"):

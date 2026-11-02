@@ -212,3 +212,51 @@ def test_stop_does_not_wait_for_power_setting_response(line, monkeypatch):
         finally:
             release.set()
         assert saving.result().status_code == 200
+
+
+def test_a_job_opens_the_reader_the_device_tests_found(monkeypatch):
+    import enum
+    import sys
+    from station.hardware import GpioIO
+
+    class Value(enum.Enum):
+        INACTIVE = 0
+        ACTIVE = 1
+
+    class Request:
+        def get_values(self, lines): return [Value.ACTIVE] * len(lines)
+        def set_values(self, values): pass
+        def set_value(self, line, value): pass
+        def release(self): pass
+
+    opened = []
+
+    class Reader:
+        def __init__(self, port):
+            self.port = SimpleNamespace(is_open=True)
+            self.initialized = False
+            self.last_error = None
+            opened.append(port)
+
+        def initialize(self, power):
+            self.initialized = True
+
+        def close(self): pass
+
+    monkeypatch.setitem(sys.modules, "gpiod", SimpleNamespace(LineSettings=lambda **kw: kw,
+                                                              request_lines=lambda *a, **kw: Request()))
+    monkeypatch.setitem(sys.modules, "gpiod.line", SimpleNamespace(
+        Direction=SimpleNamespace(INPUT=1, OUTPUT=2), Value=Value))
+    monkeypatch.setattr("platform.system", lambda: "Linux")
+    monkeypatch.setattr("station.hardware.Reader", Reader)
+    monkeypatch.setattr("station.hardware.Path.exists", lambda self: True)
+    io = GpioIO(StationConfig(mode="HARDWARE"))
+    try:
+        assert not opened and not io.snapshot()["rfid_ready"]
+        io.rfid_source = lambda: ("/dev/ttyUSB1", 2200)
+        io.ensure_rfid()
+        assert opened == ["/dev/ttyUSB1"] and io.snapshot()["rfid_ready"] and io.rfid_port == "/dev/ttyUSB1"
+        io.ensure_rfid()
+        assert opened == ["/dev/ttyUSB1"]
+    finally:
+        io.close()

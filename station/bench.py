@@ -656,7 +656,7 @@ class Bench:
             prod = self.production_io.snapshot()
             if prod.get("rfid_connected"):
                 s = self.setup
-                if s.rfid_port != self.config.rfid_port:
+                if s.rfid_port != getattr(self.production_io, "rfid_port", self.config.rfid_port):
                     raise Conflict("생산 설정과 RFID 포트가 다릅니다.")
                 if not prod.get("rfid_ready"):
                     self.production_io.apply_rfid_power(s.rfid_power)
