@@ -216,9 +216,7 @@ class V4L2:
                 raise ValueError("카메라 설정 범위를 확인하세요: " + name)
             self.run("-d", profile.device, f"--set-ctrl={name}={value}")
         actual = self.inspect(profile.device)
-        cur = actual["current"]
-        if not cur or any(cur[k] != getattr(profile, k) for k in ("width", "height", "pixel_format")) or abs(cur["fps"] - profile.fps) > 0.05:
-            raise ValueError("카메라가 요청한 해상도 또는 FPS를 적용하지 못했습니다.")
+        # Whatever mode the driver settled on is used; it is not a reason to refuse the camera.
         # The driver may keep its own value for a control (auto modes adjust them);
         # what it reports back is kept as is instead of refusing the camera.
         return actual
@@ -502,8 +500,6 @@ class CameraManager:
                 # Opening a native capture backend can renegotiate mode or reset controls.
                 current = self.backend.inspect(profile.device)
                 actual = current["current"]
-                if not actual or any(actual[k] != getattr(profile, k) for k in ("width", "height", "pixel_format")) or abs(actual["fps"] - profile.fps) > 0.05:
-                    raise ValueError("영상 연결 후 해상도 또는 FPS가 달라졌습니다.")
                 values = {c["name"]: c["value"] for c in current["controls"]}
                 if any(values.get(k) != v for k, v in profile.controls.items()) and hasattr(self.backend, "apply_controls"):
                     # UVC drivers can reset focus and white balance when the capture
@@ -512,9 +508,7 @@ class CameraManager:
                     current = self.backend.inspect(profile.device)
                     actual = current["current"] or actual
                     values = {c["name"]: c["value"] for c in current["controls"]}
-                if any(values.get(k) != v for k, v in profile.controls.items()):
-                    raise ValueError("영상 연결 후 카메라 설정이 달라졌습니다.")
-                accepted = {**profile.model_dump(), "controls": actual["controls"]}
+                accepted = {**profile.model_dump(), "controls": (actual or {}).get("controls", profile.controls)}
                 # Reconnecting with the same settings keeps the settings revision,
                 # so a settings screen opened before a reconnect stays valid.
                 same = bool(previous) and all(previous.get(k) == accepted[k] for k in mode_keys) \

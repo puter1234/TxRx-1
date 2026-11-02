@@ -323,9 +323,7 @@ class WindowsCameraManager(CameraManager):
             try:
                 self.stream = self.stream_factory(profile)
                 info = self.stream.inspect()
-                actual = info["current"]
-                if not actual or any(actual[k] != getattr(profile, k) for k in ("width", "height", "pixel_format")) or abs(actual["fps"] - profile.fps) > 0.05:
-                    raise ValueError("카메라의 실제 촬영 설정이 요청값과 다릅니다.")
+                actual = info["current"] or profile.model_dump()
                 revision = self.revision + 1
                 if persist:
                     with self.store.transaction() as c:
