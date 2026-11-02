@@ -234,7 +234,8 @@ class Vision:
             if "ocr" in recipe.channels and recipe.tag_count:
                 bgr = frame if frame is not None else cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
                 found = {}
-                task = self._auto_read(bgr, diagnostics=found, decode_values=False, text_finder=self.text_finder)
+                task = self._auto_read(bgr, diagnostics=found if self.locator == "yolo26" else None,
+                                       decode_values=False, text_finder=self.text_finder)
                 lines = [line for read in task.reads for line in read.lines]
                 self.last_view = result_view(bgr, found, lines, brand, recipe.targets)
                 detail["ocr_lines"] = lines
@@ -261,8 +262,8 @@ class Vision:
             elif "ocr" in recipe.channels:
                 bgr = frame if frame is not None else cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
                 found = {}
-                task = self._auto_read(bgr, diagnostics=found, decode_values="barcode" in recipe.channels,
-                                       text_finder=self.text_finder)
+                task = self._auto_read(bgr, diagnostics=found if self.locator == "yolo26" else None,
+                                       decode_values="barcode" in recipe.channels, text_finder=self.text_finder)
                 self.last_view = result_view(bgr, found, [l for r in task.reads for l in r.lines], brand, recipe.targets)
                 candidates = []
                 for read in task.reads:
