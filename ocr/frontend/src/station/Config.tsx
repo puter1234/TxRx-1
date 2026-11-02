@@ -341,6 +341,7 @@ export default function Config({
                     delete records[epc];
                     setDraft({ ...draft, decoder: { ...draft.decoder, records } });
                   }}
+                  onPrefix={(n) => setDraft({ ...draft, decoder: { ...draft.decoder, prefix_length: n } })}
                 />
               )}
               <div className="space-y-4 border-t border-line pt-5">
@@ -398,8 +399,9 @@ export default function Config({
 type Registered = { epc: string; replaced: Record<string, string> | null; count: number; brand: Brand };
 
 // A tag read here is remembered as a product with the chosen values; 조건 계수 checks RFID against these.
-function RfidTags({ brand, locked, onSaved, onRemove }: {
+function RfidTags({ brand, locked, onSaved, onRemove, onPrefix }: {
   brand: Brand; locked: boolean; onSaved: (b: Brand) => void; onRemove: (epc: string) => void;
+  onPrefix: (n: number | null) => void;
 }) {
   const [adding, setAdding] = useState(false);
   const [values, setValues] = useState<Record<string, string>>({});
@@ -425,6 +427,23 @@ function RfidTags({ brand, locked, onSaved, onRemove }: {
     <section aria-labelledby="rfid-title" className="space-y-4 border-t border-line pt-5">
       <div className="flex flex-wrap items-center gap-4">
         <h3 id="rfid-title" className="mr-auto text-[28px] font-black">RFID 태그 {records.length}개</h3>
+        <label className="flex items-center gap-3 text-[20px] font-extrabold">
+          비교할 앞자리 수
+          <input
+            aria-label="비교할 앞자리 수"
+            className="field !w-28"
+            type="number"
+            min={1}
+            max={128}
+            placeholder="전체"
+            disabled={locked}
+            value={brand.decoder.prefix_length ?? ""}
+            onChange={(e) => {
+              const n = Number(e.target.value);
+              onPrefix(e.target.value === "" ? null : Number.isInteger(n) && n >= 1 && n <= 128 ? n : brand.decoder.prefix_length ?? null);
+            }}
+          />
+        </label>
         {!adding && (
           <button className="btn btn-primary" disabled={locked || !brand.options.length} onClick={() => { setAdding(true); setMessage(""); }}>
             <Plus size={20} />

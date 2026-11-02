@@ -117,3 +117,24 @@ def test_rfid_tag_is_registered_with_the_chosen_values(line, monkeypatch):
     assert again.status_code == 409 and "한 개만" in again.text
     wrong = line.client.post("/api/bench/rfid/register", json={"brand_id": "hazzys", "targets": {"size": "100"}})
     assert wrong.status_code == 422
+
+
+def test_tags_of_one_product_match_on_the_brand_prefix(line, monkeypatch):
+    from station.rules import decode_epc
+    brand = Brand.model_validate(line.app.state.store.brand("hazzys"))
+    first, same_product = "1D44D280281B70D75A8DF0000E114D7A", "1D44D280281B70D75A8DF0FFFFFFFFFF"
+    assert brand.decoder.prefix_length is None
+    with pytest.raises(RuleError):
+        decode_epc(brand, same_product)
+    brand.decoder.prefix_length = 21
+    assert decode_epc(brand, same_product) == {"style": "HUTS6C612", "color": "N3", "size": "095"}
+    with pytest.raises(RuleError):
+        decode_epc(brand, "1D44D280281B70D75A8DE" + "0" * 11)
+    # Registering another tag of the same product replaces the entry instead of adding one.
+    saved = line.app.state.store.save_brand(brand.model_dump(), brand.revision, "test")
+    monkeypatch.setattr(line.app.state.bench, "rfid_test", lambda: {"tags": [{"epc": same_product}]})
+    targets = {"style": "HUTS6C612", "color": "BK", "size": "100"}
+    body = line.client.post("/api/bench/rfid/register", json={"brand_id": "hazzys", "targets": targets}).json()
+    assert body["replaced"] == {"style": "HUTS6C612", "color": "N3", "size": "095"}
+    assert body["brand"]["decoder"]["records"] == {same_product: targets}
+    assert body["brand"]["decoder"]["prefix_length"] == 21 and saved["revision"] < body["brand"]["revision"]

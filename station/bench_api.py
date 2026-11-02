@@ -381,7 +381,12 @@ def install(app, controller, bench, camera, permitted, editable, production_busy
             editable()
             current = Brand.model_validate(store.brand(body.brand_id))
             records = dict(current.decoder.records) if current.decoder.kind == "lookup" else {}
-            replaced = records.get(epc)
+            # One product, one entry: tags sharing the brand's compared prefix replace each other.
+            from .rules import same_product
+            same = [k for k in records if same_product(current.decoder, k, epc)]
+            replaced = records[same[0]] if same else None
+            for key in same:
+                del records[key]
             records[epc] = dict(body.targets)
             updated = current.model_copy(update={"decoder": current.decoder.model_copy(
                 update={"kind": "lookup", "records": records})})

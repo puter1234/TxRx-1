@@ -56,6 +56,9 @@ class Decoder(Model):
     kind: Literal["none", "hazzys_6bit_crc8", "lookup"] = "none"
     # Other makers register exact EPC -> fields, never infer their encoding.
     records: dict[str, dict[str, str]] = Field(default_factory=dict, max_length=100000)
+    # Tags of the same product share their first characters (Hazzys: 21); the rest
+    # is a serial. None compares the whole EPC.
+    prefix_length: int | None = Field(default=None, ge=1, le=128)
 
 
 class BrandCaps(Model):

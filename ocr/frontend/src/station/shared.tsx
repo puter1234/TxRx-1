@@ -23,6 +23,7 @@ export type Brand = {
   decoder: {
     kind: "none" | "hazzys_6bit_crc8" | "lookup";
     records: Record<string, Fields>;
+    prefix_length?: number | null;
   };
   ocr_regions: Region[];
   barcode_records: Record<string, Fields>;

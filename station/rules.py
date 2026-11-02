@@ -41,11 +41,29 @@ def decode_hazzys(epc: str) -> dict:
     }
 
 
+def same_product(decoder, a: str, b: str) -> bool:
+    n = decoder.prefix_length
+    a, b = a.strip().upper(), b.strip().upper()
+    return a[:n] == b[:n] if n else a == b
+
+
+def lookup_epc(decoder, epc: str):
+    """Values registered for this tag's product: the same EPC, or the same first characters."""
+    epc = epc.strip().upper()
+    if epc in decoder.records:
+        return decoder.records[epc]
+    if decoder.prefix_length:
+        found = [v for k, v in decoder.records.items() if same_product(decoder, k, epc)]
+        if found and all(v == found[0] for v in found):
+            return found[0]
+    return None
+
+
 def decode_epc(brand: Brand, epc: str) -> dict:
     if brand.decoder.kind == "hazzys_6bit_crc8":
         return decode_hazzys(epc)
     if brand.decoder.kind == "lookup":
-        value = brand.decoder.records.get(epc.strip().upper())
+        value = lookup_epc(brand.decoder, epc)
         if value is None:
             raise RuleError("RFID_UNREGISTERED")
         return dict(value)
