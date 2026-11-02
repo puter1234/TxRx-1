@@ -16,7 +16,7 @@ export type ProcessSettings = { conveyor_sync: boolean; low_speed_ms: number; ca
   capture_interval_ms: number; departure_timeout_ms: number; frame_count: number;
   sensor_channel: number; active_raw: number; pattern: string; locator: Locator; text_finder: TextFinder;
   sensor_gap_ms: number };
-type TextFinder = "basic" | "lines" | "detector";
+type TextFinder = "basic" | "lines" | "detector" | "whole";
 type State = { active: boolean; busy: boolean; error: string | null; stop_reason?: string | null; detected: number;
   count: number; passed: number; failed: number; await_clear: boolean; jobs: Job[]; settings?: ProcessSettings };
 
@@ -256,6 +256,7 @@ export default function ProcessTest({ bench, locked, onShow, onSettings }: {
                 <option value="basic">기존 방식</option>
                 <option value="lines">A 줄 찾기 개선</option>
                 <option value="detector">B 글자 검출 모델</option>
+                <option value="whole">C 택 전체 읽기</option>
               </select>
             </label>
           )}

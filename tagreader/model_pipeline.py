@@ -61,7 +61,8 @@ class ModelLocator:
         self.lock = threading.Lock()
 
     def locate(self, original, diagnostics, *, text=True, text_finder="basic"):
-        if text_finder == "basic":
+        whole = text and text_finder == "whole"
+        if text_finder in ("basic", "whole"):
             extract = self.extract_text
         else:
             from .text_lines import FINDERS
@@ -86,7 +87,18 @@ class ModelLocator:
                                                     target_size=list(SOURCE_SIZE))
                 segmentation_ms += result["timing_ms"]["total_without_decode"]
                 regions = []
-                if text and result["instances"]:
+                if whole:
+                    from .text_lines import read_whole_tag
+                    with stage(f"whole_tag roi={roi_index}"):
+                        candidates = read_whole_tag(original, roi, result["instances"])
+                    regions = candidates["regions"]
+                    text_ms += candidates["elapsed_ms"]
+                    if not result["instances"]:
+                        # A tag without a readable barcode is still read whole.
+                        corners = (np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]], float) * 2).tolist()
+                        records.append({"quad": corners, "polygon": corners, "confidence": 0.,
+                                        "roi_index": roi_index, "roi_12mp": roi, "regions": regions})
+                elif text and result["instances"]:
                     with stage(f"text_regions roi={roi_index}"):
                         candidates = extract(raw, result["instances"], roi,
                                                        list(DETECTION_SIZE), list(SOURCE_SIZE))
@@ -185,6 +197,9 @@ def process_frame(original, recognizer, *, diagnostics=None, decode_values=False
             for region in record["regions"]:
                 # quad_target belongs to this very source frame, never a second capture.
                 crop = cv2.cvtColor(crop_original(ocr_source, region["quad_target"]), cv2.COLOR_GRAY2BGR)
+                if region.get("finder") == "whole" and crop.shape[0] > 1.5 * crop.shape[1]:
+                    # A vertical line on the tag: lay it down; both directions are read below.
+                    crop = cv2.rotate(crop, cv2.ROTATE_90_CLOCKWISE)
                 for rotation in (0, 180):
                     crops.append(crop if rotation == 0 else cv2.rotate(crop, cv2.ROTATE_180))
                     metadata.append({"rotation_degrees": rotation, "quad_source": region["quad_target"],

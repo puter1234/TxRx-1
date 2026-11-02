@@ -113,6 +113,27 @@ def test_text_finder_choice_replaces_only_the_line_search(camera_frame, locator,
     assert task.reads[0].lines[0]["quad_source"] == text_quad
 
 
+@pytest.mark.parametrize("barcodes", [True, False])
+def test_whole_tag_reads_every_line_and_lays_vertical_ones_down(camera_frame, locator, monkeypatch, barcodes):
+    from tagreader import text_lines
+    instance, calls, _, _ = locator
+    if not barcodes:
+        instance.segmenter = SimpleNamespace(predict=lambda *a, **k: {"instances": [], "timing_ms": {"total_without_decode": 1}})
+    flat = [[1040., 1220.], [1398., 1220.], [1398., 1258.], [1040., 1258.]]
+    tall = [[1040., 1220.], [1078., 1220.], [1078., 1578.], [1040., 1578.]]
+    monkeypatch.setattr(text_lines, "read_whole_tag", lambda original, roi, instances: {"elapsed_ms": 1, "regions": [
+        {"barcode_index": 0, "side_in_aligned_image": "whole", "quad_target": q, "finder": "whole"} for q in (flat, tall)]})
+    shapes = []
+    def read_batch(images):
+        shapes.extend(image.size for image in images)
+        return [{"text": "AB12", "confidence": .9, "ms": 1} for _ in images]
+    task = pipeline.process_task(camera_frame, SimpleNamespace(read_batch=read_batch), locator="yolo26",
+                                 decode_values=False, text_finder="whole")
+    assert "text" not in calls and len(task.reads) == 1 and len(task.reads[0].lines) == 4
+    # PIL sizes are (width, height): both lines are read lying down, in both directions.
+    assert all(w > h for w, h in shapes)
+
+
 @pytest.mark.parametrize("size", [(4000, 3000), (1920, 1080), (7999, 6000)])
 def test_lower_resolution_is_rejected_before_loading_models(size, monkeypatch):
     def forbidden():

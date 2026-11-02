@@ -64,3 +64,26 @@ def test_detector_finds_the_lines_beside_the_barcode(tag):
     x0, x1, _, y1 = found["above"]
     assert x0 <= left + 5 and x1 >= right - 5 and y1 <= 305
     assert found["below"][2] >= 375
+
+
+def test_boxes_run_clockwise_from_the_top_left():
+    from tagreader.text_detector import clockwise
+    points = np.array([[10., 40.], [10., 20.], [90., 20.], [90., 40.]])
+    assert clockwise(points).tolist() == [[10, 20], [90, 20], [90, 40], [10, 40]]
+
+
+def test_whole_tag_finds_every_line_in_the_full_frame(tag):
+    pytest.importorskip("onnxruntime")
+    from tagreader.text_lines import read_whole_tag
+    image, instances = tag
+    # The same tag twice as large, placed in a 48MP frame where the 12MP ROI points.
+    frame = np.full((6000, 8000, 3), 40, np.uint8)
+    big = cv2.resize(image, (1800, 1400), interpolation=cv2.INTER_CUBIC)
+    frame[1600:3000, 2000:3800] = big
+    targets = [{"polygon_target": (np.asarray(i["polygon_roi"]) * 2 + [2000, 1600]).tolist()} for i in instances]
+    result = read_whole_tag(frame, ROI, targets)
+    quads = [np.asarray(r["quad_target"]) for r in result["regions"]]
+    assert len(quads) >= 2 and all(r["finder"] == "whole" for r in result["regions"])
+    rows = sorted((q[:, 1].mean() - 1600) / 2 for q in quads)
+    assert any(240 < y < 290 for y in rows) and any(395 < y < 440 for y in rows)
+    assert all(q[:, 0].min() >= 2000 - 20 and q[:, 0].max() <= 3800 + 20 for q in quads)

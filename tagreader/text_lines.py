@@ -1,7 +1,8 @@
-"""Two alternatives to the vendored barcode-adjacent text finder, for comparison in the process test.
+"""Alternatives to the vendored barcode-adjacent text finder, for comparison in the process test.
 
-Both keep its contract: at most one line above and one below each barcode, with the
-same region fields, so OCR reads no more crops than before. Coordinates follow
+lines and detector keep its contract: at most one line above and one below each
+barcode, with the same region fields, so OCR reads no more crops. whole reads every
+line on the tag instead (read_whole_tag). Coordinates follow
 barseg.text_regions: rotate into the barcode direction, choose a line there, and map
 the four corners back to the ROI, the 12MP frame and the 48MP frame.
 
@@ -250,6 +251,56 @@ def find_detected(raw_crop, instances, roi_xyxy=None, source_size=None, target_s
             box = tuple(int(round(v)) for v in near[:4])
             regions.append(region(view, box, side, index, roi_xyxy, source_size, target_size,
                                   {"detector_score": float(near[4]), "finder": "detector"}))
+    return {"status": "experimental", "regions": regions, "region_count": len(regions),
+            "elapsed_ms": (time.perf_counter() - started) * 1000, "detect_ms": detect_ms}
+
+
+WHOLE_MIN_SIDE = 736  # RapidOCR's whole-page setting: small tags are enlarged to this, large ones kept
+
+
+def upright_matrix(shape, polygons):
+    """Rotation that lays the largest barcode, and so the printed lines, left to right."""
+    height, width = shape[:2]
+    angle = 0.
+    if polygons:
+        poly = max((np.asarray(p, np.float32) for p in polygons), key=cv2.contourArea)
+        _, (w, h), angle = cv2.minAreaRect(poly)
+        if w < h:
+            angle += 90
+    m = cv2.getRotationMatrix2D((width / 2, height / 2), angle, 1)
+    cos, sin = abs(m[0, 0]), abs(m[0, 1])
+    size = (int(height * sin + width * cos), int(height * cos + width * sin))
+    m[0, 2] += size[0] / 2 - width / 2
+    m[1, 2] += size[1] / 2 - height / 2
+    return m, size, angle
+
+
+def read_whole_tag(original, roi_12mp, instances):
+    """Option C: every text line on the tag, found in the full-resolution tag.
+
+    The tag is cut from the 48MP frame, turned upright by its barcode, and PP-OCRv4
+    marks every line. Each line goes to OCR; the registered values decide which one
+    is the product code, so no rule about where the code sits is needed.
+    """
+    from .preprocess import prepare_ocr_source
+    from .text_detector import get_detector
+    started = time.perf_counter()
+    x1, y1, x2, y2 = (int(v) * 2 for v in roi_12mp)
+    tag = prepare_ocr_source(original[y1:y2, x1:x2])
+    if tag.ndim == 2:
+        tag = cv2.cvtColor(tag, cv2.COLOR_GRAY2BGR)
+    polygons = [np.asarray(i["polygon_target"], np.float64) - [x1, y1] for i in instances]
+    m, size, angle = upright_matrix(tag.shape, polygons)
+    turned = cv2.warpAffine(tag, m, size, borderValue=(255, 255, 255))
+    t0 = time.perf_counter()
+    boxes = get_detector().boxes(turned, min_side=WHOLE_MIN_SIDE)
+    detect_ms = (time.perf_counter() - t0) * 1000
+    back = cv2.invertAffineTransform(m)
+    regions = []
+    for points, score in boxes:
+        quad = points @ back[:, :2].T + back[:, 2] + [x1, y1]
+        regions.append({"barcode_index": 0, "side_in_aligned_image": "whole", "quad_target": quad.tolist(),
+                        "angle_degrees_mod180": angle % 180, "detector_score": float(score), "finder": "whole"})
     return {"status": "experimental", "regions": regions, "region_count": len(regions),
             "elapsed_ms": (time.perf_counter() - started) * 1000, "detect_ms": detect_ms}
 

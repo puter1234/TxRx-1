@@ -31,10 +31,18 @@ class TextDetector:
         self.input = self.session.get_inputs()[0].name
         self.lock = threading.Lock()
 
-    def boxes(self, image):
-        """Quadrilaterals (4x2, in image pixels) with their mean text probability."""
+    def boxes(self, image, min_side=None, max_side=3200):
+        """Quadrilaterals (4x2, in image pixels, clockwise from top left) with their mean text probability.
+
+        By default the long side is scaled to 736. With min_side the image keeps its
+        own resolution unless its short side is below min_side (RapidOCR's setting
+        for whole pages), bounded by max_side.
+        """
         height, width = image.shape[:2]
-        scale = LONG_SIDE / max(height, width)
+        if min_side:
+            scale = min(max(1., min_side / min(height, width)), max_side / max(height, width))
+        else:
+            scale = LONG_SIDE / max(height, width)
         rows = max(32, int(round(height * scale / 32)) * 32)
         cols = max(32, int(round(width * scale / 32)) * 32)
         resized = cv2.resize(image, (cols, rows), interpolation=cv2.INTER_AREA)
@@ -62,8 +70,17 @@ class TextDetector:
             points = cv2.boxPoints(((cx, cy), (w + 2 * grow, h + 2 * grow), angle))
             points[:, 0] = np.clip(points[:, 0] * width / cols, 0, width - 1)
             points[:, 1] = np.clip(points[:, 1] * height / rows, 0, height - 1)
-            found.append((points.astype(np.float64), score))
+            found.append((clockwise(points.astype(np.float64)), score))
         return found
+
+
+def clockwise(points):
+    """Top left, top right, bottom right, bottom left, as RapidOCR orders a box."""
+    by_x = points[np.argsort(points[:, 0], kind="stable")]
+    left, right = by_x[:2], by_x[2:]
+    tl, bl = left[np.argsort(left[:, 1], kind="stable")]
+    tr, br = right[np.argsort(right[:, 1], kind="stable")]
+    return np.array([tl, tr, br, bl])
 
 
 def get_detector():

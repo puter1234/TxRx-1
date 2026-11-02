@@ -29,7 +29,7 @@ class SensorOcrSettings(Model):
     active_raw: int = Field(default=0, ge=0, le=1)
     pattern: str = Field(default="", max_length=160)
     locator: Literal["yolo26", "stripes", "opencv"] = "yolo26"
-    text_finder: Literal["basic", "lines", "detector"] = "basic"
+    text_finder: Literal["basic", "lines", "detector", "whole"] = "basic"
     # In conveyor mode a DI that clears for less than this and detects again is
     # the same product, not the next one arriving early.
     sensor_gap_ms: int = Field(default=300, ge=0, le=5000)
@@ -120,7 +120,7 @@ class SensorOcrTest:
             raise Conflict("카메라 해상도를 확인할 수 없습니다.")
         if hasattr(self.vision, "prepare_capture"):
             self.vision.prepare_capture(status, settings.locator)
-        if settings.locator == "yolo26" and settings.text_finder == "detector":
+        if settings.locator == "yolo26" and settings.text_finder in ("detector", "whole"):
             from tagreader.text_detector import get_detector
             try:
                 get_detector()
