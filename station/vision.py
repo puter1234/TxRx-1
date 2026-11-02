@@ -24,6 +24,17 @@ def missing_ocr_modules():
     return [name for name in OCR_MODULES if importlib.util.find_spec(name) is None]
 
 
+def _reads_as_target(text: str, brand: Brand, targets: dict) -> bool:
+    """The target product code appears in the line, with look-alike characters
+    (O/0, I/1, B/8, S/5 ...) treated as the same and other text around it ignored."""
+    from ocr.normalize import normalize_loose, normalize_strict
+
+    if not brand.options or any(o.key not in targets for o in brand.options):
+        return False
+    code = normalize_loose("".join(normalize_strict(targets[o.key]) for o in brand.options))
+    return bool(code) and code in normalize_loose(text)
+
+
 def _serial_fields(text: str, brand: Brand):
     """Decode a complete printed product code from registered option values only."""
     from ocr.normalize import normalize_strict
@@ -74,7 +85,7 @@ def result_view(frame, found, lines, brand, targets):
         quad = line.get("quad_source")
         if quad is None:
             continue
-        hit = _serial_fields(line["text"], brand) == targets
+        hit = _reads_as_target(line["text"], brand, targets)
         if hit:
             hit_tags.add(line.get("roi_index"))
         points = (np.asarray(quad, np.float64) * scale).astype(np.int32)
@@ -250,7 +261,7 @@ class Vision:
                     for line in read.lines:
                         by_tag.setdefault(line.get("roi_index", index), []).append(line)
                 matched = [key for key, group in by_tag.items()
-                           if any(_serial_fields(line["text"], brand) == recipe.targets for line in group)]
+                           if any(_reads_as_target(line["text"], brand, recipe.targets) for line in group)]
                 detail["tag_count"], detail["tags_matched"] = tags, len(matched)
                 tag_failures = []
                 if tags != recipe.tag_count:

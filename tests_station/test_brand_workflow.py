@@ -81,6 +81,8 @@ def test_barcode_reading_is_switched_off():
 @pytest.mark.parametrize("found,lines,expected", [
     (2, {0: ["HUTS6C612N3095", "W279,000"], 1: ["HUTS6C612N3095"]}, []),
     (2, {0: ["HUTS6C612N3095"], 1: ["W279,000"]}, ["OCR_TAG_UNMATCHED"]),
+    (2, {0: ["HUT56C6I2N3O95"], 1: ["*HUTS 6C612 N3 095* KR"]}, []),
+    (2, {0: ["HUTS6C612N3094"], 1: ["HUTS6C612N3095"]}, ["OCR_TAG_UNMATCHED"]),
     (1, {0: ["HUTS6C612N3095"]}, ["TAG_COUNT_MISMATCH"]),
     (3, {0: ["HUTS6C612N3095"], 1: ["HUTS6C612N3095"], 2: ["HUTS6C612BK095"]}, ["TAG_COUNT_MISMATCH", "OCR_TAG_UNMATCHED"]),
 ])
