@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Minus, Play, Plus, Flag, RotateCcw, PackageX, Camera } from "lucide-react";
 import { useApp } from "../lib/store";
 import { refresh, reportError, sendCommand } from "../lib/station";
-import { api, errorText, uuid } from "../station/shared";
+import { api, errorText, uuid, type Result } from "../station/shared";
 import { optionColorStyle } from "../lib/optionColors";
 import { cameraOn, jobTitle, needsCamera, phaseView, presetLabel, RUNNING, TONE_BAR, useRedo } from "../lib/jobs";
 import { Screen, Sheet } from "../ui/kit";
@@ -248,7 +248,9 @@ export default function Run() {
         </section>
         {(showCamera || state?.mode === "REPLAY") && (
           <section className="flex min-h-0 flex-col gap-6">
-            {showCamera && <CameraBox className="min-h-[360px] flex-1" tracking={kind === "vision" ? state?.tracking : undefined} flow={s.recipe.flow} />}
+            {showCamera && (kind === "condition"
+              ? <ResultView result={state?.last_result ?? null} />
+              : <CameraBox className="min-h-[360px] flex-1" tracking={kind === "vision" ? state?.tracking : undefined} flow={s.recipe.flow} />)}
             {state?.mode === "REPLAY" && kind !== "vision" && <PhotoTest />}
           </section>
         )}
@@ -391,6 +393,28 @@ function PhotoTest() {
         onClick={inspect}>
         {busy ? "검사 중" : "사진 검사"}
       </button>
+    </section>
+  );
+}
+
+// The last product as the reader saw it, with the tags and lines it found.
+function ResultView({ result }: { result: Result | null }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [result?.id]);
+  const pass = result?.status === "PASS";
+  return (
+    <section aria-label="검사 결과 영상" className="relative flex min-h-[360px] flex-1 items-center justify-center overflow-hidden rounded-3xl bg-ink-900">
+      {result && !failed ? (
+        <img key={result.id} src={`/api/inspection/view?id=${encodeURIComponent(result.id)}`} alt="검사 결과 영상"
+          className="h-full w-full object-contain" onError={() => setFailed(true)} />
+      ) : (
+        <p className="text-[32px] font-extrabold text-white">{result ? "결과 영상 없음" : "첫 제품 대기"}</p>
+      )}
+      {result && (
+        <span className={"absolute left-4 top-4 rounded-2xl px-5 py-2 text-[30px] font-black text-white " + (pass ? "bg-ok" : "bg-danger")}>
+          {pass ? "합격" : "불합격"}
+        </span>
+      )}
     </section>
   );
 }

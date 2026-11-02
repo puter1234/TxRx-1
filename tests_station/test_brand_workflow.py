@@ -100,6 +100,7 @@ def test_each_tag_or_sticker_needs_one_line_with_the_target(brand, found, lines,
     assert [f["code"] for f in result["failures"]] == expected
     assert result["observations"]["ocr"] == ({} if expected else recipe.targets)
     assert result["details"]["tag_count"] == found
+    assert vision.last_view[:2] == b"\xff\xd8"  # the result frame shown on the run screen (JPEG)
 
 
 def test_rfid_tag_is_registered_with_the_chosen_values(line, monkeypatch):

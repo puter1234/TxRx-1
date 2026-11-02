@@ -613,6 +613,14 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
             + hardware_errors,
         }
 
+    @app.get("/api/inspection/view")
+    def inspection_view_image():
+        view = getattr(vision, "last_view", None)
+        if not view:
+            raise HTTPException(404, "검사 결과 영상이 아직 없습니다.")
+        from fastapi.responses import Response
+        return Response(view, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
     @app.get("/api/camera/frame")
     async def camera_frame():
         if camera is None or not camera.status()["connected"]:

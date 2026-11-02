@@ -134,6 +134,12 @@ def get_locator():
         return _instance
 
 
+def trim_symbols(text):
+    """Product codes start and end with a letter or digit; marks like * or " around them are dropped."""
+    import re
+    return re.sub(r"^[^0-9A-Za-z가-힣]+|[^0-9A-Za-z가-힣]+$", "", text)
+
+
 LINE_MARGIN = 0.3  # detector boxes end at the ink; this much of the line height is added at each end
 
 
@@ -233,7 +239,7 @@ def process_frame(original, recognizer, *, diagnostics=None, decode_values=False
             if len(outputs) != len(crops):
                 raise RuntimeError("OCR 결과 수가 입력한 글자 줄 수와 다릅니다.")
             ocr_ms += (time.perf_counter() - t0) * 1000
-            lines = [{**out, **meta} for out, meta in zip(outputs, metadata)]
+            lines = [{**out, "text": trim_symbols(out["text"]), **meta} for out, meta in zip(outputs, metadata)]
         if decode_values:
             verdict = compare(code, [(line["text"], line["confidence"]) for line in lines])
         else:

@@ -219,3 +219,9 @@ def test_evidence_preserves_full_48mp_frame(camera_frame, tmp_path):
     # The upload path also accepts an original 48MP file.
     uploaded, _ = save_upload(tmp_path, "uploaded", path.read_bytes())
     assert cv2.imread(str(uploaded)).shape == (6000, 8000, 3)
+
+
+@pytest.mark.parametrize("raw,clean", [("*HUTS6D71314105*", "HUTS6D71314105"), ('"W279,000"', "W279,000"),
+                                       ("-.HWTS 6C651 OW 095.", "HWTS 6C651 OW 095"), ("**", "")])
+def test_marks_around_a_read_line_are_dropped(raw, clean):
+    assert model.trim_symbols(raw) == clean

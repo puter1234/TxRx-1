@@ -52,6 +52,40 @@ def _serial_fields(text: str, brand: Brand):
     return matches[0] if len(matches) == 1 else None
 
 
+VIEW_WIDTH = 1600
+
+
+def result_view(frame, found, lines, brand, targets):
+    """The OCR input (gained green channel) with each tag and read line drawn; JPEG bytes.
+
+    Green: a line that reads as the target, and a tag that holds one. Red: a tag without
+    one. Grey: other lines the reader saw.
+    """
+    import cv2
+    import numpy as np
+    from tagreader.preprocess import prepare_ocr_source
+    gray = prepare_ocr_source(frame)
+    scale = VIEW_WIDTH / gray.shape[1]
+    view = cv2.cvtColor(cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA), cv2.COLOR_GRAY2BGR)
+    green, red, grey = (40, 200, 60), (40, 40, 230), (170, 170, 170)
+    full = frame.shape[1] / 4000  # tag boxes come in detection pixels
+    hit_tags = set()
+    for line in lines:
+        quad = line.get("quad_source")
+        if quad is None:
+            continue
+        hit = _serial_fields(line["text"], brand) == targets
+        if hit:
+            hit_tags.add(line.get("roi_index"))
+        points = (np.asarray(quad, np.float64) * scale).astype(np.int32)
+        cv2.polylines(view, [points], True, green if hit else grey, 4 if hit else 2)
+    for index, tag in enumerate(found.get("tags", [])):
+        x1, y1, x2, y2 = (np.asarray(tag["roi"], np.float64) * full * scale).astype(int)
+        cv2.rectangle(view, (x1, y1), (x2, y2), green if index in hit_tags else red, 4)
+    ok, data = cv2.imencode(".jpg", view, [cv2.IMWRITE_JPEG_QUALITY, 82])
+    return data.tobytes() if ok else None
+
+
 def verify_model(directory: Path):
     path = directory / "manifest.json"
     if not path.is_file():
@@ -74,6 +108,8 @@ class Vision:
         self.locator = locator
         # The text finder chosen in the process test also reads production frames.
         self.text_finder = "basic"
+        # The last inspected frame as the reader saw it, with what it found drawn on it.
+        self.last_view = None
         self.recognizer = None
         self.lock = threading.Lock()
         self.model_lock = threading.Lock()
@@ -200,6 +236,7 @@ class Vision:
                 found = {}
                 task = self._auto_read(bgr, diagnostics=found, decode_values=False, text_finder=self.text_finder)
                 lines = [line for read in task.reads for line in read.lines]
+                self.last_view = result_view(bgr, found, lines, brand, recipe.targets)
                 detail["ocr_lines"] = lines
                 detail["ocr_ms"] = task.ms_ocr
                 detail["ocr_device"] = str(getattr(self.recognizer, "device", "unknown"))
@@ -223,7 +260,10 @@ class Vision:
                 observations["ocr"] = {} if tag_failures else dict(recipe.targets)
             elif "ocr" in recipe.channels:
                 bgr = frame if frame is not None else cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
-                task = self._auto_read(bgr, decode_values="barcode" in recipe.channels, text_finder=self.text_finder)
+                found = {}
+                task = self._auto_read(bgr, diagnostics=found, decode_values="barcode" in recipe.channels,
+                                       text_finder=self.text_finder)
+                self.last_view = result_view(bgr, found, [l for r in task.reads for l in r.lines], brand, recipe.targets)
                 candidates = []
                 for read in task.reads:
                     for line in read.lines:
