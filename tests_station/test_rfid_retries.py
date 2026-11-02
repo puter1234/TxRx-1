@@ -177,3 +177,56 @@ def test_manual_stop_during_retry_gap_prevents_more_reads(line, monkeypatch):
     stopped = wait_state(line, lambda s: s["session"]["phase"] == "PAUSED" and not s["busy"])
     assert len(calls) == 1 and stopped["session"]["count"] == 0
     assert not line.io.snapshot()["motor_requested"]
+
+
+def test_reader_dropped_mid_read_is_reopened_and_read_again(controller, recipe, monkeypatch):
+    c, io, _, cycle, clock = rig(controller, monkeypatch, recipe, rfid_attempts=3)
+    calls, reopened = [], []
+
+    def read(*args):
+        calls.append(1)
+        if len(calls) == 1:
+            raise IOError("RFID frame checksum/length error")
+        return [{"epc": EPC}]
+
+    io.inventory = read
+    io.ensure_rfid = lambda: reopened.append(1)
+
+    async def run():
+        await cycle.tick()
+        io.raw[0] = 0
+        await cycle.tick()
+        clock[0] += .1
+        await cycle.read_rfid(cycle.pending)
+        assert len(calls) == 2 and reopened == [1]
+        assert not cycle.pending["failures"] and io.on
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("comes_back", [True, False])
+def test_lost_reader_is_reopened_while_the_belt_runs(controller, recipe, monkeypatch, comes_back):
+    c, io, _, cycle, clock = rig(controller, monkeypatch, recipe)
+    ready, tries = [False], []
+    prior = io.snapshot
+    io.snapshot = lambda: {**prior(), "rfid_ready": ready[0]}
+    monkeypatch.setattr("station.flow.RFID_RECONNECT_GAP_S", 0)
+
+    def ensure():
+        tries.append(1)
+        if not comes_back:
+            raise RuntimeError("RFID 리더가 응답하지 않습니다.")
+        ready[0] = True
+
+    io.ensure_rfid = ensure
+
+    async def run():
+        for _ in range(12):
+            await cycle.tick()
+            await asyncio.sleep(.02)
+        if comes_back:
+            assert tries == [1] and c.session["phase"] == "FEEDING" and io.on
+        else:
+            assert len(tries) == 3 and c.session["fault"] == "RFID_DISCONNECTED" and not io.on
+
+    asyncio.run(run())

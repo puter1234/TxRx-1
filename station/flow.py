@@ -11,6 +11,9 @@ from .counting import ObjectCounter, file_sha256
 from .storage import utc
 
 
+RFID_RECONNECT_TRIES = 3  # failed reopenings in a row before the line stops
+RFID_RECONNECT_GAP_S = 0.5
+
 class SensorEdge:
     """Require a stable clear input to arm; one event until the next clear."""
     def __init__(self):
@@ -47,6 +50,8 @@ class FlowCycle(HardwareCycle):
         self.counter_key = None
         self.camera_task = None
         self.rfid_task = None
+        self.rfid_reconnect = None
+        self.rfid_misses = 0
         self.track_task = None
         self.reconnect_task = None
         self.finish_task = None
@@ -191,9 +196,19 @@ class FlowCycle(HardwareCycle):
         if snap.get("fault") or not snap.get("connected"):
             self.c.fault(snap.get("fault") or "IO_DISCONNECTED")
             return
-        if "rfid" in s["recipe"]["channels"] and not snap.get("rfid_ready"):
-            self.c.fault("RFID_DISCONNECTED")
-            return
+        if "rfid" in s["recipe"]["channels"]:
+            # A lost reader is reopened while the belt runs; only repeated failures stop it.
+            task = self.rfid_reconnect
+            if task and task.done():
+                self.rfid_reconnect = None
+                self.rfid_misses = 0 if not task.cancelled() and task.result() else self.rfid_misses + 1
+            if not snap.get("rfid_ready"):
+                if not hasattr(self.io, "ensure_rfid") or self.rfid_misses >= RFID_RECONNECT_TRIES:
+                    self.rfid_misses = 0
+                    self.c.fault("RFID_DISCONNECTED")
+                    return
+                if self.rfid_reconnect is None:
+                    self.rfid_reconnect = asyncio.create_task(self.reconnect_rfid())
         if (s["phase"] == "FEEDING" and self.speed_deadline is not None and now >= self.speed_deadline
                 and (not self.camera_required() or self.camera.status().get("connected"))):
             serial = self.speed_serial
@@ -397,6 +412,19 @@ class FlowCycle(HardwareCycle):
             return False
         return all(fields.get(k) == v for k, v in recipe.targets.items())
 
+    async def reconnect_rfid(self):
+        if not hasattr(self.io, "ensure_rfid"):
+            return False
+        self.event("RFID_RETRY")
+        try:
+            await self.offload(self.io.ensure_rfid)
+        except Exception as exc:
+            self.event("RFID_RETRY_FAILED", {"error": str(exc)})
+            await asyncio.sleep(RFID_RECONNECT_GAP_S)
+            return False
+        self.event("RFID_RECONNECTED")
+        return True
+
     async def read_rfid(self, p):
         recipe = Recipe.model_validate(p["inspection"]["recipe"])
         cfg = recipe.flow
@@ -425,7 +453,10 @@ class FlowCycle(HardwareCycle):
                 raise
             except Exception as exc:
                 attempt.update(status="error", error=str(exc))
-                raise
+                # The reader dropped mid-read: reopen it and spend the next attempt.
+                if not await self.reconnect_rfid():
+                    raise
+                continue
             if not self.live():
                 return
             for r in result:
@@ -559,7 +590,8 @@ class FlowCycle(HardwareCycle):
 
     async def close(self):
         await super().close()
-        for task in (self.camera_task, self.rfid_task, self.track_task, self.reconnect_task, self.finish_task):
+        for task in (self.camera_task, self.rfid_task, self.track_task, self.reconnect_task, self.finish_task,
+                     self.rfid_reconnect):
             if task:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)

@@ -47,6 +47,7 @@ class GpioIO:
         # Where the device tests found the reader, (port, power); set by the app.
         self.rfid_source = None
         self.lock = threading.RLock()
+        self.rfid_lock = threading.Lock()
         self.closed = threading.Event()
         self.Value = Value
         self.req = None
@@ -291,31 +292,36 @@ class GpioIO:
         The reader opened at start-up may have been absent, unplugged or renamed since;
         a job that reads RFID tries again here instead of waiting for a restart.
         """
-        if self.snapshot().get("rfid_ready"):
-            return
-        port, power = self.rfid_source() if self.rfid_source else (self.rfid_port, self.config.rfid_power)
-        if not port:
-            raise RuntimeError("RFID 리더를 찾을 수 없습니다. 장비 시험에서 RFID를 한 번 읽어 주세요.")
-        with self.lock:
-            if self.reader:
+        # One reconnection at a time; a caller that waited finds the reader ready.
+        # The reader is opened outside the I/O lock so sensor polling never waits on it.
+        with self.rfid_lock:
+            if self.snapshot().get("rfid_ready"):
+                return
+            port, power = self.rfid_source() if self.rfid_source else (self.rfid_port, self.config.rfid_power)
+            if not port:
+                raise RuntimeError("RFID 리더를 찾을 수 없습니다. 장비 시험에서 RFID를 한 번 읽어 주세요.")
+            with self.lock:
+                old, self.reader = self.reader, None
+            if old:
                 try:
-                    self.reader.close()
+                    old.close()
                 except Exception:
                     pass
-                self.reader = None
+            reader = None
             try:
-                self.reader = Reader(port)
-                self.reader.initialize(power)
+                reader = Reader(port)
+                reader.initialize(power)
             except Exception as exc:
                 self.rfid_error = str(exc)
-                if self.reader:
+                if reader:
                     try:
-                        self.reader.close()
+                        reader.close()
                     except Exception:
                         pass
-                self.reader = None
                 raise RuntimeError("RFID 리더가 응답하지 않습니다.") from exc
-            self.rfid_port, self.rfid_error = port, None
+            with self.lock:
+                self.reader = reader
+                self.rfid_port, self.rfid_error = port, None
 
     def apply_rfid_power(self, power):
         if self.reader:
