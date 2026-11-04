@@ -15,7 +15,7 @@ import sys
 import urllib.request
 from pathlib import Path
 
-from jetson_ocr_env import cusparselt_environment
+from jetson_ocr_env import cusparselt_environment, ensure_onnxruntime_gpu
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -113,6 +113,7 @@ def main() -> None:
         "lmdb==2.3.0", "nltk==3.10.3", "zxing-cpp==3.1.1")
     run(str(PYTHON), "-m", "pip", "install", "--no-cache-dir", "-r",
         str(ROOT / "requirements-barcode-pipeline.txt"))
+    ensure_onnxruntime_gpu(PYTHON, WHEELS)
     # Some NVIDIA-published wheel metadata differs from the pair validated on
     # JetPack 6.1; the actual imports, CUDA check and model load below decide.
     subprocess.run([str(PYTHON), "-m", "pip", "check"], check=False)
