@@ -763,3 +763,85 @@ def test_counter_can_return_to_previous_settings_after_failed_prepare(controller
     with pytest.raises(ValueError): cycle.prepare(bad)
     cycle.prepare(good)
     assert cycle.counter is not None and cycle.counter_error is None
+
+
+def vision_rig(controller, monkeypatch, **settings):
+    recipe = Recipe(kind="vision", brand_id="__simple__", brand_revision=1, targets={}, channels=[],
+                    flow=FlowSettings(counter="cvzone"))
+    c, io, camera, cycle, clock = rig(controller, monkeypatch, recipe, counter="cvzone", **settings)
+    scene = [[]]
+    class Counter:
+        tracker = None
+        def update(self, frame, now):
+            boxes = list(scene[0])
+            crossed = self.tracker.update(boxes, now)
+            return {"boxes": boxes, "crossed": crossed, "total": self.tracker.total, "width": 50, "height": 50}
+    cycle.counter = Counter()
+    seq = [0]
+    def read_latest():
+        seq[0] += 1
+        return np.zeros((50, 50, 3), dtype=np.uint8), {"seq": seq[0], "host_received_ns": time.monotonic_ns()}
+    camera.read_latest = read_latest
+    async def spin():
+        for _ in range(20):
+            await asyncio.sleep(.002)
+            await cycle.tick()
+    wappens = lambda y, xs: [[x - .03, y - .03, x + .03, y + .03] for x in xs]
+    return c, io, camera, cycle, clock, scene, spin, wappens
+
+
+def test_bulk_wappens_crossing_together_all_count_without_sensors(controller, monkeypatch):
+    c, io, _, cycle, _, scene, spin, wappens = vision_rig(controller, monkeypatch, finish_run_ms=0)
+    c.session["recipe"]["target_count"] = 5
+    async def run():
+        scene[0] = wappens(.44, (.2, .5, .8))
+        await spin()
+        assert io.on and io.led and c.session["count"] == 0
+        # The sensors never see wappens; their edges change nothing.
+        io.raw[1] = 0
+        await spin()
+        io.raw[0] = 0
+        await spin()
+        scene[0] = wappens(.56, (.2, .5, .8))
+        await spin()
+        assert c.session["count"] == 3 and c.session["phase"] == "FEEDING" and io.on and io.led
+        assert c.tracking["total"] == 3 and len(c.tracking["boxes"]) == 3
+        scene[0] = wappens(.56, (.2, .5, .8)) + wappens(.44, (.35, .65))
+        await spin()
+        scene[0] = wappens(.56, (.2, .5, .8, .35, .65))
+        await spin()
+        assert c.session["count"] == 5 and c.session["passed"] == 5
+        assert c.session["phase"] == "DONE" and not io.on
+        assert c.store.inspection_rows() == []
+    asyncio.run(run())
+
+
+def test_bulk_count_continues_after_camera_recovery_without_stale_tracks(controller, monkeypatch):
+    c, io, camera, cycle, clock, scene, spin, wappens = vision_rig(controller, monkeypatch, reconnect_interval_ms=100)
+    async def run():
+        scene[0] = wappens(.44, (.2, .5))
+        await spin()
+        camera.connected = False
+        await cycle.tick()
+        assert c.session["phase"] == "CAMERA_WAIT" and not io.on and not io.led
+        # Seen above the line before the stop, beyond it after: not a crossing.
+        scene[0] = wappens(.56, (.2, .5))
+        clock[0] += .11
+        await spin()
+        assert c.session["phase"] == "FEEDING" and io.on and io.led and c.session["count"] == 0
+        scene[0] = wappens(.44, (.8,))
+        await spin()
+        scene[0] = wappens(.56, (.8,))
+        await spin()
+        assert c.session["count"] == 1 and c.session["fault"] is None
+    asyncio.run(run())
+
+
+def test_sensors_do_not_hold_a_wappen_job_at_start(controller, monkeypatch):
+    c, io, _, cycle, _, *_ = vision_rig(controller, monkeypatch)
+    c.session["phase"] = "READY"
+    io.raw = [0, 0, 1]
+    cycle.counter = SimpleNamespace(update=lambda *a: None)
+    assert not any("DI1" in reason for reason in cycle.blockers())
+    c.config.mode = "HARDWARE"
+    assert not any("DI1" in reason for reason in c.hardware_blockers())

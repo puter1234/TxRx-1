@@ -285,72 +285,24 @@ def test_gpio_snapshot_reports_current_output_requests_without_waiting_for_poll(
         assert not any(snapshot[key] for key in ("motor_requested", "led_requested", "speed_requested"))
 
 
-def test_two_separate_vision_products_do_not_share_counted_track(line):
+def test_wappens_poured_in_bulk_are_counted_by_the_camera_alone(line):
     pytest.importorskip("cvzone")
-    prepare(line, counter="cvzone", min_area=10, match_distance=.3, track_lost_ms=10000)
+    prepare(line, target=3, counter="cvzone", min_area=10, match_distance=.3, track_lost_ms=10000)
     issue(line, "start")
-    time.sleep(.03)
-    for count in (1, 2):
-        line.camera.object_at(.4)
-        line.gpio.sensor(1, 0)
-        wait_state(line, lambda s: bool(s["session"]["active_product"]))
-        wait_state(line, lambda s: bool((s.get("tracking") or {}).get("boxes")) and
-                   s["tracking"]["boxes"][0][1] < .5)
-        line.gpio.sensor(1, 1)
-        line.camera.object_at(.6)
-        wait_state(line, lambda s: bool((s.get("tracking") or {}).get("crossed")))
-        line.gpio.sensor(2, 0)
-        wait_state(line, lambda s: s["session"]["count"] == count)
-        line.gpio.sensor(2, 1)
-        time.sleep(.03)
-    assert line.client.get("/api/status").json()["session"]["phase"] == "DONE"
-
-
-def test_late_native_tracking_blocks_next_product_without_adding_count(line, monkeypatch):
-    pytest.importorskip("cvzone")
-    from station.counting import ObjectCounter
-    entered, release, overlapped = threading.Event(), threading.Event(), threading.Event()
-    original = ObjectCounter.detect
-    calls = [0]
-    def detect(self, frame):
-        calls[0] += 1
-        if calls[0] == 3:
-            entered.set()
-            if not release.wait(3): raise TimeoutError("test did not release detector")
-        elif calls[0] > 3 and not release.is_set():
-            overlapped.set()
-        return original(self, frame)
-    monkeypatch.setattr(ObjectCounter, "detect", detect)
-    prepare(line, counter="cvzone", min_area=10, match_distance=.3, track_lost_ms=10000)
-    issue(line, "start")
-    try:
-        line.camera.object_at(.4)
-        line.gpio.sensor(1, 0)
-        wait_state(line, lambda s: bool((s.get("tracking") or {}).get("boxes")))
-        line.gpio.sensor(1, 1)
-        line.camera.object_at(.6)
-        wait_state(line, lambda s: bool((s.get("tracking") or {}).get("crossed")))
-        line.camera.object_at(.62)
-        assert entered.wait(2)
-        line.gpio.sensor(2, 0)
-        wait_state(line, lambda s: s["session"]["count"] == 1)
-        line.gpio.sensor(2, 1)
-        time.sleep(.03)
-        line.camera.object_at(.4)
-        line.gpio.sensor(1, 0)
-        state = wait_state(line, lambda s: s["session"]["phase"] == "FAULT")
-        assert state["session"]["count"] == 1 and not state["session"]["active_product"]
-        assert not line.io.snapshot()["motor_requested"]
-        assert not overlapped.is_set()
-        release.set()
-        wait_state(line, lambda s: "장비 처리 종료 대기" not in s["blockers"])
-        time.sleep(.05)
-        state = line.client.get("/api/status").json()
-        assert state["session"]["count"] == 1 and state["session"]["phase"] == "FAULT"
-        assert not line.io.snapshot()["motor_requested"]
-        assert len(line.app.state.store.inspection_rows()) == 1
-    finally:
-        release.set()
+    def scene(y):
+        frame = np.zeros((64, 64, 3), np.uint8)
+        for x in (8, 28, 48):
+            frame[y-3:y+3, x:x+6] = 255
+        line.camera.frame = frame
+        line.camera.seq += 1
+    scene(26)
+    wait_state(line, lambda s: len((s.get("tracking") or {}).get("boxes", [])) == 3)
+    assert line.io.snapshot()["led_requested"] and line.io.snapshot()["motor_requested"]
+    scene(38)
+    state = wait_state(line, lambda s: s["session"]["phase"] == "DONE")
+    assert state["session"]["count"] == 3 and state["session"]["fault"] is None
+    assert not line.io.snapshot()["motor_requested"]
+    assert line.app.state.store.inspection_rows() == []
 
 
 def test_target_correction_waits_for_removal_of_an_interrupted_product(line):
