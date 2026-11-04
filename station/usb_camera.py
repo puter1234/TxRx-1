@@ -435,6 +435,8 @@ class CameraManager:
         self.stream = None
         self.lock = threading.RLock()
         self.saved = store.get("usb_camera_profile")
+        # A wappen job's own mode and controls over the saved profile; None for every other job.
+        self.override = None
         self.profile = None
         self.error = None
         self.identity = None
@@ -548,6 +550,31 @@ class CameraManager:
                     self._close_stream()
                 raise ValueError(self.error) from exc
 
+    def target(self):
+        saved, own = self.saved, self.override
+        if not saved or not own:
+            return saved
+        return {**saved, "width": own["width"], "height": own["height"], "fps": own["fps"],
+                "pixel_format": own.get("pixel_format") or saved.get("pixel_format", "YUYV"),
+                "controls": {**saved.get("controls", {}), **own.get("controls", {})}}
+
+    def use(self, override):
+        """Put the job's camera settings in effect: a wappen job's own, otherwise the saved ones."""
+        with self.lock:
+            if override == self.override:
+                return
+            self.override = override
+            target = self.target()
+            if not self.status().get("connected"):
+                # The next connection opens with the job's settings.
+                self.profile = None
+                return
+            if target:
+                try:
+                    self.apply(CameraProfile.model_validate(target), actor="work-preset")
+                except Exception:
+                    pass  # apply keeps the reason on the camera status
+
     def connect(self):
         if self.status().get("connected"):
             return self.status()
@@ -555,7 +582,7 @@ class CameraManager:
             # A failed attempt still counts as a request; recovery keeps trying.
             self.wanted = True
             self.store.put("camera_wanted", True)
-            return self.apply(CameraProfile.model_validate(self.saved))
+            return self.apply(CameraProfile.model_validate(self.target()))
         if self.config.camera_source in ("CSI0", "CSI1"):
             from .hardware import Camera
             with self.lock:
@@ -585,7 +612,7 @@ class CameraManager:
         with self.lock:
             if not self.wanted or self.status().get("connected"):
                 return False
-            profile = self.profile or self.saved
+            profile = self.profile or self.target()
             if not profile:
                 return False
             self.reconnect_attempts += 1

@@ -493,3 +493,23 @@ def test_camera_recovery_leaves_a_waiting_job_to_reconnect_its_camera(rig):
     recovery.tick(114)
     assert camera.stream is not old and camera.status()["connected"]
     assert not app.state.bench.runs
+
+
+def test_wappen_job_uses_its_own_camera_settings_and_other_jobs_the_saved_ones(rig):
+    client, app = rig
+    camera = app.state.camera
+    profile = camera.backend.profile.model_dump()
+    profile.update(width=8000, height=6000, fps=3)
+    assert client.post("/api/bench/camera/apply", json={"profile": profile, "save": True,
+                       "expected_revision": camera.revision}).status_code == 200
+    camera.use({"width": 1920, "height": 1080, "fps": 30, "pixel_format": None, "controls": {"focus_absolute": 40}})
+    assert (camera.profile["width"], camera.profile["height"], camera.profile["fps"]) == (1920, 1080, 30)
+    assert camera.profile["controls"]["focus_absolute"] == 40
+    assert camera.saved["width"] == 8000 and camera.saved["controls"]["focus_absolute"] == 10
+    client.post("/api/bench/camera/disconnect", json={})
+    camera.use(None)
+    assert client.post("/api/bench/camera/connect", json={}).status_code == 200
+    assert camera.profile["width"] == 8000 and camera.profile["controls"]["focus_absolute"] == 10
+    camera.use({"width": 1920, "height": 1080, "fps": 30, "controls": {}})
+    camera.use(None)
+    assert camera.profile["width"] == 8000

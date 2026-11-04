@@ -183,6 +183,15 @@ class FlowSettings(Model):
             raise ValueError("검사 완료 제한을 RFID 읽기 종료 시간보다 길게 설정하세요.")
 
 
+class PresetCamera(Model):
+    """A wappen job's own camera mode and controls; the device stays the saved one."""
+    width: int = Field(default=1920, ge=320, le=8000)
+    height: int = Field(default=1080, ge=240, le=6000)
+    fps: float = Field(default=30, ge=1, le=120)
+    pixel_format: str | None = Field(default=None, pattern=r"^[A-Z0-9]{4}$")
+    controls: dict[str, int] = Field(default_factory=dict, max_length=40)
+
+
 class WorkPreset(Model):
     id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,47}$")
     name: str = Field(min_length=1, max_length=80)
@@ -193,9 +202,11 @@ class WorkPreset(Model):
     channels: list[Literal["ocr", "rfid", "barcode"]] = Field(default_factory=list, max_length=3)
     barcode_targets: list[Literal["tag", "poly"]] = Field(default_factory=lambda: ["tag"], max_length=2)
     flow: FlowSettings = Field(default_factory=FlowSettings)
+    camera: PresetCamera | None = None
 
     @model_validator(mode="after")
     def coherent(self):
+        self.camera = (self.camera or PresetCamera()) if self.kind == "vision" else None
         self.channels = [c for c in self.channels if c != "barcode"]  # Barcode reading is switched off.
         if "rfid" in self.channels:
             self.flow.validate_rfid_timing()
@@ -225,6 +236,7 @@ class Recipe(Model):
     preset_id: str | None = None
     preset_revision: int | None = None
     flow: FlowSettings | None = None
+    camera: PresetCamera | None = None
     default_flow: bool = False
     work_name: str = ""
     test_run: bool = False

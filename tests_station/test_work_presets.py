@@ -89,3 +89,23 @@ def test_statistics_count_mismatched_products_consistently_across_job_and_day(co
                    ("i", "s", "p", 1, "FAIL", json.dumps(inspection), at))
     data = report(store, date(2026, 10, 14), date(2026, 10, 14))
     assert data["jobs"][0]["mismatches"] == data["daily"][0]["mismatches"] == 1
+
+
+def test_wappen_job_brings_its_camera_settings_and_other_jobs_clear_them(controller):
+    from types import SimpleNamespace
+    from station.schema import Recipe
+    from station.work_api import prepare_session
+    used = []
+    monitor = SimpleNamespace(camera=SimpleNamespace(use=used.append), prepare=lambda r: None, counter=None)
+    vision = SimpleNamespace(loading=lambda: False)
+    preset = WorkPreset(id="patches", name="와펜", kind="vision", flow={"counter": "cvzone"})
+    assert preset.camera.width == 1920 and preset.camera.height == 1080 and preset.camera.fps == 30
+    assert WorkPreset(id="plain", name="옷", camera={"width": 640}).camera is None
+    controller.store.put("work_presets", {"patches": preset.model_dump()})
+    prepare_session(controller, vision, monitor, Recipe(kind="vision", brand_id="__simple__", brand_revision=1,
+        targets={}, channels=[], flow={"counter": "cvzone"}, preset_id="patches", preset_revision=1), "test")
+    assert used[-1]["width"] == 1920 and controller.session["recipe"]["camera"]["fps"] == 30
+    controller.session["phase"] = "FINISHED"
+    prepare_session(controller, vision, monitor, Recipe(kind="simple", brand_id="__simple__", brand_revision=1,
+        targets={}, channels=[]), "test")
+    assert used[-1] is None

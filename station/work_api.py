@@ -58,6 +58,9 @@ def prepare_session(controller, vision, monitor, recipe, actor):
         except (ImportError, OSError, RuntimeError) as exc:
             # A missing model or package is an installation problem; nothing is stopped or faulted.
             raise Conflict("검사 모델을 확인하세요.") from exc
+        if monitor and hasattr(monitor.camera, "use"):
+            from .schema import PresetCamera
+            monitor.camera.use((recipe.camera or PresetCamera()).model_dump() if recipe.kind == "vision" else None)
         if monitor and recipe.flow:
             monitor.prepare(recipe.model_dump())
         result = controller.new_session(recipe, actor)

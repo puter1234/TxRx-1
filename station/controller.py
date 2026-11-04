@@ -199,7 +199,8 @@ class Controller:
         return Recipe.model_validate({**recipe.model_dump(), "kind": preset.kind,
             "brand_id": preset.brand_id,
             "channels": recipe.channels if preset.kind == "condition" else preset.channels,
-            "flow": preset.flow.model_dump(), "work_name": preset.name})
+            "flow": preset.flow.model_dump(), "work_name": preset.name,
+            "camera": preset.camera.model_dump() if preset.camera else None})
 
     def new_session(self, recipe: Recipe, actor="local-operator"):
         recipe = self.resolve_recipe(recipe)
