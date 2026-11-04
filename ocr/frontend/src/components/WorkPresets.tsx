@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../station/shared";
 import RoiEditor from "./RoiEditor";
+import CameraQuality, { type PresetCamera } from "./bench/CameraQuality";
 import { useApp } from "../lib/store";
 
 export type Preset = {
@@ -14,6 +15,7 @@ export type Preset = {
   channels: string[];
   barcode_targets?: ("tag" | "poly")[];
   flow: Record<string, any>;
+  camera?: PresetCamera | null;
 };
 export const defaults = {
   low_speed_ms: 500,
@@ -457,7 +459,14 @@ function PresetEditor({
           </div>
         </section>
       )}
-      <section className="card space-y-5 p-6">
+      {draft.kind === "vision" && (
+        <section className="card space-y-5 p-6">
+          <h2 className="text-[28px] font-black">카메라</h2>
+          <CameraQuality key={draft.id} locked={false}
+            preset={{ value: draft.camera || { width: 1920, height: 1080, fps: 30, controls: {} }, onChange: (camera) => changed({ camera }) }} />
+        </section>
+      )}
+      {draft.kind !== "vision" && <section className="card space-y-5 p-6">
         <h2 className="text-[28px] font-black">DI1 감지 후 실행 시간</h2>
         <div className="grid grid-cols-3 gap-4">
           {number("low_speed_ms", "저속 유지 (ms)")}
@@ -494,16 +503,16 @@ function PresetEditor({
             {number("rfid_interval_ms", "RFID 읽기 간격 (ms)", 1, 20, 10000)}
           </div>
         )}
-      </section>
+      </section>}
       <section className="card space-y-5 p-6">
-        <h2 className="text-[28px] font-black">센서와 연결</h2>
+        <h2 className="text-[28px] font-black">{draft.kind === "vision" ? "벨트" : "센서와 연결"}</h2>
         <div className="grid grid-cols-3 gap-4">
-          {number("di1_debounce_ms", "DI1 신호 유지 (ms)")}
-          {number("di2_debounce_ms", "DI2 신호 유지 (ms)")}
-          {number("sensor_gap_ms", "센서 끊김 허용 (ms)", 1, 0, 5000)}
+          {draft.kind !== "vision" && number("di1_debounce_ms", "DI1 신호 유지 (ms)")}
+          {draft.kind !== "vision" && number("di2_debounce_ms", "DI2 신호 유지 (ms)")}
+          {draft.kind !== "vision" && number("sensor_gap_ms", "센서 끊김 허용 (ms)", 1, 0, 5000)}
           {number("finish_run_ms", "목표 후 배출 시간 (ms)", 1, 0, 60000)}
-          {number("departure_timeout_ms", "DI2 도착 제한 (ms)")}
-          {number("result_timeout_ms", "검사 완료 제한 (ms)")}
+          {draft.kind !== "vision" && number("departure_timeout_ms", "DI2 도착 제한 (ms)")}
+          {draft.kind !== "vision" && number("result_timeout_ms", "검사 완료 제한 (ms)")}
           {number("reconnect_interval_ms", "카메라 재연결 간격 (ms)")}
         </div>
       </section>

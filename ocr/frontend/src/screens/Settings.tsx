@@ -297,6 +297,7 @@ const EVENT_LABEL: Record<string, string> = {
   SPEED_WIRING_SAVED: "속도 배선 저장",
   STOP_REQUESTED: "멈춤",
   USER_CHANGED: "비밀번호 변경",
+  VISION_COUNTED: "와펜 계수",
   VISION_CROSSING: "와펜 계수선 통과",
 };
 

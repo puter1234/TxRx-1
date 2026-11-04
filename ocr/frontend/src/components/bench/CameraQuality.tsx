@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Minus, Plus } from "lucide-react";
 import { api } from "../../station/shared";
+import { useApp } from "../../lib/store";
 import { controlActive, labels, menuLabel, type Control, type Mode } from "../DeviceSettings";
 import type { BenchHook } from "../DeviceTests";
 
@@ -8,6 +9,7 @@ const AUTO = ["focus_auto", "focus_automatic_continuous", "white_balance_tempera
 const PRIMARY = /(exposure|focus|gain|white_balance)/;
 type Caps = { modes: Mode[]; controls: Control[]; current: any; saved_profile?: any };
 type Draft = { mode: number; values: Record<string, number> };
+export type PresetCamera = { width: number; height: number; fps: number; pixel_format?: string | null; controls: Record<string, number> };
 
 export const modeLabel = (m: { width: number; height: number; fps: number }) => `${m.width} × ${m.height}, 초당 ${m.fps}장`;
 const sameMode = (a: Mode, b: any) =>
@@ -15,8 +17,12 @@ const sameMode = (a: Mode, b: any) =>
 
 // Every change goes to the camera and is saved right away. There is no separate
 // apply or save step, and the screen always shows the saved values.
-export default function CameraQuality({ bench, locked }: { bench: BenchHook; locked: boolean }) {
-  const camera = bench.state?.camera;
+// With `preset`, the same controls edit a work preset's own camera settings instead.
+export default function CameraQuality({ bench, locked, preset }: {
+  bench?: BenchHook; locked: boolean; preset?: { value: PresetCamera; onChange: (value: PresetCamera) => void };
+}) {
+  const equipment = useApp((s) => s.equipment);
+  const camera = bench ? bench.state?.camera : equipment?.camera;
   const [devices, setDevices] = useState<{ device: string; name: string; node?: string }[]>([]);
   const [device, setDevice] = useState("");
   const [caps, setCaps] = useState<Caps | null>(null);
@@ -53,16 +59,19 @@ export default function CameraQuality({ bench, locked }: { bench: BenchHook; loc
       .then((data) => {
         if (!alive) return;
         const saved = data.saved_profile?.device === device ? data.saved_profile : null;
-        const source = saved || data.current;
-        const mode = Math.max(0, data.modes.findIndex((m) => sameMode(m, source)));
-        const values = { ...Object.fromEntries(data.controls.map((c) => [c.name, c.value])), ...(saved?.controls || {}) };
+        const own = preset?.value;
+        const source = own ? { ...own, pixel_format: own.pixel_format || saved?.pixel_format || data.current?.pixel_format } : saved || data.current;
+        const size = (m: Mode) => !!own && m.width === own.width && m.height === own.height;
+        const mode = Math.max(0, [(m: Mode) => sameMode(m, source), (m: Mode) => size(m) && Math.abs(m.fps - own!.fps) < 0.05, size]
+          .map((test) => data.modes.findIndex(test)).find((i) => i >= 0) ?? -1);
+        const values = { ...Object.fromEntries(data.controls.map((c) => [c.name, c.value])), ...(saved?.controls || {}), ...(own?.controls || {}) };
         for (const name of AUTO) if (name in values) values[name] = 0;
         setCaps(data);
         setDraft({ mode, values });
         first.current = { mode, values };
         setError("");
         // A camera that was never set up is turned on with the chosen device right away.
-        if (!saved && !locked) schedule({ mode, values }, 0);
+        if (!saved && !locked && !preset) schedule({ mode, values }, 0);
       })
       .catch((e) => alive && setError(e.message));
     return () => {
@@ -70,20 +79,21 @@ export default function CameraQuality({ bench, locked }: { bench: BenchHook; loc
     };
   }, [device]);
 
+  const controlsOf = (c: Caps, values: Record<string, number>) => Object.fromEntries(
+    c.controls
+      .filter((x) => !/read-only|disabled/.test(x.flags) && values[x.name] !== undefined && controlActive(x, c.controls, values))
+      .map((x) => [x.name, values[x.name]]),
+  );
   const saveNow = async ({ mode, values }: Draft) => {
     const c = capsRef.current;
     if (!c?.modes[mode]) return;
-    const controls = Object.fromEntries(
-      c.controls
-        .filter((x) => !/read-only|disabled/.test(x.flags) && values[x.name] !== undefined && controlActive(x, c.controls, values))
-        .map((x) => [x.name, values[x.name]]),
-    );
+    const controls = controlsOf(c, values);
     setStatus("saving");
     try {
       await api("/bench/camera/apply", { profile: { device, ...c.modes[mode], controls }, save: true });
       setStatus("saved");
       setError("");
-      await bench.refresh().catch(() => {});
+      await bench?.refresh().catch(() => {});
     } catch (e) {
       const message = (e as Error).message;
       // Another device test held the camera for a moment; try the same change again.
@@ -123,6 +133,12 @@ export default function CameraQuality({ bench, locked }: { bench: BenchHook; loc
   const change = (next: Draft, delay?: number) => {
     setDraft(next);
     setStatus("");
+    const c = capsRef.current;
+    if (preset) {
+      const m = c?.modes[next.mode];
+      if (c && m) preset.onChange({ width: m.width, height: m.height, fps: m.fps, pixel_format: m.pixel_format, controls: controlsOf(c, next.values) });
+      return;
+    }
     schedule(next, delay);
   };
 
@@ -130,7 +146,7 @@ export default function CameraQuality({ bench, locked }: { bench: BenchHook; loc
     return (
       <div className="space-y-4">
         <p role="alert" className="text-[24px] font-extrabold text-danger">{error}</p>
-        {devices.length > 0 && <DevicePicker devices={devices} device={device} onChange={setDevice} disabled={locked} />}
+        {devices.length > 0 && !preset && <DevicePicker devices={devices} device={device} onChange={setDevice} disabled={locked} />}
       </div>
     );
   if (!caps || !draft) return <p role="status" className="text-[24px] font-extrabold">카메라 읽는 중</p>;
@@ -175,16 +191,16 @@ export default function CameraQuality({ bench, locked }: { bench: BenchHook; loc
       <div className="flex flex-wrap items-center gap-3">
         <p role="status" className={"text-[22px] font-extrabold " + (error ? "text-danger" : "text-ink-700")}>
           {error || (status === "saving" ? "저장 중" : status === "saved" ? "저장됨" : locked ? "작업 진행 중"
-            : bench.state?.sensor_ocr?.busy ? "공정 시험 중" : "")}
+            : bench?.state?.sensor_ocr?.busy ? "공정 시험 중" : "")}
         </p>
         {first.current && JSON.stringify(first.current) !== JSON.stringify(draft) && (
           <button className="btn btn-outline ml-auto" disabled={locked} onClick={() => first.current && change(first.current, 0)}>처음 값으로</button>
         )}
       </div>
-      {devices.length > 0 && <DevicePicker devices={devices} device={device} onChange={setDevice} disabled={locked} />}
+      {devices.length > 0 && !preset && <DevicePicker devices={devices} device={device} onChange={setDevice} disabled={locked} />}
       <label className="block space-y-2 text-[22px] font-extrabold">
         해상도
-        <select className="field" value={mode} disabled={locked || !!bench.state?.sensor_ocr?.busy}
+        <select className="field" value={mode} disabled={locked || !!bench?.state?.sensor_ocr?.busy}
           onChange={(e) => change({ mode: Number(e.target.value), values }, 0)}>
           {caps.modes.map((m, i) => (
             <option key={i} value={i}>
@@ -202,12 +218,12 @@ export default function CameraQuality({ bench, locked }: { bench: BenchHook; loc
           <div className="mt-4 space-y-5">{editable.filter((c) => !PRIMARY.test(c.name)).map(control)}</div>
         </details>
       )}
-      <div className="border-t-2 border-line pt-4">
+      {bench && <div className="border-t-2 border-line pt-4">
         <button className="btn btn-outline" disabled={locked || bench.busy}
           onClick={() => bench.action(() => api("/bench/camera/" + (camera?.wanted ? "disconnect" : "connect"), {}))}>
           {camera?.wanted ? "카메라 끄기" : "카메라 켜기"}
         </button>
-      </div>
+      </div>}
     </div>
   );
 }
