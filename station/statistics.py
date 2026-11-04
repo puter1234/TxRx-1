@@ -87,12 +87,15 @@ def report(store, since: date, until: date, include_tests=False, brand_id=None, 
             phase = e["body"].get("phase", e["body"].get("result", {}).get("phase", phase))
             kind = e["kind"]
             key = {"DI1_DETECTED": "di1", "DI2_DETECTED": "di2", "VISION_CROSSING": "vision",
-                   "CAMERA_RETRY": "camera_retries", "FAULT": "errors"}.get(kind)
+                   "VISION_COUNTED": "vision", "CAMERA_RETRY": "camera_retries", "FAULT": "errors"}.get(kind)
             if key:
                 value = e["body"].get("count", 1)
                 metrics[key] += value
                 if start <= at < end:
                     daily[at.date().isoformat()][key] += value
+            if kind == "VISION_COUNTED" and start <= at < end:
+                daily[at.date().isoformat()]["count"] += e["body"]["count"]
+                daily[at.date().isoformat()]["passed"] += e["body"]["count"]
             if kind == "MANUAL_ADJUSTMENT" and start <= at < end:
                 daily[at.date().isoformat()]["adjustments"] += e["body"]["delta"]
                 daily[at.date().isoformat()]["count"] += e["body"]["delta"]

@@ -157,7 +157,8 @@ class Controller:
                 reasons.append("이 장비의 DO4 연결 정보가 없습니다.")
             reasons += self.io.blockers() + self.runtime_blockers()
             raw = self.io.snapshot().get("di_raw")
-            if self.session["phase"] in ("READY", "PAUSED") and raw and any(v == 0 for v in raw[:2]):
+            if (self.session["phase"] in ("READY", "PAUSED") and recipe.get("kind") != "vision"
+                    and raw and any(v == 0 for v in raw[:2])):
                 reasons.append("DI1과 DI2 앞의 제품을 정리하세요.")
             if self.session.get("active_product"):
                 reasons.append("이송 중이던 제품의 조치를 완료하세요.")
@@ -417,7 +418,7 @@ class Controller:
                 self.stop_outputs()
                 if self.stop_fault or self.io.snapshot().get("km2_on") is True:
                     raise Conflict("장비 정지를 확인할 수 없습니다.")
-                if self.config.mode == "HARDWARE":
+                if self.config.mode == "HARDWARE" and s["recipe"].get("kind") != "vision":
                     raw = self.io.snapshot().get("di_raw")
                     active_raw = 0 if s["recipe"].get("flow") else self.config.commissioning.sensor_active_raw
                     if not raw or any(
@@ -548,6 +549,25 @@ class Controller:
                 s.update(phase="FAULT", fault="DATABASE_WRITE_FAILED")
                 raise
             return inspection, self.epoch, Brand.model_validate(s["brand"])
+
+    def vision_counted(self, n):
+        # Bulk wappen counting: each crossing of the counting line counts at once.
+        with self.lock:
+            s = self.session
+            if not s or s["phase"] != "FEEDING" or n <= 0:
+                return
+            s["count"] += n
+            s["passed"] += n
+            if self.target_reached():
+                s.update(phase="DONE", fault=None)
+                run_ms = (s["recipe"].get("flow") or {}).get("finish_run_ms", 0)
+                if run_ms:
+                    self.run_out = {"ms": run_ms}
+                else:
+                    self.stop_outputs()
+                    if self.stop_fault:
+                        s.update(phase="FAULT", fault="IO_STOP_UNCONFIRMED")
+            self.changed("VISION_COUNTED", {"count": n, "total": s["count"]})
 
     def inspecting(self, epoch):
         with self.lock:

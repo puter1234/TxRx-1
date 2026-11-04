@@ -62,6 +62,7 @@ class FlowCycle(HardwareCycle):
         self.last_sequence = None
         self.speed_deadline = None
         self.speed_serial = 0
+        self.bulk_started = False
 
     def flow(self):
         return FlowSettings.model_validate(self.c.session["recipe"]["flow"])
@@ -97,7 +98,7 @@ class FlowCycle(HardwareCycle):
             return super().blockers()
         reasons = []
         session = self.c.session
-        if session["phase"] in ("READY", "PAUSED") and (
+        if session["phase"] in ("READY", "PAUSED") and recipe.get("kind") != "vision" and (
                 self.session_id != session["id"] or
                 not all(edge.armed and edge.value == 1 for edge in self.edges)):
             reasons.append("DI1과 DI2의 해제 신호를 확인 중입니다.")
@@ -139,6 +140,9 @@ class FlowCycle(HardwareCycle):
         now = time.monotonic()
         tick_serial = self.c.stop_serial
         cfg = self.flow()
+        # Wappens are poured onto the belt in bulk: the camera counts every
+        # line crossing while the belt runs, and the sensors play no part.
+        bulk = s["recipe"].get("kind") == "vision"
         if self.session_id != s["id"]:
             self.session_id = s["id"]
             self.speed_deadline = None
@@ -147,6 +151,7 @@ class FlowCycle(HardwareCycle):
             self.raw_previous = None
             self.last_sequence = None
             self.c.tracking = None
+            self.bulk_started = False
             if self.counter:
                 from .counting import CrossingTracker
                 self.counter.tracker = CrossingTracker(cfg)
@@ -162,7 +167,7 @@ class FlowCycle(HardwareCycle):
             # Light is controlled by raw sensor edges, independent of inference/debounce.
             # Plain sensor counting reads nothing on the belt: no light, no slow-down.
             inspects = self.camera_required() or "rfid" in s["recipe"].get("channels", [])
-            if s["phase"] in ("FEEDING", "CAMERA_WAIT") and inspects:
+            if s["phase"] in ("FEEDING", "CAMERA_WAIT") and inspects and not bulk:
                 if raw[0] == 0 and self.raw_previous and self.raw_previous[0] != 0:
                     self.io.light(True, allowed=lambda: tick_serial == self.c.stop_serial and not self.c.pending_stops)
                     self.io.speed(False)
@@ -171,6 +176,8 @@ class FlowCycle(HardwareCycle):
                 if raw[1] == 0 and self.raw_previous and self.raw_previous[1] != 0:
                     self.io.light(False)
             self.raw_previous = list(raw)
+        if bulk:
+            hits = [False, False]
         run_out = self.c.run_out
         if run_out is not None:
             # The target's last product passed DI2 on a moving belt; carry it off,
@@ -186,6 +193,12 @@ class FlowCycle(HardwareCycle):
             self.cancel.set()
             self.resume_serial = None
             self.speed_deadline = None
+            self.bulk_started = False
+            if bulk and self.track_task:
+                # Frames read before the stop never count after it.
+                self.track_task.cancel()
+                await asyncio.gather(self.track_task, return_exceptions=True)
+                self.track_task = None
             if self.pending and self.finish_task is None:
                 self.pending["failures"].append({"code": "INSPECTION_CANCELLED"})
                 if self.pending["frames"]:
@@ -304,6 +317,9 @@ class FlowCycle(HardwareCycle):
                 s.update(phase="FEEDING", fault=None)
                 self.event("CAMERA_RECONNECTED", {"automatic_restart": True})
             self.resume_serial = None
+        if bulk:
+            await self.count_bulk(now, snap, tick_serial)
+            return
         p = self.pending
         if not p:
             return
@@ -356,6 +372,34 @@ class FlowCycle(HardwareCycle):
                 self.finish_task = asyncio.create_task(self.finish())
             else:
                 await self.finish()
+
+    async def count_bulk(self, now, snap, tick_serial):
+        s = self.c.session
+        if s["phase"] != "FEEDING" or self.counter is None:
+            return
+        if not self.bulk_started:
+            # A new run (start, restart or camera recovery) begins with no
+            # tracks, so nothing seen before the belt stopped counts again.
+            from .counting import CrossingTracker
+            self.counter.tracker = CrossingTracker(self.flow())
+            self.last_sequence = None
+            self.c.tracking = None
+            self.bulk_started = True
+        if not snap.get("led_requested"):
+            self.io.light(True, allowed=lambda: tick_serial == self.c.stop_serial and not self.c.pending_stops)
+        if self.track_task and self.track_task.done():
+            task, self.track_task = self.track_task, None
+            try:
+                result = task.result()
+            except Exception as exc:
+                self.c.fault("VISION_ERROR: " + str(exc))
+                return
+            if result is not None:
+                self.c.tracking = result
+                if result["crossed"]:
+                    self.c.vision_counted(len(result["crossed"]))
+        if self.track_task is None and s["phase"] == "FEEDING":
+            self.track_task = asyncio.create_task(self.offload(self.track_frame, now))
 
     def track_frame(self, now):
         # CameraManager may hold its lock while waiting for a fresh capture.
@@ -551,6 +595,9 @@ class FlowCycle(HardwareCycle):
                     return
                 self.io.motor(False)
                 self.io.speed(False)
+                if s["recipe"].get("kind") == "vision":
+                    self.io.light(False)
+                self.bulk_started = False
                 self.cancel.set()
                 self.wait_started = now
                 self.reconnect_ok = False
