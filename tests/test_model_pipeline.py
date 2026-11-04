@@ -21,8 +21,18 @@ def camera_frame():
     return frame
 
 
+TAG = (1000, 1200, 1800, 1800)  # the ROI below in 48MP pixels
+TEXT_QUAD = [[1040., 1220.], [1398., 1220.], [1398., 1260.], [1040., 1260.]]
+
+
+def gained(frame, x0, y0, x1, y1):
+    green = np.clip(frame[y0:y1, x0:x1, 1].astype(float) * 3.5, 0, 255).astype(np.uint8)
+    return np.repeat(green[:, :, None], 3, axis=2)
+
+
 @pytest.fixture
 def locator(monkeypatch, camera_frame):
+    from tagreader import text_detector
     instance = model.ModelLocator.__new__(model.ModelLocator)
     instance.manifest = {"commit": "test"}
     instance.padding = .08
@@ -30,8 +40,8 @@ def locator(monkeypatch, camera_frame):
     roi = [500, 600, 900, 900]
     points = np.float32([[20, 40], [180, 40], [180, 100], [20, 100]])
     quad48 = ((points + roi[:2]) * 2).tolist()
-    text_quad = [[1040., 1220.], [1398., 1220.], [1398., 1258.], [1040., 1258.]]
     calls = []
+    boxes = [TEXT_QUAD]
 
     def detect(image, roi_padding):
         assert image.shape == (3000, 4000, 3) and roi_padding == .08
@@ -46,24 +56,28 @@ def locator(monkeypatch, camera_frame):
         return {"instances": [{"quad_target": quad48, "polygon_target": quad48, "confidence": .9}],
                 "timing_ms": {"total_without_decode": 2}}
 
-    def text(image, instances, actual_roi, source_size, target_size):
+    def text(image, min_side=None):
         calls.append("text")
-        assert actual_roi == roi and source_size == [4000, 3000] and target_size == [8000, 6000]
-        return {"regions": [{"barcode_index": 0, "quad_target": text_quad,
-                             "crop_size": [180, 20], "side_in_aligned_image": "above"}], "elapsed_ms": 1}
+        # The tag alone, already gained for OCR, at full resolution.
+        assert image.shape == (600, 800)
+        np.testing.assert_array_equal(image, gained(camera_frame, *TAG)[:, :, 0])
+        return [(np.asarray(q, float) - TAG[:2], .9) for q in boxes]
 
     instance.detector = SimpleNamespace(predict=detect)
     instance.segmenter = SimpleNamespace(predict=segment)
-    instance.extract_text = text
     monkeypatch.setattr(model, "get_locator", lambda: instance)
-    return instance, calls, quad48, text_quad
+    monkeypatch.setattr(text_detector, "get_detector", lambda: SimpleNamespace(boxes=text))
+    return instance, calls, quad48, boxes
+
+
+# TEXT_QUAD widened by 0.3 of its 40 px height at each end: 12 px.
+WIDE = (1028, 1220, 1411, 1261)
 
 
 def test_same_48mp_frame_supplies_full_resolution_text_and_both_orientations(camera_frame, locator, monkeypatch):
-    _, calls, quad48, text_quad = locator
-    original_crop = camera_frame[1220:1259, 1040:1399].copy()
-    green = np.clip(original_crop[:, :, 1].astype(float) * 3.5, 0, 255).astype(np.uint8)
-    expected = np.repeat(green[:, :, None], 3, axis=2)
+    _, calls, _, _ = locator
+    original_crop = camera_frame.copy()
+    expected = gained(camera_frame, *WIDE)
     received = []
 
     class Reader:
@@ -78,60 +92,75 @@ def test_same_48mp_frame_supplies_full_resolution_text_and_both_orientations(cam
     monkeypatch.setattr(model, "decode_original", forbidden)
     diagnostics = {}
     task = pipeline.process_task(camera_frame, Reader(), locator="yolo26", decode_values=False, diagnostics=diagnostics)
-    assert calls == ["detect", "segment", "text"]
+    # Lines come from the tag itself; the barcode segmenter is not run for OCR.
+    assert calls == ["detect", "text"]
     assert task.reads[0].verdict.text == "AB12"
     np.testing.assert_array_equal(received[0], expected[:, :, ::-1])
     np.testing.assert_array_equal(received[1], expected[::-1, ::-1, ::-1])
     np.testing.assert_array_equal(task.reads[0].line_crops[0], expected)
-    np.testing.assert_array_equal(camera_frame[1220:1259, 1040:1399], original_crop)
-    assert received[0].shape == (39, 359, 3)
+    np.testing.assert_array_equal(camera_frame, original_crop)
+    assert received[0].shape == (41, 383, 3)
     assert diagnostics["source_width"] == 8000 and diagnostics["detection_width"] == 4000
-    assert diagnostics["regions"][0]["quad"] == quad48
+    assert diagnostics["regions"][0]["quad"] == [[1000., 1200.], [1800., 1200.], [1800., 1800.], [1000., 1800.]]
     assert diagnostics["ocr_preprocessing"]["width"] == 8000
     assert diagnostics["ocr_preprocessing"]["height"] == 6000
     assert diagnostics["ocr_preprocessing"]["gain"] == 3.5
     assert task.reads[0].lines[1]["rotation_degrees"] == 180
-    assert task.reads[0].lines[0]["quad_source"] == text_quad
+    assert task.reads[0].lines[0]["quad_source"] == TEXT_QUAD
+    assert task.reads[0].lines[0]["roi_index"] == 0
 
 
-@pytest.mark.parametrize("finder", ["lines", "detector"])
-def test_text_finder_choice_replaces_only_the_line_search(camera_frame, locator, monkeypatch, finder):
-    from tagreader import text_lines
-    instance, calls, _, text_quad = locator
-    vendored = instance.extract_text
-
-    def chosen(*args):
-        calls.append(finder)
-        return vendored(*args)
-    monkeypatch.setitem(text_lines.FINDERS, finder, chosen)
-    reader = SimpleNamespace(read_batch=lambda images: [{"text": "AB12", "confidence": .99, "ms": 1} for _ in images])
-    diagnostics = {}
-    task = pipeline.process_task(camera_frame, reader, locator="yolo26", decode_values=False,
-                                 diagnostics=diagnostics, text_finder=finder)
-    assert calls == ["detect", "segment", finder, "text"]
-    assert diagnostics["stages"][0]["text_finder"] == finder
-    assert task.reads[0].lines[0]["quad_source"] == text_quad
+def line(x, y, length, height=20):
+    return [[x, y], [x + length, y], [x + length, y + height], [x, y + height]]
 
 
-@pytest.mark.parametrize("barcodes", [True, False])
-def test_whole_tag_reads_every_line_and_lays_vertical_ones_down(camera_frame, locator, monkeypatch, barcodes):
-    from tagreader import text_lines
-    instance, calls, _, _ = locator
-    if not barcodes:
-        instance.segmenter = SimpleNamespace(predict=lambda *a, **k: {"instances": [], "timing_ms": {"total_without_decode": 1}})
-    flat = [[1040., 1220.], [1398., 1220.], [1398., 1258.], [1040., 1258.]]
-    tall = [[1040., 1220.], [1078., 1220.], [1078., 1578.], [1040., 1578.]]
-    monkeypatch.setattr(text_lines, "read_whole_tag", lambda original, roi, instances: {"elapsed_ms": 1, "regions": [
-        {"barcode_index": 0, "side_in_aligned_image": "whole", "quad_target": q, "finder": "whole"} for q in (flat, tall)]})
+@pytest.mark.parametrize("accept,batches,read", [
+    (None, [8, 8], 8),                              # the first code-shaped line ends the tag
+    (lambda text: text == "W279000", [8, 8], 8),    # the job's own code ends it
+    (lambda text: False, [8, 8, 4], 10),            # nothing matches: every line is read once each way
+])
+def test_lines_are_read_longest_first_in_batches_until_one_matches(camera_frame, locator, accept, batches, read):
+    _, calls, _, boxes = locator
+    # Ten lines of different lengths in shuffled order, and one too short to be a code.
+    lengths = [300, 120, 260, 220, 400, 160, 200, 340, 100, 180]
+    boxes[:] = [line(1100, 1300 + 30 * i, n) for i, n in enumerate(lengths)] + [line(1100, 1700, 60)]
+    sizes = []
+
+    def read_batch(images):
+        sizes.append(len(images))
+        texts = []
+        for index, image in enumerate(images):
+            batch, upright = len(sizes), index % 2 == 0
+            # The second batch holds a code line, read correctly only when turned.
+            texts.append("NOISE" if batch != 2 or upright else
+                         {3: "AB12CD34", 5: "W279000"}.get(index, "NOISE"))
+        return [{"text": text, "confidence": .5, "ms": 1} for text in texts]
+
+    task = pipeline.process_task(camera_frame, SimpleNamespace(read_batch=read_batch), locator="yolo26",
+                                 decode_values=False, accept=accept)
+    assert sizes == batches
+    lines = task.reads[0].lines
+    assert [l["rotation_degrees"] for l in lines] == [0, 180] * (len(lines) // 2)
+    widths = [crop.shape[1] for crop in task.reads[0].line_crops[::2]]
+    assert widths == sorted(widths, reverse=True) and len(widths) == read
+    assert all(l["quad_source"] != line(1100, 1700, 60) for l in lines)
+
+
+def test_lines_are_cropped_along_their_own_long_side(camera_frame, locator, monkeypatch):
+    _, calls, _, boxes = locator
+    boxes[:] = [[[1040., 1220.], [1078., 1220.], [1078., 1578.], [1040., 1578.]],
+                np.array([[1100., 1400.], [1400., 1500.], [1390., 1530.], [1090., 1430.]]).tolist()]
+    monkeypatch.setattr(model, "decode_original", lambda *a: pytest.fail("OCR-only must not decode"))
     shapes = []
+
     def read_batch(images):
         shapes.extend(image.size for image in images)
         return [{"text": "AB12", "confidence": .9, "ms": 1} for _ in images]
     task = pipeline.process_task(camera_frame, SimpleNamespace(read_batch=read_batch), locator="yolo26",
-                                 decode_values=False, text_finder="whole")
-    assert "text" not in calls and len(task.reads) == 1 and len(task.reads[0].lines) == 4
+                                 decode_values=False)
+    assert "segment" not in calls and len(task.reads) == 1 and len(task.reads[0].lines) == 4
     # PIL sizes are (width, height): both lines are read lying down, in both directions.
-    assert all(w > h for w, h in shapes)
+    assert all(w > 4 * h for w, h in shapes)
 
 
 @pytest.mark.parametrize("size", [(4000, 3000), (1920, 1080), (7999, 6000)])
@@ -189,8 +218,7 @@ def test_live_preview_shows_the_preprocessed_pixels_sent_to_ocr(camera_frame, lo
     line = result["reads"][0]["lines"][0]
     assert line["preview"].startswith("data:image/png;base64,")
     restored = cv2.imdecode(np.frombuffer(base64.b64decode(line["preview"].split(",", 1)[1]), np.uint8), cv2.IMREAD_COLOR)
-    expected = np.clip(camera_frame[1220:1259, 1040:1399, 1].astype(float) * 3.5, 0, 255).astype(np.uint8)
-    np.testing.assert_array_equal(restored, np.repeat(expected[:, :, None], 3, axis=2))
+    np.testing.assert_array_equal(restored, gained(camera_frame, *WIDE))
 
 
 def test_ocr_preparation_precedes_interpolation_and_matches_model_gain():

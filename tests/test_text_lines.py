@@ -1,10 +1,9 @@
-"""The process test's alternative text finders on a drawn tag: one line per side, full width."""
+"""Text lines on a drawn tag: found by the text detector, longest first, each along its own long side."""
 import cv2
 import numpy as np
 import pytest
 
-from tagreader.text_lines import find_detected, find_lines
-from vendor.barcode_pipeline.barcode_segmenter.barseg.text_regions import extract_text_regions
+from tagreader.text_lines import MIN_LINE_RATIO, find_tag_lines, reading_quad
 
 ROI = [1000, 800, 1900, 1500]
 
@@ -19,51 +18,10 @@ def tag():
         image[300:380, x:x + width] = 20
         x += width + int(rng.integers(2, 7))
     font = cv2.FONT_HERSHEY_SIMPLEX
-    # A product code longer than the barcode, with a word space, and a short line below.
+    # A long product code with a word space, and a short line below the bars.
     cv2.putText(image, "HUTS 6D713 14 105 BLK", (130, 275), font, 1.1, (30, 30, 30), 2, cv2.LINE_AA)
-    cv2.putText(image, "W279,000", (330, 425), font, 1.1, (30, 30, 30), 2, cv2.LINE_AA)
-    polygon = [[250, 300], [650, 300], [650, 380], [250, 380]]
-    return image, [{"polygon_roi": polygon}]
-
-
-def spans(result):
-    found = {}
-    for region in result["regions"]:
-        quad = np.asarray(region["quad_roi"])
-        found[region["side_in_aligned_image"]] = (quad[:, 0].min(), quad[:, 0].max(), quad[:, 1].min(), quad[:, 1].max())
-        assert len(region["quad_source"]) == 4 and len(region["quad_target"]) == 4
-        assert region["barcode_index"] == 0
-    return found
-
-
-def text_extent(image):
-    ink = np.where(image[:290, :, 1] < 120)
-    return ink[1].min(), ink[1].max()
-
-
-def test_lines_keeps_the_whole_code_line_and_one_line_per_side(tag):
-    image, instances = tag
-    left, right = text_extent(image)
-    result = find_lines(image, instances, ROI, [4000, 3000], [8000, 6000])
-    found = spans(result)
-    assert set(found) == {"above", "below"} and result["region_count"] == 2
-    x0, x1, y0, y1 = found["above"]
-    assert x0 <= left and x1 >= right and y1 <= 300
-    assert found["below"][2] >= 380
-    vendored = spans(extract_text_regions(image, instances, ROI, [4000, 3000], [8000, 6000]))
-    assert vendored["above"][0] > left or vendored["above"][1] < right
-
-
-def test_detector_finds_the_lines_beside_the_barcode(tag):
-    pytest.importorskip("onnxruntime")
-    image, instances = tag
-    left, right = text_extent(image)
-    result = find_detected(image, instances, ROI, [4000, 3000], [8000, 6000])
-    found = spans(result)
-    assert set(found) == {"above", "below"} and result["region_count"] == 2
-    x0, x1, _, y1 = found["above"]
-    assert x0 <= left + 5 and x1 >= right - 5 and y1 <= 305
-    assert found["below"][2] >= 375
+    cv2.putText(image, "W279", (330, 425), font, 1.1, (30, 30, 30), 2, cv2.LINE_AA)
+    return image
 
 
 def test_boxes_run_clockwise_from_the_top_left():
@@ -72,18 +30,37 @@ def test_boxes_run_clockwise_from_the_top_left():
     assert clockwise(points).tolist() == [[10, 20], [90, 20], [90, 40], [10, 40]]
 
 
-def test_whole_tag_finds_every_line_in_the_full_frame(tag):
+@pytest.mark.parametrize("box,start,end", [
+    ([[10, 20], [90, 20], [90, 40], [10, 40]], [10, 20], [90, 20]),     # flat: left to right
+    ([[10, 20], [30, 20], [30, 100], [10, 100]], [10, 100], [10, 20]),  # standing: bottom to top
+])
+def test_reading_quad_starts_on_the_long_side(box, start, end):
+    quad = reading_quad(np.asarray(box, float))
+    assert quad[0].tolist() == start and quad[1].tolist() == end
+    assert np.linalg.norm(quad[1] - quad[0]) > np.linalg.norm(quad[3] - quad[0])
+
+
+@pytest.mark.parametrize("turn", [None, cv2.ROTATE_90_COUNTERCLOCKWISE])
+def test_tag_lines_come_longest_first_without_short_ones(tag, turn):
     pytest.importorskip("onnxruntime")
-    from tagreader.text_lines import read_whole_tag
-    image, instances = tag
-    # The same tag twice as large, placed in a 48MP frame where the 12MP ROI points.
+    image = tag if turn is None else cv2.rotate(tag, turn)
+    # The tag twice as large, placed in a 48MP frame where the 12MP ROI points.
     frame = np.full((6000, 8000, 3), 40, np.uint8)
-    big = cv2.resize(image, (1800, 1400), interpolation=cv2.INTER_CUBIC)
-    frame[1600:3000, 2000:3800] = big
-    targets = [{"polygon_target": (np.asarray(i["polygon_roi"]) * 2 + [2000, 1600]).tolist()} for i in instances]
-    result = read_whole_tag(frame, ROI, targets)
-    quads = [np.asarray(r["quad_target"]) for r in result["regions"]]
-    assert len(quads) >= 2 and all(r["finder"] == "whole" for r in result["regions"])
-    rows = sorted((q[:, 1].mean() - 1600) / 2 for q in quads)
-    assert any(240 < y < 290 for y in rows) and any(395 < y < 440 for y in rows)
-    assert all(q[:, 0].min() >= 2000 - 20 and q[:, 0].max() <= 3800 + 20 for q in quads)
+    height, width = image.shape[:2]
+    frame[1600:1600 + 2 * height, 2000:2000 + 2 * width] = cv2.resize(image, (2 * width, 2 * height),
+                                                                      interpolation=cv2.INTER_CUBIC)
+    roi = [1000, 800, 1000 + width, 800 + height]
+    result = find_tag_lines(frame, roi)
+    regions = result["regions"]
+    assert regions and result["origin"] == (2000, 1600) and result["tag"].shape == (2 * height, 2 * width)
+    ratios = [r["ratio"] for r in regions]
+    assert ratios == sorted(ratios, reverse=True) and min(ratios) >= MIN_LINE_RATIO
+    first = np.asarray(regions[0]["quad_target"])
+    along = first[1] - first[0]
+    if turn is None:
+        assert along[0] > 0 and abs(along[1]) < .1 * along[0]
+        assert 240 < (first[:, 1].mean() - 1600) / 2 < 290
+    else:
+        assert along[1] < 0 and abs(along[0]) < .1 * -along[1]
+    # The short W279 line is too stubby to be a product code.
+    assert len(regions) == 1
