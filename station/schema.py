@@ -1,6 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
+
+WAPPEN_MODEL = Path(__file__).resolve().parents[1] / "vendor/wappen_counter/wappen_261031-1.pt"
+
+
+def wappen_model_path(model_path: str) -> Path:
+    """The YOLO wappen model to load: the chosen file, or the bundled one when none is chosen or it is gone."""
+    path = Path(model_path).expanduser() if model_path else None
+    return path if path and path.is_file() else WAPPEN_MODEL
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
@@ -172,7 +181,7 @@ class FlowSettings(Model):
             raise ValueError("검사 제한 시간은 마지막 촬영 시간보다 길어야 합니다.")
         if self.rfid_delay_ms >= self.result_timeout_ms:
             raise ValueError("RFID 실행 시간은 검사 제한 시간보다 짧아야 합니다.")
-        if self.counter == "yolo" and not self.model_path.lower().endswith((".pt", ".onnx")):
+        if self.counter == "yolo" and self.model_path and not self.model_path.lower().endswith((".pt", ".onnx")):
             raise ValueError("YOLO 모델은 로컬 .pt 또는 .onnx 파일을 지정하세요.")
         if any(c < 0 for c in self.classes):
             raise ValueError("클래스 번호는 0 이상입니다.")

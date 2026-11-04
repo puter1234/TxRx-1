@@ -117,7 +117,7 @@ function PresetEditor({
           : "기본 설정",
     brand_id: brandId || "__simple__",
     channels: kind === "condition" ? ["ocr"] : [],
-    flow: { ...defaults, counter: kind === "vision" ? "cvzone" : "sensor" },
+    flow: { ...defaults, counter: kind === "vision" ? "yolo" : "sensor" },
   });
   const nav = useNavigate();
   const brands = useApp((s) => s.brands);
@@ -396,7 +396,7 @@ function PresetEditor({
                       className="field mt-2"
                       value={draft.flow.model_path}
                       onChange={(e) => flow("model_path", e.target.value)}
-                      placeholder="/opt/txrx/models/wappen.onnx"
+                      placeholder="wappen_261031-1.pt"
                     />
                   </label>
                   <div className="grid grid-cols-2 gap-4">

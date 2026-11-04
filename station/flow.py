@@ -75,8 +75,8 @@ class FlowCycle(HardwareCycle):
         cfg = FlowSettings.model_validate(recipe["flow"])
         key = cfg.model_dump_json()
         if cfg.counter == "yolo":
-            from pathlib import Path
-            path = Path(cfg.model_path).expanduser()
+            from .schema import wappen_model_path
+            path = wappen_model_path(cfg.model_path)
             if not path.is_file():
                 raise ValueError("YOLO 모델 파일을 확인하세요: " + str(path))
             key += file_sha256(path)

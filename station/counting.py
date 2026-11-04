@@ -7,7 +7,7 @@ import hashlib
 import os
 import time
 
-from .schema import FlowSettings
+from .schema import FlowSettings, wappen_model_path
 
 
 def file_sha256(path):
@@ -65,7 +65,7 @@ class ObjectCounter:
         self.device = "cpu"
         self.identity = {"counter": settings.counter}
         if settings.counter == "yolo":
-            path = Path(settings.model_path).expanduser().resolve()
+            path = wappen_model_path(settings.model_path).resolve()
             if path.suffix.lower() not in (".pt", ".onnx") or not path.is_file():
                 raise ValueError("YOLO 모델 파일을 확인하세요: " + str(path))
             # Explicit existing local paths only. Never download a default model.

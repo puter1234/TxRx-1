@@ -120,7 +120,7 @@ export default function Work() {
               ))}
               {flow?.counter !== "sensor" && flow && (
                 <p className="break-all">
-                  모델: {flow.counter === "cvzone" ? "CVZone" : flow.model_path}
+                  모델: {flow.counter === "cvzone" ? "CVZone" : flow.model_path || "wappen_261031-1.pt"}
                 </p>
               )}
               {session.fault && (
@@ -284,7 +284,7 @@ export default function Work() {
                     모델:{" "}
                     {preset.flow.counter === "cvzone"
                       ? "CVZone"
-                      : preset.flow.model_path}
+                      : preset.flow.model_path || "wappen_261031-1.pt"}
                   </p>
                 )}
                 {brand?.options.map((option) => (
