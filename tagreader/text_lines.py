@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 import time
 
+import cv2
 import numpy as np
 
 WHOLE_MIN_SIDE = 736  # RapidOCR's whole-page setting: small tags are enlarged to this, large ones kept
@@ -30,6 +31,34 @@ def reading_quad(points):
     return p
 
 
+def tag_angle(gray):
+    """The tag's dominant edge direction, modulo 90 degrees, from gradient orientation."""
+    small_scale = 600 / max(gray.shape[:2])
+    small = cv2.resize(gray, None, fx=small_scale, fy=small_scale, interpolation=cv2.INTER_AREA).astype(np.float32)
+    gx, gy = cv2.Sobel(small, cv2.CV_32F, 1, 0), cv2.Sobel(small, cv2.CV_32F, 0, 1)
+    z = ((gx * gx + gy * gy) * np.exp(4j * np.arctan2(gy, gx))).sum()
+    return math.degrees(np.angle(z) / 4)
+
+
+def upright_boxes(tag):
+    """Text lines of a tag squared up first: a tilted tag merges or breaks lines in the detector.
+
+    Boxes come back in the tag's own coordinates.
+    """
+    from .text_detector import get_detector
+    gray = tag if tag.ndim == 2 else tag[:, :, 1]
+    h, w = tag.shape[:2]
+    m = cv2.getRotationMatrix2D((w / 2, h / 2), tag_angle(gray), 1)
+    cos, sin = abs(m[0, 0]), abs(m[0, 1])
+    size = (int(h * sin + w * cos), int(h * cos + w * sin))
+    m[0, 2] += size[0] / 2 - w / 2
+    m[1, 2] += size[1] / 2 - h / 2
+    turned = cv2.warpAffine(tag, m, size, borderValue=255)
+    back = cv2.invertAffineTransform(m)
+    return [(np.asarray(p, np.float64) @ back[:, :2].T + back[:, 2], score)
+            for p, score in get_detector().boxes(turned, min_side=WHOLE_MIN_SIDE)]
+
+
 def find_tag_lines(original, roi_12mp):
     """The tag cut from the 48MP frame and preprocessed for OCR, with its lines in reading order."""
     from .model_pipeline import widen
@@ -41,7 +70,7 @@ def find_tag_lines(original, roi_12mp):
     tag = prepare_ocr_source(original[y1:y2, x1:x2])
     preprocess_ms = (time.perf_counter() - started) * 1000
     t0 = time.perf_counter()
-    boxes = get_detector().boxes(tag, min_side=WHOLE_MIN_SIDE)
+    boxes = upright_boxes(tag)
     detect_ms = (time.perf_counter() - t0) * 1000
     regions = []
     for points, score in boxes:
