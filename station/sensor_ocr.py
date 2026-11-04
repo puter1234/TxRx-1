@@ -29,7 +29,8 @@ class SensorOcrSettings(Model):
     active_raw: int = Field(default=0, ge=0, le=1)
     pattern: str = Field(default="", max_length=160)
     locator: Literal["yolo26", "stripes", "opencv"] = "yolo26"
-    text_finder: Literal["basic", "lines", "detector", "whole"] = "basic"
+    # Kept so saved settings still load; every tag is read whole now.
+    text_finder: Literal["basic", "lines", "detector", "whole"] = "whole"
     # In conveyor mode a DI that clears for less than this and detects again is
     # the same product, not the next one arriving early.
     sensor_gap_ms: int = Field(default=300, ge=0, le=5000)
@@ -70,8 +71,6 @@ class SensorOcrTest:
                 bench.store.get("sensor_ocr_settings", {"conveyor_sync": True}))
             # Upgrade the existing trial to the installed models once. Later
             # explicit comparisons with the older locators remain saved.
-            if hasattr(vision, "text_finder"):
-                vision.text_finder = self.settings.text_finder
             if not bench.store.get("sensor_ocr_yolo26_enabled", False):
                 self.settings = self.settings.model_copy(update={"locator": "yolo26"})
                 bench.store.put("sensor_ocr_settings", self.settings.model_dump())
@@ -100,8 +99,6 @@ class SensorOcrTest:
                 raise Conflict("시험을 정지한 뒤 설정을 저장하세요.")
             self.bench.store.put("sensor_ocr_settings", settings.model_dump())
             self.settings = settings
-            if hasattr(self.vision, "text_finder"):
-                self.vision.text_finder = settings.text_finder
             return settings.model_dump()
 
     def busy(self):
@@ -124,7 +121,7 @@ class SensorOcrTest:
             raise Conflict("카메라 해상도를 확인할 수 없습니다.")
         if hasattr(self.vision, "prepare_capture"):
             self.vision.prepare_capture(status, settings.locator)
-        if settings.locator == "yolo26" and settings.text_finder in ("detector", "whole"):
+        if settings.locator == "yolo26":
             from tagreader.text_detector import get_detector
             try:
                 get_detector()
@@ -437,8 +434,7 @@ class SensorOcrTest:
                 job, frame = selected
                 crops = []
                 result = self.vision.test_auto(frame["image"], include_previews=False, crop_images=crops,
-                                               locator=self.settings.locator,
-                                               text_finder=self.settings.text_finder)
+                                               locator=self.settings.locator, accept=self._accepts)
                 texts = [line["text"] for read in result["reads"] for line in read["lines"] if line["text"].strip()]
                 matched = next((text for text in texts if self.pattern is None or
                                 self.pattern.fullmatch(re.sub(r"\s+", "", text))), None)
@@ -456,6 +452,13 @@ class SensorOcrTest:
                         job["state"] = "waiting"
         except Exception as exc:
             self._fail(exc)
+
+    def _accepts(self, text):
+        """The line that ends a tag's reading: one in the chosen format, else a product-code-shaped one."""
+        if self.pattern is None:
+            from tagreader.model_pipeline import looks_like_code
+            return looks_like_code(text)
+        return self.pattern.fullmatch(re.sub(r"\s+", "", text)) is not None
 
     def status(self, details=True):
         with self.lock:

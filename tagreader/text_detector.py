@@ -27,7 +27,16 @@ class TextDetector:
         import onnxruntime as ort
         options = ort.SessionOptions()
         options.intra_op_num_threads = 4
-        self.session = ort.InferenceSession(data, options, providers=["CPUExecutionProvider"])
+        self.session = None
+        if "CUDAExecutionProvider" in ort.get_available_providers():
+            try:
+                # Tag crops differ in size; a heuristic convolution choice avoids a cuDNN search per new size.
+                self.session = ort.InferenceSession(data, options, providers=[
+                    ("CUDAExecutionProvider", {"cudnn_conv_algo_search": "HEURISTIC"}), "CPUExecutionProvider"])
+            except Exception:
+                self.session = None
+        if self.session is None:
+            self.session = ort.InferenceSession(data, options, providers=["CPUExecutionProvider"])
         self.input = self.session.get_inputs()[0].name
         self.lock = threading.Lock()
 

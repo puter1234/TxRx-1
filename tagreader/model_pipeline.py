@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 from PIL import Image
 from station.vision_trace import stage
-from .preprocess import GREEN_GAIN, prepare_ocr_source
+from .preprocess import GREEN_GAIN
 
 SOURCE_SIZE = (8000, 6000)
 DETECTION_SIZE = (4000, 3000)
@@ -25,17 +25,15 @@ def validate_source_size(width, height):
 
 
 def to_source(frame):
-    """The frame at SOURCE_SIZE, scaled to fit with its aspect kept and white around it."""
+    """The frame at SOURCE_SIZE, scaled to fit with its aspect kept and its edge pixels repeated around it."""
     h, w = frame.shape[:2]
     if (w, h) == SOURCE_SIZE:
         return frame
     scale = min(SOURCE_SIZE[0] / w, SOURCE_SIZE[1] / h)
     nw, nh = round(w * scale), round(h * scale)
     resized = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_CUBIC if scale > 1 else cv2.INTER_AREA)
-    out = np.full((SOURCE_SIZE[1], SOURCE_SIZE[0]) + frame.shape[2:], 255, frame.dtype)
     x, y = (SOURCE_SIZE[0] - nw) // 2, (SOURCE_SIZE[1] - nh) // 2
-    out[y:y + nh, x:x + nw] = resized
-    return out
+    return cv2.copyMakeBorder(resized, y, SOURCE_SIZE[1] - nh - y, x, SOURCE_SIZE[0] - nw - x, cv2.BORDER_REPLICATE)
 
 
 def verify_bundle(directory=BUNDLE):
@@ -57,7 +55,6 @@ class ModelLocator:
         try:
             from vendor.barcode_pipeline.tag_detector.tagdet.infer import TagDetector
             from vendor.barcode_pipeline.barcode_segmenter.barseg.infer import BarcodeSegmenter
-            from vendor.barcode_pipeline.barcode_segmenter.barseg.text_regions import extract_text_regions
         except ImportError as exc:
             raise RuntimeError("택 검출과 바코드 분할 실행 패키지가 필요합니다. requirements-barcode-pipeline.txt를 설치하세요.") from exc
         tag = json.loads((BUNDLE / "tag_detector/models/deployment.json").read_text())
@@ -68,16 +65,10 @@ class ModelLocator:
                                           imgsz=seg["imgsz"], conf=seg["conf"],
                                           dedup_iou=seg["mask_dedup_iou"], threads=tag["threads"])
         self.padding = tag["roi_padding"]
-        self.extract_text = extract_text_regions
         self.lock = threading.Lock()
 
-    def locate(self, original, diagnostics, *, text=True, text_finder="basic"):
-        whole = text and text_finder == "whole"
-        if text_finder in ("basic", "whole"):
-            extract = self.extract_text
-        else:
-            from .text_lines import FINDERS
-            extract = FINDERS[text_finder]
+    def locate(self, original, diagnostics, *, text=True, barcodes=False):
+        """Tags, their text lines in reading order and, only for barcode values, their barcodes."""
         started = time.perf_counter()
         # This is the only full-frame resampling. Never replace the retained source.
         with stage("frame_resize"):
@@ -87,39 +78,38 @@ class ModelLocator:
             with stage("tag_detection"):
                 found = self.detector.predict(detection, roi_padding=self.padding)
             tag_ms = found["timing_ms"]["pipeline_without_decode"]
-            segmentation_ms = text_ms = 0.
+            segmentation_ms = text_ms = ocr_preprocess_ms = 0.
             records = []
             for roi_index, det in enumerate(found["detections"]):
                 roi = det["roi_bbox_xyxy"]
                 x1, y1, x2, y2 = roi
-                raw = detection[y1:y2, x1:x2].copy()
-                with stage(f"barcode_segmentation roi={roi_index} shape={raw.shape}"):
-                    result = self.segmenter.predict(raw, roi_xyxy=roi, source_size=list(DETECTION_SIZE),
-                                                    target_size=list(SOURCE_SIZE))
-                segmentation_ms += result["timing_ms"]["total_without_decode"]
-                regions = []
-                if whole:
-                    from .text_lines import read_whole_tag
-                    with stage(f"whole_tag roi={roi_index}"):
-                        candidates = read_whole_tag(original, roi, result["instances"])
-                    regions = candidates["regions"]
-                    text_ms += candidates["elapsed_ms"]
-                    if not result["instances"]:
-                        # A tag without a readable barcode is still read whole.
-                        corners = (np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]], float) * 2).tolist()
-                        records.append({"quad": corners, "polygon": corners, "confidence": 0.,
-                                        "roi_index": roi_index, "roi_12mp": roi, "regions": regions})
-                elif text and result["instances"]:
-                    with stage(f"text_regions roi={roi_index}"):
-                        candidates = extract(raw, result["instances"], roi,
-                                                       list(DETECTION_SIZE), list(SOURCE_SIZE))
-                    regions = candidates["regions"]
-                    text_ms += candidates["elapsed_ms"]
-                for index, instance in enumerate(result["instances"]):
-                    records.append({"quad": instance["quad_target"],
-                        "polygon": instance["polygon_target"], "confidence": instance["confidence"],
-                        "roi_index": roi_index, "roi_12mp": roi,
-                        "regions": [region for region in regions if region["barcode_index"] == index]})
+                instances = []
+                if barcodes:
+                    raw = detection[y1:y2, x1:x2].copy()
+                    with stage(f"barcode_segmentation roi={roi_index} shape={raw.shape}"):
+                        result = self.segmenter.predict(raw, roi_xyxy=roi, source_size=list(DETECTION_SIZE),
+                                                        target_size=list(SOURCE_SIZE))
+                    segmentation_ms += result["timing_ms"]["total_without_decode"]
+                    instances = result["instances"]
+                lines = {"regions": [], "tag": None, "origin": (0, 0)}
+                if text:
+                    from .text_lines import find_tag_lines
+                    with stage(f"tag_lines roi={roi_index}"):
+                        lines = find_tag_lines(original, roi)
+                    text_ms += lines["elapsed_ms"]
+                    ocr_preprocess_ms += lines["preprocess_ms"]
+                shared = {"roi_index": roi_index, "roi_12mp": roi, "tag": lines["tag"], "origin": lines["origin"]}
+                for index, instance in enumerate(instances):
+                    records.append({"quad": instance["quad_target"], "polygon": instance["polygon_target"],
+                                    "confidence": instance["confidence"], **shared,
+                                    "regions": lines["regions"] if index == 0 else []})
+                if text and not instances:
+                    corners = (np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]], float) * 2).tolist()
+                    records.append({"quad": corners, "polygon": corners, "confidence": 0., **shared,
+                                    "regions": lines["regions"]})
+        if text and records:
+            diagnostics["ocr_preprocessing"] = {"mode": "green_gain", "gain": GREEN_GAIN,
+                "width": original.shape[1], "height": original.shape[0], "ms": ocr_preprocess_ms}
         elapsed = (time.perf_counter() - started) * 1000
         diagnostics.update(locator="yolo26", source_width=SOURCE_SIZE[0], source_height=SOURCE_SIZE[1],
             detection_width=DETECTION_SIZE[0], detection_height=DETECTION_SIZE[1],
@@ -132,7 +122,7 @@ class ModelLocator:
             stages=[{"stage": "yolo26", "candidates": len(records), "tag_count": len(found["detections"]),
                 "working_width": DETECTION_SIZE[0], "working_height": DETECTION_SIZE[1],
                 "detect_ms": elapsed, "tag_ms": tag_ms, "segment_ms": segmentation_ms,
-                "text_ms": text_ms, "text_finder": text_finder, "preprocess_ms": resize_ms,
+                "text_ms": text_ms, "preprocess_ms": resize_ms,
                 "attempted": 0, "decoded": 0, "decode_ms": 0.}])
         return records
 
@@ -195,28 +185,35 @@ def decode_original(original, quad):
     return decode_quad(gray, points - [x0, y0])
 
 
-def process_frame(original, recognizer, *, diagnostics=None, decode_values=False, text_finder="basic"):
+READ_BATCH = 4  # lines per OCR call; each is read upright and turned 180 degrees in the same call
+
+
+def looks_like_code(text):
+    """A product-code-shaped line: 8 to 22 letters and digits, at least two of each."""
+    import re
+    code = re.sub(r"[^A-Z0-9]", "", text.upper())
+    return 8 <= len(code) <= 22 and sum(c.isalpha() for c in code) >= 2 and sum(c.isdigit() for c in code) >= 2
+
+
+def process_frame(original, recognizer, *, diagnostics=None, decode_values=False, accept=None):
+    """Read each tag's lines, longest first, in small batches until one is accepted.
+
+    accept(text) says whether a line is the one looked for (the job's product code);
+    without it the first product-code-shaped line ends the tag.
+    """
     from pipeline import TagRead, TaskResult
     from ocr.normalize import Verdict, compare, normalize_strict
     from .geometry import deskew_angle
     if original.ndim != 3 or original.shape[2] != 3 or original.dtype != np.uint8:
         raise ValueError("카메라의 BGR 원본 프레임이 필요합니다.")
     original = to_source(original)
+    accept = accept or looks_like_code
     started = time.perf_counter()
     diagnostics = diagnostics if diagnostics is not None else {}
     with stage("locator.initialize"):
         locator = get_locator()
-    records = locator.locate(original, diagnostics, text=recognizer is not None, text_finder=text_finder)
+    records = locator.locate(original, diagnostics, text=recognizer is not None, barcodes=decode_values)
     location_ms = (time.perf_counter() - started) * 1000
-    ocr_source = None
-    preprocessing_ms = 0.
-    if recognizer is not None and any(record["regions"] for record in records):
-        t0 = time.perf_counter()
-        with stage("ocr_source_preprocess"):
-            ocr_source = prepare_ocr_source(original)
-        preprocessing_ms = (time.perf_counter() - t0) * 1000
-        diagnostics["ocr_preprocessing"] = {"mode": "green_gain", "gain": GREEN_GAIN,
-            "width": original.shape[1], "height": original.shape[0], "ms": preprocessing_ms}
     reads, ocr_ms, decode_ms, align_ms = [], 0., 0., 0.
     for record in records:
         code = fmt = None
@@ -224,37 +221,36 @@ def process_frame(original, recognizer, *, diagnostics=None, decode_values=False
             t0 = time.perf_counter()
             code, fmt = decode_original(original, record["quad"])
             decode_ms += (time.perf_counter() - t0) * 1000
-        crops, metadata = [], []
-        t0 = time.perf_counter()
-        if recognizer is not None:
-            for region in record["regions"]:
+        crops, lines, accepted = [], [], None
+        regions = record["regions"] if recognizer is not None else []
+        for start in range(0, len(regions), READ_BATCH):
+            t0 = time.perf_counter()
+            batch, metadata = [], []
+            for region in regions[start:start + READ_BATCH]:
                 # quad_target belongs to this very source frame, never a second capture.
-                quad = region["quad_target"]
-                if region.get("finder") in ("detector", "whole"):
-                    quad = widen(quad)  # model boxes can clip the first and last characters
-                crop = cv2.cvtColor(crop_original(ocr_source, quad), cv2.COLOR_GRAY2BGR)
-                if region.get("finder") == "whole" and crop.shape[0] > 1.5 * crop.shape[1]:
-                    # A vertical line on the tag: lay it down; both directions are read below.
-                    crop = cv2.rotate(crop, cv2.ROTATE_90_CLOCKWISE)
+                quad = np.asarray(widen(region["quad_target"])) - record["origin"]
+                crop = cv2.cvtColor(crop_original(record["tag"], quad), cv2.COLOR_GRAY2BGR)
                 for rotation in (0, 180):
-                    crops.append(crop if rotation == 0 else cv2.rotate(crop, cv2.ROTATE_180))
+                    batch.append(crop if rotation == 0 else cv2.rotate(crop, cv2.ROTATE_180))
                     metadata.append({"rotation_degrees": rotation, "quad_source": region["quad_target"],
                                      "side": region["side_in_aligned_image"], "roi_index": record["roi_index"]})
-        align_ms += (time.perf_counter() - t0) * 1000
-        lines = []
-        if crops:
+            align_ms += (time.perf_counter() - t0) * 1000
             t0 = time.perf_counter()
-            images = [Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)) for crop in crops]
+            images = [Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)) for crop in batch]
             outputs = recognizer.read_batch(images) if hasattr(recognizer, "read_batch") else [recognizer.read(image) for image in images]
-            if len(outputs) != len(crops):
+            if len(outputs) != len(batch):
                 raise RuntimeError("OCR 결과 수가 입력한 글자 줄 수와 다릅니다.")
             ocr_ms += (time.perf_counter() - t0) * 1000
-            lines = [{**out, "text": trim_symbols(out["text"]), **meta} for out, meta in zip(outputs, metadata)]
+            crops += batch
+            lines += [{**out, "text": trim_symbols(out["text"]), **meta} for out, meta in zip(outputs, metadata)]
+            accepted = next((line for line in lines[-len(batch):] if accept(line["text"])), None)
+            if accepted is not None:
+                break
         if decode_values:
             verdict = compare(code, [(line["text"], line["confidence"]) for line in lines])
         else:
             usable = [line for line in lines if normalize_strict(line["text"])]
-            best = max(usable, key=lambda line: line["confidence"]) if usable else None
+            best = accepted or (max(usable, key=lambda line: line["confidence"]) if usable else None)
             verdict = (Verdict("ocr_read", None, best["text"], best["confidence"], "문자 읽음") if best else
                        Verdict("no_text", None, None, label="문자 미검출"))
         best_index = next((i for i, line in enumerate(lines) if line["text"] == verdict.text), 0)
@@ -269,6 +265,6 @@ def process_frame(original, recognizer, *, diagnostics=None, decode_values=False
         diagnostics["status"] = "decode_failed"
     diagnostics["stages"][0].update(attempted=len(records) if decode_values else 0,
                                      decoded=decoded, decode_ms=decode_ms)
-    return TaskResult(reads=reads, ms_barcode=location_ms + preprocessing_ms + decode_ms + align_ms, ms_ocr=ocr_ms,
+    return TaskResult(reads=reads, ms_barcode=location_ms + decode_ms + align_ms, ms_ocr=ocr_ms,
                       ms_total=(time.perf_counter() - started) * 1000,
                       error=None if records else "바코드 위치를 찾지 못했습니다")

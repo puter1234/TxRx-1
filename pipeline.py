@@ -93,13 +93,13 @@ def process_task(
     diagnostics: dict | None = None,
     decode_values: bool = True,
     locator: str = "opencv",
-    text_finder: str = "basic",
+    accept=None,
 ) -> TaskResult:
     """사진 한 장을 Task로 처리한다. recognizer가 None이면 바코드만 읽는다."""
     if locator == "yolo26":
         from tagreader.model_pipeline import process_frame
         return process_frame(img, recognizer, diagnostics=diagnostics, decode_values=decode_values,
-                             text_finder=text_finder)
+                             accept=accept)
     t_start = time.perf_counter()
 
     t0 = time.perf_counter()

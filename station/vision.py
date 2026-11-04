@@ -115,8 +115,6 @@ class Vision:
     def __init__(self, model_dir: Path | None = None, *, locator="yolo26"):
         self.directory = model_dir or ROOT / "models/parseq"
         self.locator = locator
-        # The text finder chosen in the process test also reads production frames.
-        self.text_finder = "basic"
         # The last inspected frame as the reader saw it, with what it found drawn on it.
         self.last_view = None
         self.recognizer = None
@@ -247,7 +245,8 @@ class Vision:
                 bgr = to_source(frame if frame is not None else cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR))
                 found = {}
                 task = self._auto_read(bgr, diagnostics=found if self.locator == "yolo26" else None,
-                                       decode_values=False, text_finder=self.text_finder)
+                                       decode_values=False,
+                                       accept=lambda text: _reads_as_target(text, brand, recipe.targets))
                 lines = [line for read in task.reads for line in read.lines]
                 self.last_view = result_view(bgr, found, lines, brand, recipe.targets)
                 detail["ocr_lines"] = lines
@@ -275,7 +274,8 @@ class Vision:
                 bgr = to_source(frame if frame is not None else cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR))
                 found = {}
                 task = self._auto_read(bgr, diagnostics=found if self.locator == "yolo26" else None,
-                                       decode_values="barcode" in recipe.channels, text_finder=self.text_finder)
+                                       decode_values="barcode" in recipe.channels,
+                                       accept=lambda text: _serial_fields(text, brand) is not None)
                 self.last_view = result_view(bgr, found, [l for r in task.reads for l in r.lines], brand, recipe.targets)
                 candidates = []
                 for read in task.reads:
@@ -350,15 +350,15 @@ class Vision:
         finally:
             self.lock.release()
 
-    def _auto_read(self, frame, *, diagnostics=None, decode_values=True, locator=None, text_finder="basic"):
+    def _auto_read(self, frame, *, diagnostics=None, decode_values=True, locator=None, accept=None):
         self.load()
         import pipeline
         return pipeline.process_task(frame, self.recognizer, diagnostics=diagnostics,
                                      decode_values=decode_values, locator=locator or self.locator,
-                                     text_finder=text_finder)
+                                     accept=accept)
 
     @record_operation("test_auto")
-    def test_auto(self, frame, *, include_previews=True, crop_images=None, locator=None, text_finder="basic"):
+    def test_auto(self, frame, *, include_previews=True, crop_images=None, locator=None, accept=None):
         """Run the selected locator and return the actual prepared OCR inputs."""
         if not self.lock.acquire(blocking=False):
             raise RuntimeError("이전 영상 처리가 아직 끝나지 않았습니다.")
@@ -371,7 +371,7 @@ class Vision:
             ms_model_load = (time.perf_counter() - model_started) * 1000
             diagnostics = {}
             task = self._auto_read(frame, diagnostics=diagnostics, decode_values=False, locator=locator,
-                                   text_finder=text_finder)
+                                   accept=accept)
             import cv2
             import importlib.metadata
             import tagreader

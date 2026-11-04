@@ -324,14 +324,13 @@ it("saves how long a sensor may clear within one product", async () => {
     expect.objectContaining({ sensor_gap_ms: 500 }), "PUT"));
 });
 
-it("offers the text finder only with the model locator and saves the choice", async () => {
+it("offers no text finder choice with the model locator", async () => {
   render(<ProcessTest bench={hook()} locked={false} onShow={() => {}} onSettings={() => {}} />);
   await screen.findByRole("button", { name: "시험 시작" });
-  expect(screen.queryByLabelText("글자 위치 찾기")).toBeNull();
   fireEvent.change(screen.getByLabelText("바코드 위치 찾기"), { target: { value: "yolo26" } });
-  fireEvent.change(screen.getByLabelText("글자 위치 찾기"), { target: { value: "lines" } });
   await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/bench/pipeline/settings",
-    expect.objectContaining({ locator: "yolo26", text_finder: "lines" }), "PUT"));
+    expect.objectContaining({ locator: "yolo26" }), "PUT"));
+  expect(screen.queryByLabelText("글자 위치 찾기")).toBeNull();
 });
 
 const hook = () => ({
