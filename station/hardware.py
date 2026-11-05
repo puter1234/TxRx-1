@@ -18,6 +18,9 @@ from .bench import documented_wiring
 # permit input; DO1 and DO2 drive their relays at 1; the device tests allow the
 # contactor 3 s to answer. Values set in the configuration always win.
 DOCUMENTED_FEEDBACK_MS = 3000
+# Every software start runs the belt at low speed this long before high speed, and every
+# software stop slows it this long before the motor turns off. Field emergency stops are physical.
+SOFT_RAMP_SECONDS = 2.0
 
 
 class GpioIO:
@@ -58,6 +61,9 @@ class GpioIO:
         self.requested = False
         self.led_requested = False
         self.speed_requested = False
+        self.want_high = False      # speed asked for; applied once the start ramp is over
+        self.ramp_until = 0.0       # end of the low-speed start
+        self.stop_at = None         # a soft stop turns the motor off at this time
         self.changed = time.monotonic()
         # A new GPIO owner cannot know when the previous process stopped DO1.
         self.motor_ready_at = time.monotonic() + MOTOR_RESTART_SECONDS
@@ -124,6 +130,8 @@ class GpioIO:
                 self.motor_ready_at = self.changed + MOTOR_RESTART_SECONDS
         self.requested = motor
         self.led_requested = led
+        if not motor:
+            self.stop_at = None
         if not motor and not led:
             self.speed(False)
 
@@ -145,7 +153,7 @@ class GpioIO:
         self.latest = {
             "source": "HARDWARE",
             "connected": True,
-            "motor_requested": self.requested,
+            "motor_requested": self.motor_wanted(),
             "led_requested": self.led_requested,
             "speed_requested": self.speed_requested,
             "led_confirmed": None,
@@ -159,10 +167,23 @@ class GpioIO:
         }
         return self.latest
 
+    def motor_wanted(self):
+        """The motor as software asked for it: off as soon as a soft stop begins."""
+        return self.requested and self.stop_at is None
+
+    def _ramp(self):
+        now = time.monotonic()
+        if self.stop_at is not None and now >= self.stop_at:
+            self._outputs(False, self.led_requested)
+        if (self.motor_wanted() and self.want_high and not self.speed_requested
+                and now >= self.ramp_until and not self.fault):
+            self._set_speed(True)
+
     def _poll(self):
         while not self.closed.wait(0.01):
             try:
                 with self.lock:
+                    self._ramp()
                     snap = self._read()
                     if (
                         (self.requested or self.led_requested)
@@ -184,7 +205,7 @@ class GpioIO:
                             self._outputs(False, False)
                     self.latest.update(
                         fault=self.fault,
-                        motor_requested=self.requested,
+                        motor_requested=self.motor_wanted(),
                         led_requested=self.led_requested,
                     )
             except Exception as exc:
@@ -200,11 +221,21 @@ class GpioIO:
     def renew(self):
         self.last_lease = time.monotonic()
 
+    def _soft_stop(self):
+        """Slow the belt, then turn the motor off SOFT_RAMP_SECONDS later (see _ramp)."""
+        self.want_high = False
+        if self.speed_requested:
+            self._set_speed(False)
+        if self.requested and self.stop_at is None:
+            self.stop_at = time.monotonic() + SOFT_RAMP_SECONDS
+        elif not self.requested:
+            self._outputs(False, self.led_requested)
+
     def stop(self):
         with self.lock:
             if self.req:
-                self._outputs(False, False)
-                self.speed(False)
+                self._outputs(self.requested, False)
+                self._soft_stop()
 
     def motor(self, on, allowed=None):
         with self.lock:
@@ -214,7 +245,16 @@ class GpioIO:
             if on and allowed is not None and not allowed():
                 raise RuntimeError("STOP_REQUEST_HAS_PRIORITY")
             self.last_lease = time.monotonic()
-            self._outputs(on, self.led_requested)
+            if not on:
+                self._soft_stop()
+                return
+            if not self.motor_wanted():
+                # Every start, including one during a soft stop, begins at low speed.
+                self.ramp_until = time.monotonic() + SOFT_RAMP_SECONDS
+                if self.speed_requested:
+                    self._set_speed(False)
+            self.stop_at = None
+            self._outputs(True, self.led_requested)
 
     def light(self, on, allowed=None):
         with self.lock:
@@ -235,6 +275,14 @@ class GpioIO:
                 return
             if high and (self.fault or (allowed is not None and not allowed())):
                 raise RuntimeError("STOP_REQUEST_HAS_PRIORITY")
+            self.want_high = high
+            # High speed waits for the start ramp and never applies while stopping.
+            if not high or (self.motor_wanted() and time.monotonic() >= self.ramp_until):
+                self._set_speed(high)
+
+    def _set_speed(self, high):
+        line = self.config.speed_line
+        if line is not None:
             self.req.set_value(line, self._value(high))
             self.speed_requested = high
 
@@ -260,7 +308,7 @@ class GpioIO:
             snap = dict(self.latest)
             # Requested outputs are known immediately. Physical feedback keeps
             # the timestamp of the latest input sample.
-            snap.update(motor_requested=self.requested, led_requested=self.led_requested,
+            snap.update(motor_requested=self.motor_wanted(), led_requested=self.led_requested,
                         speed_requested=self.speed_requested, fault=self.fault,
                         motor_restart_ms=self.motor_restart_ms())
         if time.time() - snap.get("observed_at", 0) > 0.5:
