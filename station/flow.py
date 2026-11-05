@@ -162,7 +162,9 @@ class FlowCycle(HardwareCycle):
         raw = snap.get("di_raw")
         hits = [False, False]
         if raw:
-            hits = [self.edges[i].update(raw[i], now, getattr(cfg, f"di{i + 1}_debounce_ms"), cfg.sensor_gap_ms)
+            # The same gap between products takes longer to pass the sensor at low speed.
+            gap = cfg.sensor_gap_low_ms if snap.get("speed_requested") is False else cfg.sensor_gap_ms
+            hits = [self.edges[i].update(raw[i], now, getattr(cfg, f"di{i + 1}_debounce_ms"), gap)
                     for i in range(2)]
             # Light is controlled by raw sensor edges, independent of inference/debounce.
             # Plain sensor counting reads nothing on the belt: no light, no slow-down.

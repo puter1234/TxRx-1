@@ -153,7 +153,8 @@ class FlowSettings(Model):
     di2_debounce_ms: int = Field(default=20, ge=0, le=1000)
     # A sensor that clears for less than this and sees the product again is the
     # same product (folds, loose fabric), not the next one arriving early.
-    sensor_gap_ms: int = Field(default=300, ge=0, le=5000)
+    sensor_gap_ms: int = Field(default=300, ge=0, le=5000)          # while the belt runs at high speed
+    sensor_gap_low_ms: int = Field(default=300, ge=0, le=5000)      # while it runs at low speed
     # After the target's last product passes DI2 the belt keeps running this long.
     finish_run_ms: int = Field(default=3000, ge=0, le=60000)
     counter: Literal["sensor", "cvzone", "yolo"] = "sensor"
