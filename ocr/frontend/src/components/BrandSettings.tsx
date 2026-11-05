@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, Plus, Settings, Trash2, Upload } from "lucide-react";
 import Config from "../station/Config";
 import WorkPresets from "./WorkPresets";
@@ -11,6 +11,17 @@ const checks = [
   ["rfid", "RFID"],
 ] as const;
 // What the brand turned on, before RFID waits for registered tags (brandView).
+// A new brand starts from the one set up last, so adding several similar brands
+// does not mean entering the same options and settings again.
+const LAST_BRAND = "txrx.lastBrand";
+const readLast = () => {
+  try {
+    return localStorage.getItem(LAST_BRAND);
+  } catch {
+    return null;
+  }
+};
+
 const ownCaps = (b: Brand) => b.caps ?? { ocr: true, rfid: true, barcode_tag: false, barcode_poly: false };
 
 export default function BrandSettings({
@@ -28,6 +39,14 @@ export default function BrandSettings({
   const [busy, setBusy] = useState(false);
   const { confirm, dialog } = useConfirm();
   const brand = brands.find((b) => b.id === selected);
+  useEffect(() => {
+    if (!selected) return;
+    try {
+      localStorage.setItem(LAST_BRAND, selected);
+    } catch {
+      /* the next brand then starts from the last one in the list */
+    }
+  }, [selected]);
   const action = async (fn: () => Promise<unknown>) => {
     if (busy) return;
     setBusy(true);
@@ -94,21 +113,39 @@ export default function BrandSettings({
             e.preventDefault();
             if (!name.trim()) return;
             void action(async () => {
+              const source = brands.find((x) => x.id === readLast()) || brands[brands.length - 1];
               const b = await save(
                 {
                   id: uuid(),
                   name: name.trim(),
                   revision: 1,
-                  caps: { rfid: false, ocr: true, barcode_tag: false, barcode_poly: false },
-                  options: [],
-                  decoder: { kind: "none", records: {} },
-                  ocr_regions: [],
+                  caps: source ? { ...ownCaps(source) } : { rfid: false, ocr: true, barcode_tag: false, barcode_poly: false },
+                  options: source ? structuredClone(source.options) : [],
+                  // Registered RFID tags belong to their own brand; the comparison length carries over.
+                  decoder: source?.decoder.kind === "lookup"
+                    ? { kind: "lookup", records: {}, prefix_length: source.decoder.prefix_length ?? null }
+                    : { kind: "none", records: {} },
+                  ocr_regions: source ? structuredClone(source.ocr_regions) : [],
                   barcode_records: {},
                   barcode_poly_records: {},
                   note: "",
                 },
                 false,
               );
+              if (source) {
+                // Its capture and sensor settings too.
+                try {
+                  const presets = await api<any[]>("/presets");
+                  const preset = presets.find((p) => p.kind === "condition" && p.brand_id === source.id);
+                  if (preset)
+                    await api("/presets", {
+                      preset: { ...preset, id: "work-" + Date.now().toString(36), brand_id: b.id, revision: 1 },
+                      expected_revision: null,
+                    });
+                } catch {
+                  /* the brand keeps the default capture settings */
+                }
+              }
               setName("");
               setSelected(b.id);
               setTab("product");
