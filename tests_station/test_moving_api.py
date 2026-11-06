@@ -431,15 +431,16 @@ def test_conveyor_job_starts_without_setup_records(line):
     assert line.client.get("/api/status").json()["blockers"] == []
 
 
-def test_reset_during_a_held_field_stop_says_why_and_keeps_the_fault(line):
+def test_reset_during_a_held_field_stop_clears_but_running_needs_the_permit(line):
     prepare(line, target=2)
     issue(line, "start")
     line.gpio.values[107] = 0
-    fault = wait_state(line, lambda s: s["session"]["phase"] == "FAULT")["session"]["fault"]
-    response = issue(line, "reset", expected=409)
-    assert response.json()["detail"] == "현장 정지/새 START 상태를 확인하세요."
-    session = line.client.get("/api/status").json()["session"]
-    assert (session["phase"], session["fault"]) == ("FAULT", fault)
+    wait_state(line, lambda s: s["session"]["phase"] == "FAULT")
+    # 오류 해제 always clears; the motor still cannot start without the permit.
+    issue(line, "reset")
+    assert line.client.get("/api/status").json()["session"]["fault"] is None
+    issue(line, "start", expected=409)
+    assert not line.io.snapshot()["motor_requested"]
     line.gpio.values[107] = 1
     issue(line, "reset")
     assert line.client.get("/api/status").json()["session"]["fault"] is None

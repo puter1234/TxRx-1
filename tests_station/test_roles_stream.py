@@ -104,8 +104,7 @@ def test_work_recovery_and_adjustment_need_no_extra_account(tmp_path, brand, rec
             "expected_revision": status["revision"],
             "reason": "",
         }
-        assert client.post("/api/commands", json=body).status_code == 409
-        body["reason"] = "제품 상태 확인"
+        # 오류 해제 needs no typed reason.
         assert client.post("/api/commands", json=body).status_code == 200
         assert client.get("/api/status").json()["session"]["phase"] == "READY"
         assert (

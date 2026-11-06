@@ -762,7 +762,7 @@ def test_live_ocr_defaults_to_models_and_accepts_lower_resolution(rig, monkeypat
     assert not app.state.bench.runs
 
 
-def test_a_contactor_that_reads_on_after_stop_does_not_block(rig):
+def test_a_contactor_that_stays_on_after_stop_is_reported_and_cleared(rig):
     c, app = rig
     setup(c)
     c.post("/api/bench/io/connect", json={})
@@ -770,9 +770,13 @@ def test_a_contactor_that_reads_on_after_stop_does_not_block(rig):
     pulse(c, "motor", 10)
     b.io.stuck = True
     c.post("/api/bench/stop", json={})
-    # DI3 is reported, never enforced: no stop wait, no error, closing still works.
-    assert not b.stop_wait_until
+    # DI3 must show the motor stopped; otherwise the test reports it.
+    assert b.stop_wait_until
+    b.stop_wait_until = time.monotonic() - 1
     b._tick()
+    assert b.error == "접촉기 정지 응답 없음"
+    # 오류 해제 always clears it, and closing the test is never refused.
+    assert c.post("/api/bench/error/clear", json={}).status_code == 200
     assert b.error is None
     assert c.post("/api/bench/io/disconnect", json={}).status_code == 200
 
