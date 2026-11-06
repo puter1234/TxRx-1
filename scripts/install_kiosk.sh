@@ -64,4 +64,6 @@ if [ -n "$CONF" ]; then
 else
   fail "automatic login: no GDM config found (this desktop may not use GDM)"
 fi
-echo "Restart to check. Alt+F4 closes the full-screen window. Log: $ROOT/runtime/kiosk.log"
+# Open it now too, the same way a restart or the icon will.
+nohup /bin/sh "$ROOT/scripts/kiosk.sh" >/dev/null 2>&1 &
+echo "Opening the station full screen now (Alt+F4 closes it). If it does not open, send: $ROOT/runtime/kiosk.log"
