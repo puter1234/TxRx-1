@@ -61,7 +61,7 @@ export default function Statistics() {
     .filter((p) => (brand ? p.brand_id === brand : p.kind !== "condition" || brandName(p.brand_id)))
     .map((p) => ({
       id: p.id,
-      name: (p.kind === "condition" ? `${brandName(p.brand_id)} ${p.name}` : p.name) + (p.enabled ? "" : " (사용 안 함)"),
+      name: (p.kind === "condition" ? `${brandName(p.brand_id)} ${p.name}` : p.name),
     }));
   const currentData = loadedParams === params ? data : null;
   const rows = currentData?.[kind] || [];

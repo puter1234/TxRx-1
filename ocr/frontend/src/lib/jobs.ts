@@ -18,9 +18,6 @@ export const jobTitle = (s: Pick<Session, "recipe" | "brand">) =>
       ? "와펜 계수"
       : `${s.brand.name} 조건 계수`;
 
-const DEFAULT_NAMES = ["", "단순 계수", "와펜 계수", "기본 설정"];
-export const presetLabel = (name?: string) => (name && !DEFAULT_NAMES.includes(name) ? name : "");
-
 export const RUNNING = ["FEEDING", "EJECTING", "INSPECTING", "STOPPING", "RETRY_PENDING", "CAMERA_WAIT"];
 
 export type Tone = "idle" | "go" | "warn" | "danger" | "done";
@@ -72,7 +69,6 @@ export function useRedo() {
     if (cfg.mode === "condition") {
       setW({
         step: 3,
-        presetId: cfg.presetId || "",
         testRun,
         brandId: cfg.brandId ?? null,
         checks: cfg.checks ?? { rfid: false, ocr: false, barcode_tag: false, barcode_poly: false },
@@ -83,7 +79,7 @@ export function useRedo() {
       nav("/condition");
     } else
       nav(testRun ? "/simple?test=1" : "/simple", {
-        state: { kind: cfg.mode, presetId: cfg.presetId, target: cfg.target ?? null, targets: s.recipe.targets || {} },
+        state: { kind: cfg.mode, target: cfg.target ?? null, targets: s.recipe.targets || {} },
       });
   };
 }

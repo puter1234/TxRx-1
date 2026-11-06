@@ -9,7 +9,7 @@ import { Notice, QuantityPicker, Screen } from "../ui/kit";
 import CameraBox from "../ui/CameraBox";
 import StopButton from "../ui/StopButton";
 import { needsCamera } from "../lib/jobs";
-import { useEnabledPresets } from "./SimpleStart";
+import { usePresets } from "./SimpleStart";
 
 const CHECKS: { key: keyof Checks; label: string }[] = [
   { key: "ocr", label: "문자" },
@@ -24,10 +24,10 @@ export default function ConditionStart() {
   const session = useApp((s) => s.snapshot?.session);
   const hardware = useApp((s) => s.snapshot?.mode === "HARDWARE");
   const online = useApp((s) => s.connected);
-  const presets = useEnabledPresets();
+  const presets = usePresets();
   // null follows the first unfinished step; otherwise an explicit step chosen by
   // the back button or a tapped summary chip.
-  const [view, setView] = useState<"brand" | "preset" | { option: string; jump?: boolean } | null>(null);
+  const [view, setView] = useState<"brand" | { option: string; jump?: boolean } | null>(null);
   const [query, setQuery] = useState("");
   const [starting, setStarting] = useState(false);
   useEffect(() => {
@@ -41,21 +41,18 @@ export default function ConditionStart() {
     const b = row && brands.find((x) => x.id === row.brand_id);
     if (linked.current || !row || !b) return;
     linked.current = true;
-    setW({ brandId: b.id, presetId: row.id, testRun: params.get("test") === "1", targets: {}, checks: { ...b.caps } });
+    setW({ brandId: b.id, testRun: params.get("test") === "1", targets: {}, checks: { ...b.caps } });
   }, [params, presets.rows, brands, setW]);
 
   const brand = brands.find((b) => b.id === w.brandId) ?? null;
   const options = brand?.source.options ?? [];
-  const brandPresets = presets.rows.filter((p) => p.kind === "condition" && p.brand_id === w.brandId);
-  const preset = brandPresets.find((p) => p.id === w.presetId) ?? (brandPresets.length === 1 ? brandPresets[0] : undefined);
+  const preset = presets.rows.find((p) => p.kind === "condition" && p.brand_id === w.brandId);
   const missing = options.find((o) => !o.values.includes(w.targets[o.key]));
   const editing = view && typeof view === "object" ? view.option : null;
   const current = editing ? options.find((o) => o.key === editing) : undefined;
   const step = !brand || view === "brand"
     ? "brand"
-    : (brandPresets.length > 1 && !preset) || view === "preset"
-      ? "preset"
-      : current || missing
+    : current || missing
         ? "option"
         : "final";
   const option = current || missing;
@@ -76,7 +73,7 @@ export default function ConditionStart() {
   const chooseBrand = (id: string) => {
     const b = brands.find((x) => x.id === id);
     if (!b) return;
-    if (id !== w.brandId) setW({ brandId: id, presetId: "", targets: {}, checks: { ...b.caps } });
+    if (id !== w.brandId) setW({ brandId: id, targets: {}, checks: { ...b.caps } });
     setView(null);
   };
   const choose = (key: string, value: string) => {
@@ -86,15 +83,14 @@ export default function ConditionStart() {
     // changed from its summary chip returns straight to the last step.
     setView(editing && next && !(typeof view === "object" && view?.jump) ? { option: next.key } : null);
   };
-  const beforeOptions = () => setView(brandPresets.length > 1 ? "preset" : "brand");
+  const beforeOptions = () => setView("brand");
   const back = () => {
     if (step === "final") options.length ? setView({ option: options[options.length - 1].key }) : beforeOptions();
     else if (step === "option" && option) {
       const index = options.indexOf(option);
       if (index > 0) setView({ option: options[index - 1].key });
       else beforeOptions();
-    } else if (step === "preset") setView("brand");
-    else nav("/");
+    } else nav("/");
   };
   const start = async () => {
     if (!brand || starting) return;
@@ -162,7 +158,7 @@ export default function ConditionStart() {
 
   return (
     <Screen
-      title={step === "brand" ? "브랜드" : step === "preset" ? "작업 설정" : step === "option" && option ? option.label : "수량"}
+      title={step === "brand" ? "브랜드" : step === "option" && option ? option.label : "수량"}
       onBack={back}
       backLabel={step === "brand" ? "처음" : "이전"}
       right={
@@ -214,15 +210,6 @@ export default function ConditionStart() {
             })}
           </div>
           {!brands.length && <Notice tone="warn">등록된 브랜드 없음</Notice>}
-        </div>
-      )}
-      {step === "preset" && (
-        <div className="grid grid-cols-2 gap-6 pt-2">
-          {brandPresets.map((p) => (
-            <button key={p.id} className="choice min-h-[160px] w-full !text-[44px]" aria-pressed={p.id === w.presetId} onClick={() => { setW({ presetId: p.id }); setView(null); }}>
-              {p.name}
-            </button>
-          ))}
         </div>
       )}
       {step === "option" && option && (

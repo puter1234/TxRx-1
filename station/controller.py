@@ -9,7 +9,7 @@ import threading
 import time
 import uuid
 
-from .schema import Brand, Recipe, Command, Adjustment, StationConfig, WorkPreset, FlowSettings
+from .schema import Brand, Recipe, Command, Adjustment, StationConfig, WorkPreset, FlowSettings, current_presets, preset_slot
 from .rules import validate_recipe, judge
 from .storage import Store, dump, utc
 
@@ -190,14 +190,14 @@ class Controller:
     def resolve_recipe(self, recipe):
         if not recipe.preset_id:
             return recipe
-        raw = self.store.get("work_presets", {}).get(recipe.preset_id)
+        stored = self.store.get("work_presets", {})
+        raw = stored.get(recipe.preset_id)
         if not raw:
             raise Conflict("작업 프리셋이 없습니다.")
-        preset = WorkPreset.model_validate(raw)
-        if not preset.enabled or preset.revision != recipe.preset_revision:
-            raise Conflict("작업 설정이 변경되었습니다. 다시 선택하세요.")
+        # Each kind (and each brand) has one setting, edited in place: a job always runs on it as it is now.
+        preset = WorkPreset.model_validate(current_presets(stored)[preset_slot(raw)])
         return Recipe.model_validate({**recipe.model_dump(), "kind": preset.kind,
-            "brand_id": preset.brand_id,
+            "brand_id": preset.brand_id, "preset_id": preset.id, "preset_revision": preset.revision,
             "channels": recipe.channels if preset.kind == "condition" else preset.channels,
             "flow": preset.flow.model_dump(), "work_name": preset.name,
             "camera": preset.camera.model_dump() if preset.camera else None})

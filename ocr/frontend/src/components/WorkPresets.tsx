@@ -63,8 +63,6 @@ const fresh = (): Preset => ({
   flow: { ...defaults },
 });
 
-const retainedDrafts = new Map<string, Preset>();
-
 export default function WorkPresets({ brandId, initialKind = "simple" }: { brandId?: string; initialKind?: "simple" | "vision" }) {
   const [kind, setKind] = useState<"simple" | "vision">(initialKind);
   if (brandId)
@@ -106,7 +104,6 @@ function PresetEditor({
   brandId?: string;
   kind: Preset["kind"];
 }) {
-  const cacheKey = brandId || kind;
   const initial = (): Preset => ({
     ...fresh(),
     kind,
@@ -123,9 +120,7 @@ function PresetEditor({
   const nav = useNavigate();
   const brands = useApp((s) => s.brands);
   const [rows, setRows] = useState<Preset[]>([]),
-    [draft, setDraft] = useState<Preset | null>(
-      retainedDrafts.get(cacheKey) || null,
-    );
+    [draft, setDraft] = useState<Preset | null>(null);
   const [busy, setBusy] = useState(false),
     [message, setMessage] = useState(""),
     [saveError, setSaveError] = useState("");
@@ -156,9 +151,6 @@ function PresetEditor({
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [attempt]);
-  useEffect(() => {
-    if (draft) retainedDrafts.set(cacheKey, draft);
-  }, [draft]);
   const changed = (next: Partial<Preset>) => {
     setMessage("");
     setSaveError("");
@@ -212,12 +204,10 @@ function PresetEditor({
   };
   // Every complete change is saved shortly after it is made; nothing waits for a save button.
   // Only numeric fields can be left blank; the model path may stay empty.
-  const complete = !!draft?.name.trim() && Object.entries(draft?.flow ?? {}).every(([key, v]) =>
+  const complete = Object.entries(draft?.flow ?? {}).every(([key, v]) =>
     typeof (defaults as Record<string, unknown>)[key] !== "number" || (typeof v === "number" && Number.isFinite(v)));
   const pristine = !!draft && untouched.has(draft.id);
-  // Two settings with one name would look the same on the worker screen.
-  const taken = !!draft && rows.some((r) => r.id !== draft.id && r.name.trim() === draft.name.trim());
-  const pending = dirty && complete && !taken && !busy && !saveError && !pristine;
+  const pending = dirty && complete && !busy && !saveError && !pristine;
   useEffect(() => {
     clearTimeout(timer.current);
     if (!pending) return;
@@ -248,52 +238,13 @@ function PresetEditor({
   if (loading || !draft) return <p role="status" className="text-xl font-bold">불러오는 중</p>;
   return (
     <div className="max-w-6xl space-y-6">
-      <section className="card space-y-5 p-6">
-        <div className="flex flex-wrap items-center gap-4">
-          {!brandId && (
-            <h2 className="mr-auto text-[32px] font-black">
-              {kind === "simple" ? "옷 계수 설정" : "와펜 계수 설정"}
-            </h2>
-          )}
-          {rows.length > 1 && (
-            <label className="flex items-center gap-3 text-xl font-extrabold">
-              저장된 설정
-              <select
-                aria-label="저장된 설정"
-                className="field !w-80"
-                value={original ? draft.id : ""}
-                disabled={busy}
-                onChange={(e) => {
-                  const row = rows.find((r) => r.id === e.target.value);
-                  if (row) {
-                    setDraft(row);
-                    setMessage("");
-                  }
-                }}
-              >
-                {!original && <option value="">작성 중</option>}
-                {rows.map((r, i) => (
-                  <option key={r.id} value={r.id}>
-                    {r.name}
-                    {rows.filter((v) => v.name === r.name).length > 1 ? ` (${i + 1})` : ""}
-                    {!r.enabled ? " (사용 안 함)" : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-        </div>
-        <div className="grid grid-cols-2 gap-5">
-          <label className="text-xl font-extrabold">
-            설정 이름
-            <input
-              className="field mt-2"
-              value={draft.name}
-              onChange={(e) => changed({ name: e.target.value })}
-            />
-          </label>
-          {!brandId && draft.kind !== "simple" && (
-            <label className="text-xl font-extrabold">
+      {!brandId && (
+        <section className="card space-y-5 p-6">
+          <h2 className="text-[32px] font-black">
+            {kind === "simple" ? "옷 계수 설정" : "와펜 계수 설정"}
+          </h2>
+          {draft.kind !== "simple" && (
+            <label className="block max-w-xl text-xl font-extrabold">
               브랜드
               <select
                 aria-label="브랜드"
@@ -310,39 +261,8 @@ function PresetEditor({
               </select>
             </label>
           )}
-        </div>
-        <div className="flex flex-wrap items-center gap-4">
-          <label className="flex items-center gap-3 rounded-2xl border-2 border-line px-5 py-3 text-xl font-extrabold">
-            <input
-              type="checkbox"
-              className="h-8 w-8 accent-brand-600"
-              checked={draft.enabled}
-              onChange={(e) => changed({ enabled: e.target.checked })}
-            />
-            작업자 화면에 표시
-          </label>
-          <button
-            className="btn btn-outline ml-auto"
-            disabled={busy}
-            onClick={() => {
-              setDraft({ ...initial(), name: "" });
-              setMessage("");
-            }}
-          >
-            설정 추가
-          </button>
-          <button
-            className="btn btn-outline"
-            disabled={busy || !original}
-            onClick={() => {
-              setDraft({ ...draft, id: fresh().id, name: draft.name + " 복사", revision: 1 });
-              setMessage("");
-            }}
-          >
-            현재 설정 복사
-          </button>
-        </div>
-      </section>
+        </section>
+      )}
       {draft.kind === "vision" && (
         <section className="card space-y-5 p-6">
           <h2 className="text-[28px] font-black">와펜 계수</h2>
@@ -519,18 +439,18 @@ function PresetEditor({
         </div>
       </section>
       <footer className="sticky bottom-0 z-10 flex items-center gap-4 rounded-2xl border-2 border-line bg-white p-5 shadow-lg">
-        <p role="status" className={"mr-auto text-[26px] font-extrabold " + (saveError || (!pristine && (!complete || taken)) ? "text-danger" : "")}>
-          {saveError || (pristine ? "" : !draft.name.trim() ? "설정 이름 필요" : taken ? "같은 이름 있음" : !complete ? "빈 칸 있음" : dirty ? "저장 중" : message || "저장됨")}
+        <p role="status" className={"mr-auto text-[26px] font-extrabold " + (saveError || (!pristine && !complete) ? "text-danger" : "")}>
+          {saveError || (pristine ? "" : !complete ? "빈 칸 있음" : dirty ? "저장 중" : message || "저장됨")}
         </p>
         <button
           className="btn btn-outline btn-lg"
-          disabled={busy || !draft.enabled || !complete || taken || !!saveError}
+          disabled={busy || !complete || !!saveError}
           onClick={async () => {
             // An untouched default is saved when it is first tried.
             if (dirty && !(await save())) return;
             // The bench has no conveyor flow engine: wappen settings are tried on the live camera there.
             nav(draft.kind === "vision" && mode === "REPLAY"
-              ? "/settings?section=test&mode=wappen&preset=" + encodeURIComponent(draft.id)
+              ? "/settings?section=test&mode=wappen"
               : (draft.kind === "condition" ? "/condition" : "/simple") + "?preset=" + encodeURIComponent(draft.id) + "&test=1");
           }}
         >

@@ -3,7 +3,6 @@ import type { Brand, Checks, LogItem, ServerState } from "./types";
 import type { Snapshot } from "../station/shared";
 
 export interface WizardState {
-  presetId: string;
   testRun: boolean;
   step: 1 | 2 | 3;
   brandId: string | null;
@@ -25,7 +24,6 @@ const emptyChecks: Checks = {
 };
 
 const initialWizard: WizardState = {
-  presetId: "",
   testRun: false,
   step: 1,
   brandId: null,

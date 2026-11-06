@@ -233,6 +233,23 @@ class WorkPreset(Model):
         return self
 
 
+def preset_slot(raw: dict) -> tuple[str, str]:
+    """옷 and 와펜 have one setting each; 조건 has one per brand."""
+    kind = raw.get("kind", "simple")
+    return kind, raw.get("brand_id", "__simple__") if kind == "condition" else ""
+
+
+def current_presets(stored: dict) -> dict:
+    """The one setting of each slot. Older devices may hold several; the most edited
+    one (highest revision) is used, then the last in stored order."""
+    chosen = {}
+    for raw in stored.values():
+        slot = preset_slot(raw)
+        if slot not in chosen or raw.get("revision", 1) >= chosen[slot].get("revision", 1):
+            chosen[slot] = raw
+    return chosen
+
+
 class Recipe(Model):
     kind: Literal["condition", "simple", "vision"] = "condition"
     brand_id: str

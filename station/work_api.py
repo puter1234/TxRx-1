@@ -3,7 +3,7 @@ from datetime import date
 from fastapi import Request
 from fastapi.responses import Response
 from pydantic import Field
-from .schema import Model, WorkPreset, Recipe, FlowSettings
+from .schema import Model, WorkPreset, Recipe, FlowSettings, current_presets, preset_slot
 from typing import Literal
 from .controller import Conflict
 from .storage import dump
@@ -20,7 +20,7 @@ class SpeedWiring(Model):
 
 
 class WorkStart(Model):
-    preset_revision: int = Field(ge=1)
+    preset_revision: int | None = Field(default=None, ge=1)  # Accepted for older screens; the current setting is used.
     brand_revision: int = Field(default=1, ge=1)
     targets: dict[str, str] = Field(default_factory=dict, max_length=30)
     target_count: int | None = Field(default=None, ge=1, le=1000000)
@@ -91,7 +91,7 @@ def install_work_api(app, controller, permitted, vision, monitor):
 
     @app.get("/api/presets")
     def presets():
-        return list(store.get("work_presets", {}).values())
+        return list(current_presets(store.get("work_presets", {})).values())
 
     @app.post("/api/presets")
     def save(body: PresetSave, request: Request):
@@ -113,12 +113,11 @@ def install_work_api(app, controller, permitted, vision, monitor):
     @app.post("/api/presets/{ident}/start")
     def start(ident: str, body: WorkStart, request: Request):
         actor = permitted(request, ("admin",) if body.test_run else ("admin", "operator"))
-        raw = store.get("work_presets", {}).get(ident)
+        stored = store.get("work_presets", {})
+        raw = stored.get(ident)
         if not raw:
             raise ValueError("작업 프리셋이 없습니다.")
-        preset = WorkPreset.model_validate(raw)
-        if preset.revision != body.preset_revision or not preset.enabled:
-            raise Conflict("작업 설정이 변경되었습니다. 다시 선택하세요.")
+        preset = WorkPreset.model_validate(current_presets(stored)[preset_slot(raw)])
         recipe = Recipe(kind=preset.kind, brand_id=preset.brand_id, brand_revision=body.brand_revision,
                         channels=preset.channels if body.channels is None else body.channels,
                         barcode_targets=preset.barcode_targets if body.barcode_targets is None else body.barcode_targets,

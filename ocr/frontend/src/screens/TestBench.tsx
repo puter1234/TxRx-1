@@ -113,7 +113,7 @@ export default function TestBench() {
           </div>
           <div className="card p-5">
             {mode === "process" && <ProcessTest bench={bench} locked={locked} onShow={setShown} onSettings={(s) => (settings.current = s)} />}
-            {mode === "wappen" && <WappenTest bench={bench} locked={locked} presetId={params.get("preset")} onTrial={setTrial} />}
+            {mode === "wappen" && <WappenTest bench={bench} locked={locked} onTrial={setTrial} />}
             {mode === "rfid" && <RfidTest bench={bench} locked={locked} />}
             {mode === "quality" && <CameraQuality bench={bench} locked={locked} />}
           </div>

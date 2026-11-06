@@ -11,9 +11,10 @@ import CameraBox from "../ui/CameraBox";
 import StopButton from "../ui/StopButton";
 
 type Item = "simple" | "vision";
-export type SimpleRestore = { kind?: Item; presetId?: string; target?: number | null; targets?: Record<string, string> };
+export type SimpleRestore = { kind?: Item; target?: number | null; targets?: Record<string, string> };
 
-export function useEnabledPresets() {
+// The server lists one setting per kind, and per brand for condition counting.
+export function usePresets() {
   const [rows, setRows] = useState<Preset[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -23,7 +24,7 @@ export function useEnabledPresets() {
     setLoading(true);
     setError("");
     api<Preset[]>("/presets")
-      .then((items) => { if (alive) setRows(items.filter((p) => p.enabled)); })
+      .then((items) => { if (alive) setRows(items); })
       .catch((e) => { if (alive) setError((e as Error).message); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
@@ -36,11 +37,10 @@ export default function SimpleStart() {
   const [params] = useSearchParams();
   const restored = (useLocation().state || {}) as SimpleRestore;
   const param = params.get("item");
-  const presets = useEnabledPresets();
+  const presets = usePresets();
   const [kind, setKind] = useState<Item | null>(
     restored.kind || (param === "wappen" ? "vision" : param === "clothes" ? "simple" : null),
   );
-  const [presetId, setPresetId] = useState(restored.presetId || "");
   const [target, setTarget] = useState<number | null>(restored.target ?? null);
   const [targets, setTargets] = useState<Record<string, string>>(restored.targets || {});
   const [starting, setStarting] = useState(false);
@@ -50,7 +50,6 @@ export default function SimpleStart() {
     const row = linked && presets.rows.find((p) => p.id === linked);
     if (!row || (row.kind !== "simple" && row.kind !== "vision")) return;
     setKind(row.kind);
-    setPresetId(row.id);
     setTestRun(params.get("test") === "1");
   }, [linked, presets.rows, params]);
   const session = useApp((s) => s.snapshot?.session);
@@ -60,8 +59,7 @@ export default function SimpleStart() {
   // does not run; they are tried on the live camera in 설정, 시험 instead.
   const replay = useApp((s) => s.snapshot?.mode) === "REPLAY";
 
-  const choices = kind ? presets.rows.filter((p) => p.kind === kind) : [];
-  const preset = choices.find((p) => p.id === presetId) ?? (choices.length === 1 ? choices[0] : undefined);
+  const preset = kind ? presets.rows.find((p) => p.kind === kind) : undefined;
   const brand = preset && preset.brand_id !== "__simple__" ? brands.find((b) => b.id === preset.brand_id)?.source : undefined;
   const wappenReady = presets.rows.some((p) => p.kind === "vision");
   const wappenBlocked = replay ? "사진 시험 모드" : !presets.loading && !wappenReady ? "설정 필요" : "";
@@ -69,17 +67,10 @@ export default function SimpleStart() {
     // An address or redo that asks for wappen shows the choice with its reason instead.
     if (kind === "vision" && wappenBlocked) setKind(null);
   }, [kind, wappenBlocked]);
-  const pickPreset = kind && choices.length > 1 && !preset;
   const ready = !!kind && !presets.loading && !presets.error && (kind === "simple" || !!preset) &&
     (!brand || brand.options.every((o) => o.values.includes(targets[o.key])));
 
-  const back = () => {
-    if (kind && presetId && choices.length > 1) setPresetId("");
-    else if (kind) {
-      setKind(null);
-      setPresetId("");
-    } else nav("/");
-  };
+  const back = () => (kind ? setKind(null) : nav("/"));
 
   const start = async () => {
     if (!kind || starting) return;
@@ -130,17 +121,14 @@ export default function SimpleStart() {
       backLabel={kind ? "이전" : "처음"}
       right={testRun ? <span className="rounded-2xl border-2 border-ink-500 px-5 py-3 text-[28px] font-extrabold">시험</span> : undefined}
       footer={
-        kind && !pickPreset ? (
-          <>
-            {preset && choices.length > 1 && <span className="text-[32px] font-extrabold">{preset.name}</span>}
-            <div className="ml-auto flex gap-5">
-              {starting && <StopButton />}
-              <button className="btn btn-go btn-xl min-w-[440px]" disabled={!ready || !online || starting} onClick={start}>
-                <Play size={48} strokeWidth={3} />
-                {starting ? "시작하는 중" : "시작"}
-              </button>
-            </div>
-          </>
+        kind ? (
+          <div className="ml-auto flex gap-5">
+            {starting && <StopButton />}
+            <button className="btn btn-go btn-xl min-w-[440px]" disabled={!ready || !online || starting} onClick={start}>
+              <Play size={48} strokeWidth={3} />
+              {starting ? "시작하는 중" : "시작"}
+            </button>
+          </div>
         ) : undefined
       }
     >
@@ -162,16 +150,7 @@ export default function SimpleStart() {
           />
         </div>
       )}
-      {pickPreset && (
-        <div className="grid grid-cols-2 gap-6 pt-4">
-          {choices.map((p) => (
-            <button key={p.id} className="choice min-h-[160px] w-full !text-[44px]" onClick={() => setPresetId(p.id)}>
-              {p.name}
-            </button>
-          ))}
-        </div>
-      )}
-      {kind && !pickPreset && (
+      {kind && (
         <div className="grid gap-10 pt-4" style={{ gridTemplateColumns: kind === "vision" ? "minmax(0,1.2fr) minmax(0,1fr)" : "1fr" }}>
           <div className="space-y-10">
             {brand?.options.map((option) => (

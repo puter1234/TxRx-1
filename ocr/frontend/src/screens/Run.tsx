@@ -5,7 +5,7 @@ import { useApp } from "../lib/store";
 import { refresh, reportError, sendCommand } from "../lib/station";
 import { api, errorText, uuid, type Result } from "../station/shared";
 import { optionColorStyle } from "../lib/optionColors";
-import { cameraOn, jobTitle, needsCamera, phaseView, presetLabel, RUNNING, TONE_BAR, useRedo } from "../lib/jobs";
+import { cameraOn, jobTitle, needsCamera, phaseView, RUNNING, TONE_BAR, useRedo } from "../lib/jobs";
 import { Screen, Sheet } from "../ui/kit";
 import CameraBox, { CameraOnButton } from "../ui/CameraBox";
 import StopButton from "../ui/StopButton";
@@ -59,7 +59,6 @@ export default function Run() {
   const blockers = ["READY", "PAUSED"].includes(phase) ? state?.blockers ?? [] : [];
   const cameraBlocked = blockers.some((b) => b.includes("카메라")) || (cameraNeeded && !cameraOn(equipment));
   const adjustable = online && ["READY", "PAUSED"].includes(phase) && !state?.busy && !pending.includes("adjust");
-  const label = presetLabel(s.recipe.work_name);
 
   const run = async (fn: () => Promise<unknown>) => {
     if (busy) return;
@@ -132,7 +131,6 @@ export default function Run() {
       onBack={() => nav("/")}
       right={
         <>
-          {label && <span className="rounded-2xl border-2 border-ink-500 px-5 py-3 text-[28px] font-extrabold">{label}</span>}
           {s.recipe.test_run && <span className="rounded-2xl border-2 border-ink-500 px-5 py-3 text-[28px] font-extrabold">시험</span>}
           {kind === "condition" &&
             s.brand.options.map((o) => (
