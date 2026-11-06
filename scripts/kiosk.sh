@@ -33,6 +33,11 @@ for b in google-chrome google-chrome-stable chromium-browser chromium; do
   if command -v "$b" >/dev/null 2>&1; then BROWSER="$b"; break; fi
 done
 if [ -z "$BROWSER" ]; then echo "no Chrome found"; exit 1; fi
+# 한글 input in Chrome: the input method must run and Chrome must be told to use it.
+export GTK_IM_MODULE=ibus QT_IM_MODULE=ibus XMODIFIERS=@im=ibus
+if command -v ibus-daemon >/dev/null 2>&1 && ! pgrep -x ibus-daemon >/dev/null 2>&1; then
+  ibus-daemon -drx && sleep 1
+fi
 PROFILE="$HOME/.txrx-chrome"
 # A Chrome already open on this profile would only add a normal window and ignore --kiosk.
 pkill -f -- "--user-data-dir=$PROFILE" 2>/dev/null && sleep 2
@@ -42,4 +47,4 @@ sed -i 's/"exit_type":"Crashed"/"exit_type":"Normal"/; s/"exited_cleanly":false/
 echo "opening $START with $BROWSER"
 # GPU drawing off: with it on, Chrome on the J4012 stops redrawing the page.
 exec "$BROWSER" --user-data-dir="$PROFILE" --disable-gpu --kiosk --start-fullscreen --no-first-run \
-  --noerrdialogs --disable-session-crashed-bubble --disable-infobars --password-store=basic --allow-file-access-from-files "$START"
+  --noerrdialogs --disable-session-crashed-bubble --disable-infobars --password-store=basic --allow-file-access-from-files --enable-wayland-ime --gtk-version=4 "$START"
