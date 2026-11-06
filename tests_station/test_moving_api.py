@@ -305,6 +305,21 @@ def test_wappens_poured_in_bulk_are_counted_by_the_camera_alone(line):
     assert line.app.state.store.inspection_rows() == []
 
 
+def test_wappens_are_counted_at_low_speed_the_whole_time(line, monkeypatch):
+    from station.counting import CrossingTracker, ObjectCounter
+    class Counter(ObjectCounter):
+        def __init__(self, cfg):
+            self.settings, self.tracker, self.identity = cfg, CrossingTracker(cfg), {"counter": cfg.counter}
+        def detect(self, frame): return []
+    monkeypatch.setattr("station.flow.ObjectCounter", Counter)
+    monkeypatch.setattr("station.hardware.SOFT_RAMP_SECONDS", 0)
+    prepare(line, counter="cvzone")
+    issue(line, "start")
+    time.sleep(.2)
+    assert line.io.snapshot()["motor_requested"] and not line.io.snapshot()["speed_requested"]
+    assert line.client.get("/api/status").json()["session"]["phase"] == "FEEDING"
+
+
 def test_target_correction_waits_for_removal_of_an_interrupted_product(line):
     state = prepare(line)
     issue(line, "start")

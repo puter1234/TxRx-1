@@ -51,8 +51,9 @@ export default function Run() {
   const done = phase === "DONE";
   const view = phaseView(phase);
   const running = RUNNING.includes(phase);
-  const target = s.recipe.target_count;
   const kind = s.recipe.kind || "condition";
+  // Wappens are only counted, never to a target.
+  const target = kind === "vision" ? null : s.recipe.target_count;
   const cameraNeeded = needsCamera(kind, s.recipe.channels) && state?.mode === "HARDWARE";
   const showCamera = cameraNeeded;
   const failures = phase === "HOLD" ? state?.last_result?.failures ?? [] : [];

@@ -123,29 +123,73 @@ it("does not create settings by just opening an empty settings list", async () =
     response(options?.method === "POST" ? { ...JSON.parse(options.body as string).preset, revision: 1 } : path === "/api/presets" ? [] : {}));
   vi.stubGlobal("fetch", fetcher);
   render(<MemoryRouter><WorkPresets initialKind="vision" /></MemoryRouter>);
-  const name = await screen.findByRole("textbox", { name: "설정 이름" });
+  const field = (await screen.findAllByRole("spinbutton", { name: "추적 유지 (ms)" }))[0];
   await act(async () => { await new Promise((r) => setTimeout(r, 1200)); });
   const posts = () => fetcher.mock.calls.filter(([path, o]) => path === "/api/presets" && o?.method === "POST");
   expect(posts()).toHaveLength(0);
-  fireEvent.change(name, { target: { value: "와펜 큰 것" } });
+  fireEvent.change(field, { target: { value: "600" } });
   await waitFor(() => expect(posts()).toHaveLength(1), { timeout: 3000 });
 });
 
-it("does not save a second setting with a name already in use", async () => {
+it("edits a brand's one setting in place, with no list, name or add buttons", async () => {
+  const stored = { ...simplePreset, id: "c1", name: "기본 설정", kind: "condition", brand_id: "hazzys", channels: ["ocr"], revision: 3 };
   const fetcher = vi.fn(async (path: string, options?: RequestInit) =>
-    response(options?.method === "POST" ? { ...JSON.parse(options.body as string).preset, revision: 1 }
-      : path === "/api/presets" ? [{ ...simplePreset, id: "c1", name: "기본 설정", kind: "condition", brand_id: "hazzys", channels: ["ocr"] }] : {}));
+    response(options?.method === "POST" ? { ...JSON.parse(options.body as string).preset, revision: 4 }
+      : path === "/api/presets" ? [stored] : {}));
   vi.stubGlobal("fetch", fetcher);
   render(<MemoryRouter><WorkPresets brandId="hazzys" /></MemoryRouter>);
-  fireEvent.click(await screen.findByRole("button", { name: "설정 추가" }));
-  fireEvent.change(screen.getByRole("textbox", { name: "설정 이름" }), { target: { value: "기본 설정" } });
-  expect(await screen.findByText("같은 이름 있음")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "시험 계수" })).toHaveProperty("disabled", true);
-  await act(async () => { await new Promise((r) => setTimeout(r, 1200)); });
+  const field = await screen.findByRole("spinbutton", { name: "저속 유지 (ms)" });
+  for (const name of ["설정 추가", "현재 설정 복사"]) expect(screen.queryByRole("button", { name })).toBeNull();
+  expect(screen.queryByRole("combobox", { name: "저장된 설정" })).toBeNull();
+  expect(screen.queryByRole("textbox", { name: "설정 이름" })).toBeNull();
+  expect(screen.queryByText("작업자 화면에 표시")).toBeNull();
+  fireEvent.change(field, { target: { value: "700" } });
   const posts = () => fetcher.mock.calls.filter(([path, o]) => path === "/api/presets" && o?.method === "POST");
-  expect(posts()).toHaveLength(0);
-  fireEvent.change(screen.getByRole("textbox", { name: "설정 이름" }), { target: { value: "기본 설정 큰 것" } });
   await waitFor(() => expect(posts()).toHaveLength(1), { timeout: 3000 });
+  const body = JSON.parse(posts()[0][1]!.body as string);
+  expect(body).toMatchObject({ expected_revision: 3, preset: { id: "c1", flow: { low_speed_ms: 700 } } });
+});
+
+it("starts clothes and a brand's condition counting without asking which setting to use", async () => {
+  const old = { ...simplePreset, id: "work-old", name: "예전 설정" };
+  const conditions = ["c1", "c2"].map((id) => ({ ...simplePreset, id, name: id, kind: "condition", brand_id: "hazzys", channels: ["ocr"] }));
+  vi.stubGlobal("fetch", vi.fn(async (path: string) => response(path === "/api/presets" ? [simplePreset, old, ...conditions] : path === "/api/brands" ? [brand] : {})));
+  render(<MemoryRouter initialEntries={["/simple?item=clothes"]}><App /></MemoryRouter>);
+  expect(await screen.findByRole("button", { name: "시작" })).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "목표 수량" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "예전 설정" })).toBeNull();
+  expect(screen.queryByText("예전 설정")).toBeNull();
+  cleanup();
+  render(<MemoryRouter initialEntries={["/condition"]}><App /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole("button", { name: "헤지스" }));
+  expect(await screen.findByRole("heading", { name: "사이즈" })).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: "작업 설정" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "c2" })).toBeNull();
+});
+
+it("counts wappens without a target quantity", async () => {
+  acceptSnapshot({ ...snapshot, mode: "HARDWARE", can_start: true } as Snapshot);
+  useApp.setState({ equipment: { camera: { connected: true } } as any });
+  const fetcher = vi.fn(async (path: string) => response(path === "/api/presets" ? [simplePreset, wappenPreset, { ...wappenPreset, id: "wappen-2", name: "다른 와펜" }] : {}));
+  vi.stubGlobal("fetch", fetcher);
+  render(<MemoryRouter initialEntries={["/simple?item=wappen"]}><App /></MemoryRouter>);
+  const start = await screen.findByRole("button", { name: "시작" });
+  expect(screen.queryByRole("heading", { name: "목표 수량" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "다른 와펜" })).toBeNull();
+  await waitFor(() => expect(start).toHaveProperty("disabled", false));
+  fireEvent.click(start);
+  await waitFor(() => expect(fetcher.mock.calls.some(([path]) => path === "/api/presets/wappen/start")).toBe(true));
+  const call = fetcher.mock.calls.find(([path]) => path === "/api/presets/wappen/start")! as unknown as [string, RequestInit];
+  expect(JSON.parse(call[1].body as string).target_count).toBeNull();
+});
+
+it("shows a wappen job's count without a target", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => response({})));
+  acceptSnapshot({ ...snapshot, session: job({ count: 12, recipe: { ...job({}).recipe, kind: "vision", target_count: 40 } }) });
+  render(<MemoryRouter initialEntries={["/run"]}><App /></MemoryRouter>);
+  expect((await screen.findByLabelText("현재 수량")).textContent).toBe("12");
+  expect(screen.queryByText("/ 40")).toBeNull();
+  expect(screen.queryByText(/남은 수량/)).toBeNull();
 });
 
 it("names each brand's setting in the statistics and leaves out settings of deleted brands", async () => {

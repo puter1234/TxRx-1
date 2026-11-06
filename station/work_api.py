@@ -75,6 +75,17 @@ def install_work_api(app, controller, permitted, vision, monitor):
     store = controller.store
     if store.get("work_presets") is None:
         store.put("work_presets", {"simple": WorkPreset(id="simple", name="단순 계수").model_dump()})
+    if not store.get("wappen_yolo_default"):
+        # Wappens are counted with the YOLO model by default; the one wappen setting
+        # moves to it once and CVZone stays selectable afterwards.
+        stored = store.get("work_presets", {})
+        wappen = current_presets(stored).get(("vision", ""))
+        if wappen and (wappen.get("flow") or {}).get("counter") == "cvzone":
+            saved = {**wappen, "flow": {**wappen["flow"], "counter": "yolo"}, "revision": wappen.get("revision", 1) + 1}
+            stored[saved["id"]] = WorkPreset.model_validate(saved).model_dump()
+            store.put("work_presets", stored)
+            store.event("PRESET_SAVED", {"actor": "system", "before": wappen, "after": stored[saved["id"]]})
+        store.put("wappen_yolo_default", True)
 
     @app.get("/api/speed-wiring")
     def wiring():
@@ -121,7 +132,9 @@ def install_work_api(app, controller, permitted, vision, monitor):
         recipe = Recipe(kind=preset.kind, brand_id=preset.brand_id, brand_revision=body.brand_revision,
                         channels=preset.channels if body.channels is None else body.channels,
                         barcode_targets=preset.barcode_targets if body.barcode_targets is None else body.barcode_targets,
-                        targets=body.targets, target_count=body.target_count, tag_count=body.tag_count,
+                        targets=body.targets, tag_count=body.tag_count,
+                        # Wappens are only counted, never to a target.
+                        target_count=None if preset.kind == "vision" else body.target_count,
                         preset_id=preset.id, preset_revision=preset.revision, flow=preset.flow,
                         work_name=preset.name, test_run=body.test_run)
         return prepare_session(controller, vision, monitor, recipe, actor)

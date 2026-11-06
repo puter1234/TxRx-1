@@ -79,8 +79,8 @@ export default function SimpleStart() {
       await startSession(
         {
           mode: kind,
-          countMode: target ? "target" : "continuous",
-          target,
+          countMode: target && kind === "simple" ? "target" : "continuous",
+          target: kind === "simple" ? target : null,
           presetId: preset?.id,
           presetRevision: preset?.revision,
           brandId: preset?.brand_id,
@@ -151,8 +151,8 @@ export default function SimpleStart() {
         </div>
       )}
       {kind && (
-        <div className="grid gap-10 pt-4" style={{ gridTemplateColumns: kind === "vision" ? "minmax(0,1.2fr) minmax(0,1fr)" : "1fr" }}>
-          <div className="space-y-10">
+        <div className="grid gap-10 pt-4" style={{ gridTemplateColumns: kind === "vision" && brand?.options.length ? "minmax(0,1.2fr) minmax(0,1fr)" : "1fr" }}>
+          {(kind === "simple" || !!brand?.options.length) && <div className="space-y-10">
             {brand?.options.map((option) => (
               <OptionButtons
                 key={option.key}
@@ -161,8 +161,8 @@ export default function SimpleStart() {
                 onChange={(value) => setTargets((old) => ({ ...old, [option.key]: value }))}
               />
             ))}
-            <QuantityPicker value={target} onChange={setTarget} />
-          </div>
+            {kind === "simple" && <QuantityPicker value={target} onChange={setTarget} />}
+          </div>}
           {kind === "vision" && <CameraBox className="h-[460px]" />}
         </div>
       )}

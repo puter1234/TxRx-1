@@ -34,8 +34,62 @@ def test_operator_cannot_override_preset_algorithm_or_run_test(tmp_path):
         enter(client)
         assert client.post("/api/presets/simple/start", json={"preset_revision": 1, "flow": {"counter": "yolo"}}).status_code == 422
         assert client.post("/api/presets/simple/start", json={"preset_revision": 1, "test_run": True}).status_code == 403
-        assert client.post("/api/presets/simple/start", json={"preset_revision": 2}).status_code == 409
-        assert client.post("/api/presets/simple/start", json={"preset_revision": 1}).status_code == 200
+        # The one setting is edited in place: an older revision still starts on the current one.
+        assert client.post("/api/presets/simple/start", json={"preset_revision": 2}).status_code == 200
+
+
+def preset_raw(ident, kind="vision", revision=1, **extra):
+    flow = {"counter": "cvzone"} if kind == "vision" else {}
+    channels = ["ocr"] if kind == "condition" else []
+    return {**WorkPreset(id=ident, name=ident, kind=kind, flow=flow, channels=channels, **extra).model_dump(), "revision": revision}
+
+
+def test_several_stored_settings_of_a_kind_or_brand_start_on_one_without_a_choice(tmp_path):
+    from station.storage import Store
+    Store(tmp_path).put("work_presets", {
+        "simple": preset_raw("simple", "simple"),
+        "work-a": preset_raw("work-a", revision=3, enabled=False),
+        "work-b": preset_raw("work-b", revision=1),
+        "work-c": preset_raw("work-c", "condition", brand_id="hazzys"),
+        "work-d": preset_raw("work-d", "condition", brand_id="hazzys"),
+        "work-e": preset_raw("work-e", "condition", brand_id="other"),
+        "work-f": preset_raw("work-f", "simple"),
+    })
+    app = create_app(tmp_path)
+    with TestClient(app) as client:
+        enter(client)
+        # The highest revision, then the last in stored order; a disabled one is still the one in use.
+        assert sorted(p["id"] for p in client.get("/api/presets").json()) == ["work-a", "work-d", "work-e", "work-f"]
+        job = client.post("/api/presets/work-b/start", json={"preset_revision": 1})
+        assert job.status_code == 200, job.text
+        recipe = job.json()["session"]["recipe"]
+        # Moved to the YOLO model once at startup, which is one more revision.
+        assert (recipe["preset_id"], recipe["preset_revision"], recipe["work_name"]) == ("work-a", 4, "work-a")
+
+
+def test_wappen_setting_moves_to_the_yolo_model_once(tmp_path):
+    from station.storage import Store
+    Store(tmp_path).put("work_presets", {"work-a": preset_raw("work-a", revision=2)})
+    with TestClient(create_app(tmp_path)) as client:
+        enter(client)
+        [wappen] = client.get("/api/presets").json()
+        assert (wappen["flow"]["counter"], wappen["flow"]["model_path"], wappen["revision"]) == ("yolo", "", 3)
+        login(client)
+        wappen["flow"]["counter"] = "cvzone"
+        assert client.post("/api/presets", json={"preset": wappen, "expected_revision": 3}).status_code == 200
+    with TestClient(create_app(tmp_path)) as client:
+        enter(client)
+        assert client.get("/api/presets").json()[0]["flow"]["counter"] == "cvzone"
+
+
+def test_wappen_job_ignores_a_target_quantity(tmp_path):
+    from station.storage import Store
+    Store(tmp_path).put("work_presets", {"work-a": preset_raw("work-a")})
+    with TestClient(create_app(tmp_path)) as client:
+        enter(client)
+        job = client.post("/api/presets/work-a/start", json={"target_count": 40})
+        assert job.status_code == 200, job.text
+        assert job.json()["session"]["recipe"]["target_count"] is None
 
 
 def test_statistics_split_midnight_seoul_and_export_all_rows(controller):

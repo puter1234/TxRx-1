@@ -224,7 +224,7 @@ class FlowCycle(HardwareCycle):
                     return
                 if self.rfid_reconnect is None:
                     self.rfid_reconnect = asyncio.create_task(self.reconnect_rfid())
-        if (s["phase"] == "FEEDING" and self.speed_deadline is not None and now >= self.speed_deadline
+        if (s["phase"] == "FEEDING" and self.speed_deadline is not None and now >= self.speed_deadline and not bulk
                 and (not self.camera_required() or self.camera.status().get("connected"))):
             serial = self.speed_serial
             self.io.speed(True, allowed=lambda: serial == self.c.stop_serial and not self.c.pending_stops)

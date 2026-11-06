@@ -351,7 +351,8 @@ class Controller:
                     if s["recipe"].get("flow"):
                         if s["active_product"]:
                             raise Conflict("이송 중인 제품의 조치를 먼저 완료하세요.")
-                        self._motor_on(generation, high_speed=True)
+                        # Wappens are counted at low speed the whole time.
+                        self._motor_on(generation, high_speed=s["recipe"].get("kind") != "vision")
                         s["phase"] = "FEEDING"
                     elif not counted and (
                         s["active_product"]

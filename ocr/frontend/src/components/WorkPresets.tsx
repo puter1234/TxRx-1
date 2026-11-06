@@ -283,8 +283,8 @@ function PresetEditor({
                   value={draft.flow.counter}
                   onChange={(e) => flow("counter", e.target.value)}
                 >
-                  <option value="cvzone">CVZone</option>
                   <option value="yolo">YOLO</option>
+                  <option value="cvzone">CVZone</option>
                 </select>
               </label>
               <label className="block text-xl font-extrabold">
