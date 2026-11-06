@@ -260,13 +260,13 @@ def test_camera_reconnect_interval_and_stop_priority(controller, recipe, monkeyp
     asyncio.run(run())
 
 
-def test_di2_without_product_is_ignored(controller, monkeypatch):
+def test_di2_without_product_stops(controller, monkeypatch):
     c, io, _, cycle, _ = rig(controller, monkeypatch)
     async def run():
         await cycle.tick()
         io.raw[1] = 0
         await cycle.tick()
-        assert c.session["fault"] is None and io.on and c.session["count"] == 0
+        assert c.session["fault"] == "DI2_WITHOUT_DI1" and not io.on
     asyncio.run(run())
 
 
@@ -424,12 +424,11 @@ def test_slow_photo_save_does_not_block_monitor_or_count_after_stop(controller, 
         if interruption == "stop":
             c.command(command(c, "stop"), "test")
         elif interruption == "extra_di2":
-            # The same product's edge passing DI2 again is ignored; the belt keeps running.
             io.raw[1] = 1
             await cycle.tick()
             io.raw[1] = 0
             await cycle.tick()
-            assert io.on and c.session["fault"] is None
+            assert not io.on and c.session["fault"] == "QUANTITY_MISMATCH"
         else:
             camera.connected = False
             await cycle.tick()
@@ -438,9 +437,7 @@ def test_slow_photo_save_does_not_block_monitor_or_count_after_stop(controller, 
         for _ in range(50):
             await asyncio.sleep(.002)
             await cycle.tick()
-        if interruption == "extra_di2":
-            assert io.on and c.session["count"] == 1 and c.last_result["status"] == "PASS"
-        elif interruption == "stop":
+        if interruption in ("stop", "extra_di2"):
             assert not io.on and c.session["count"] == 0 and c.last_result["status"] == "ABORTED"
         else:
             assert not io.on and c.session["count"] == 1 and c.session["phase"] == "CAMERA_WAIT"

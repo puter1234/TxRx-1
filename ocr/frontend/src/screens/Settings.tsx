@@ -274,7 +274,6 @@ const EVENT_LABEL: Record<string, string> = {
   DATABASE_WRITE_FAILED: "기록 저장 실패",
   DI1_DETECTED: "센서 1 감지",
   DI2_DETECTED: "센서 2 감지",
-  DI2_REPEATED: "센서 2 다시 감지 (같은 제품)",
   FAULT: "장비 오류",
   HIGH_SPEED_SELECTED: "고속 선택",
   INSPECTION_ABORTED: "검사 중단",

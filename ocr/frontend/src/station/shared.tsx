@@ -127,7 +127,7 @@ export const CHANNEL: Record<string, string> = {
   barcode: "바코드 (선택)",
 };
 export const ERR: Record<string, string> = {
-  QUANTITY_MISMATCH: "수량 불일치",
+  QUANTITY_MISMATCH: "센서 2 중복 감지",
   DI2_WITHOUT_DI1: "DI1 없이 DI2 감지",
   EARLY_DI1_UNRESOLVED: "이전 제품 처리 중 DI1 감지",
   CAMERA_PRODUCT_REVIEW: "카메라 복구됨, 이송 중 제품 확인",
