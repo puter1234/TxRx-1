@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../station/shared";
 import RoiEditor from "./RoiEditor";
+import { LinePercent } from "../ui/CountOverlay";
 import CameraQuality, { type PresetCamera } from "./bench/CameraQuality";
 import { useApp } from "../lib/store";
 
@@ -309,6 +310,7 @@ function PresetEditor({
                   <option value="x-1">오른쪽에서 왼쪽</option>
                 </select>
               </label>
+              <LinePercent value={draft.flow.line} onChange={(v) => flow("line", v)} />
               {draft.flow.counter === "yolo" ? (
                 <>
                   <label className="block text-xl font-extrabold">
@@ -373,7 +375,6 @@ function PresetEditor({
                 />
               </label>
             ))}
-            {number("line", "계수선 위치 (0~1)", 0.01)}
             {number("hysteresis", "계수선 여유 (0~1)", 0.01)}
             {number("match_distance", "추적 최대 이동 (0~1)", 0.01)}
             {number("track_lost_ms", "추적 유지 (ms)")}

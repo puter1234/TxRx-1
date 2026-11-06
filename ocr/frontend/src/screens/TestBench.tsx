@@ -8,7 +8,8 @@ import { useCameraPreview } from "../components/useCameraPreview";
 import { useBench, type BenchHook } from "../components/DeviceTests";
 import BatchCapture from "../components/BatchCapture";
 import ProcessTest, { type ProcessSettings } from "../components/bench/ProcessTest";
-import WappenTest, { type Trial } from "../components/bench/WappenTest";
+import WappenTest, { type LineEdit, type Trial } from "../components/bench/WappenTest";
+import CountOverlay, { useImageSize } from "../ui/CountOverlay";
 import RfidTest from "../components/bench/RfidTest";
 import CameraQuality, { modeLabel } from "../components/bench/CameraQuality";
 import ResultView, { type Shown } from "../components/bench/ResultView";
@@ -32,6 +33,7 @@ export default function TestBench() {
   const locked = !online || !ended(session);
   const [shown, setShown] = useState<Shown | null>(null);
   const [trial, setTrial] = useState<Trial | null>(null);
+  const [lineEdit, setLineEdit] = useState<LineEdit | null>(null);
   const [batch, setBatch] = useState(false);
   const [inputError, setInputError] = useState("");
   const settings = useRef<ProcessSettings | null>(null);
@@ -87,7 +89,8 @@ export default function TestBench() {
       )}
       <div className="grid gap-5" style={{ gridTemplateColumns: "minmax(0,1.1fr) minmax(0,1fr)" }}>
         <div className="min-w-0 space-y-4">
-          <LiveView connected={cameraReady} reconnecting={!!camera?.reconnecting} trial={trial} />
+          <LiveView connected={cameraReady} reconnecting={!!camera?.reconnecting} trial={trial}
+            lineEdit={mode === "wappen" ? lineEdit : null} />
           <div className="grid grid-cols-[1fr_1fr_auto] gap-3">
             <button className="btn btn-primary btn-lg" disabled={!!cameraBlock || bench.busy || locked} onClick={photo}>
               <Camera size={34} />
@@ -113,7 +116,7 @@ export default function TestBench() {
           </div>
           <div className="card p-5">
             {mode === "process" && <ProcessTest bench={bench} locked={locked} onShow={setShown} onSettings={(s) => (settings.current = s)} />}
-            {mode === "wappen" && <WappenTest bench={bench} locked={locked} onTrial={setTrial} />}
+            {mode === "wappen" && <WappenTest bench={bench} locked={locked} onTrial={setTrial} onLine={setLineEdit} />}
             {mode === "rfid" && <RfidTest bench={bench} locked={locked} />}
             {mode === "quality" && <CameraQuality bench={bench} locked={locked} />}
           </div>
@@ -207,35 +210,26 @@ function Chip({ label, text, tone }: { label: string; text: string; tone: string
   );
 }
 
-function LiveView({ connected, reconnecting, trial }: { connected: boolean; reconnecting: boolean; trial: Trial | null }) {
+function LiveView({ connected, reconnecting, trial, lineEdit }: {
+  connected: boolean; reconnecting: boolean; trial: Trial | null; lineEdit: LineEdit | null;
+}) {
   const { url, failed } = useCameraPreview(connected);
-  const flow = trial?.preset?.flow;
+  const [natural, onLoad] = useImageSize();
+  // The wappen tab shows the saved line before a trial too, and it can be dragged there.
+  const flow = lineEdit?.flow ?? trial?.preset?.flow;
+  const size = trial?.width ? trial : natural;
   return (
     <section aria-label="실시간 영상" className="relative flex aspect-[4/3] max-h-[560px] w-full items-center justify-center overflow-hidden rounded-3xl bg-ink-900">
       {connected && url ? (
-        <img src={url} alt="카메라 영상" className="h-full w-full object-contain" />
+        <img src={url} alt="카메라 영상" className="h-full w-full object-contain" onLoad={onLoad} />
       ) : (
         <p className="text-[32px] font-black text-white">{connected ? "영상 받는 중" : reconnecting ? "카메라 연결 중" : "카메라 꺼짐"}</p>
       )}
       {connected && url && failed && (
         <p role="status" className="absolute left-4 top-4 rounded-xl bg-warn px-4 py-2 text-[22px] font-extrabold text-ink-900">영상 지연</p>
       )}
-      {trial && flow && trial.width > 0 && connected && url && (
-        <svg aria-label="검출 위치와 계수선" className="pointer-events-none absolute inset-0 h-full w-full"
-          viewBox={`0 0 ${trial.width} ${trial.height}`} preserveAspectRatio="xMidYMid meet">
-          {flow.roi && (
-            <rect x={flow.roi[0] * trial.width} y={flow.roi[1] * trial.height} width={flow.roi[2] * trial.width}
-              height={flow.roi[3] * trial.height} fill="none" stroke="#22c55e" strokeWidth={6} strokeDasharray="24 16" />
-          )}
-          {trial.boxes.map(([x1, y1, x2, y2], i) => (
-            <rect key={i} x={x1 * trial.width} y={y1 * trial.height} width={(x2 - x1) * trial.width}
-              height={(y2 - y1) * trial.height} fill="none" stroke="#22c55e" strokeWidth={8} />
-          ))}
-          <line
-            x1={flow.axis === "x" ? flow.line * trial.width : 0} x2={flow.axis === "x" ? flow.line * trial.width : trial.width}
-            y1={flow.axis === "y" ? flow.line * trial.height : 0} y2={flow.axis === "y" ? flow.line * trial.height : trial.height}
-            stroke="#facc15" strokeWidth={8} />
-        </svg>
+      {flow && size && connected && url && (
+        <CountOverlay flow={flow} size={size} boxes={trial?.boxes} onLine={lineEdit?.set} />
       )}
     </section>
   );

@@ -2,6 +2,7 @@ import { useRef } from "react";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp } from "lucide-react";
 import { useApp } from "../lib/store";
 import { useCameraPreview } from "./useCameraPreview";
+import { CameraOnButton } from "../ui/CameraBox";
 
 type Roi = [number, number, number, number];
 type Drag = { mode: "move" | "resize" | "line"; x: number; y: number; roi: Roi; line: number };
@@ -66,7 +67,11 @@ export default function RoiEditor({
       {url ? (
         <img src={url} alt="" className="pointer-events-none h-full w-full object-fill" draggable={false} />
       ) : (
-        <span className="absolute inset-0 flex items-center justify-center text-[28px] font-extrabold text-white/70">카메라 꺼짐</span>
+        // The line is set against the picture, so the camera can be turned on here.
+        <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-4">
+          <span className="text-[28px] font-extrabold text-white/70">카메라 꺼짐</span>
+          <CameraOnButton className="btn-lg pointer-events-auto" />
+        </div>
       )}
       <div
         className="absolute cursor-move border-4 border-[#22c55e] bg-[#22c55e]/10"

@@ -120,6 +120,9 @@ def install_work_api(app, controller, permitted, vision, monitor):
             existing[p.id] = saved
             c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", ("work_presets", dump(existing)))
             store.event("PRESET_SAVED", {"actor": actor, "before": old, "after": saved}, c)
+        trial = getattr(app.state, "vision_trial", None)
+        if trial is not None and saved["kind"] == "vision":
+            trial.preset_saved(saved)
         return saved
 
     @app.post("/api/presets/{ident}/start")

@@ -9,7 +9,7 @@ import threading
 import time
 
 from .controller import Conflict
-from .schema import WorkPreset
+from .schema import FlowSettings, WorkPreset
 
 
 class VisionTrial:
@@ -19,6 +19,7 @@ class VisionTrial:
         self.lock = threading.Lock()
         self.cancel = threading.Event()
         self.thread = None
+        self.counter = None
         self.state = {"active": False, "total": 0, "boxes": [], "width": 0, "height": 0,
                       "inference_ms": None, "frames": 0, "error": None, "preset": None}
 
@@ -44,6 +45,7 @@ class VisionTrial:
             if self.busy():
                 raise Conflict("와펜 계수 시험이 이미 진행 중입니다.")
             self.cancel.clear()
+            self.counter = counter
             self.state = {"active": True, "total": 0, "boxes": [], "width": 0, "height": 0,
                           "inference_ms": None, "frames": 0, "error": None,
                           "preset": {"id": preset.id, "name": preset.name, "revision": preset.revision,
@@ -76,6 +78,22 @@ class VisionTrial:
         finally:
             with self.lock:
                 self.state["active"] = False
+
+    def preset_saved(self, raw):
+        """A wappen setting saved while it is being tried counts with its new line at once."""
+        with self.lock:
+            preset, counter = self.state.get("preset"), self.counter
+            if not (self.state["active"] and preset and counter and preset["id"] == raw.get("id")):
+                return
+            flow = FlowSettings.model_validate(raw["flow"])
+            old = getattr(counter, "settings", None)
+            # Another model or method is loaded only when the trial starts again.
+            if old is None or (flow.counter, flow.model_path) != (old.counter, old.model_path):
+                return
+            counter.settings = flow
+            if getattr(counter, "tracker", None) is not None:
+                counter.tracker.settings = flow
+            preset.update(revision=raw.get("revision"), flow=flow.model_dump())
 
     def stop(self, reason=None):
         self.cancel.set()

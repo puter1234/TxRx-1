@@ -100,6 +100,8 @@ export type Snapshot = {
     error: string | null;
     busy: boolean;
   };
+  // TEMP: GPU indicator. "GPU" or "CPU"; null until the model is loaded.
+  inference?: { ocr: string | null; detector: string | null; wappen: string | null };
 };
 export type Action = (
   work: () => Promise<unknown>,

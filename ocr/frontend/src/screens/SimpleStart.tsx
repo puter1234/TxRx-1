@@ -163,7 +163,7 @@ export default function SimpleStart() {
             ))}
             {kind === "simple" && <QuantityPicker value={target} onChange={setTarget} />}
           </div>}
-          {kind === "vision" && <CameraBox className="h-[460px]" />}
+          {kind === "vision" && <CameraBox className="h-[460px]" flow={preset?.flow} />}
         </div>
       )}
     </Screen>

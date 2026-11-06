@@ -24,6 +24,24 @@ def missing_ocr_modules():
     return [name for name in OCR_MODULES if importlib.util.find_spec(name) is None]
 
 
+def inference_devices(status):  # TEMP: GPU indicator
+    """GPU or CPU for each loaded model, None for one not loaded yet."""
+    from . import counting
+
+    device = status.get("device")
+    detector = getattr(sys.modules.get("tagreader.text_detector"), "_instance", None)
+    try:
+        detector = detector and detector.session.get_providers()[0]
+    except Exception:
+        detector = None
+    counter = counting.last_counter
+    return {
+        "ocr": None if device is None else "GPU" if str(device).startswith("cuda") else "CPU",
+        "detector": None if not detector else "GPU" if detector == "CUDAExecutionProvider" else "CPU",
+        "wappen": counter.runtime_device() if counter else None,
+    }
+
+
 def _reads_as_target(text: str, brand: Brand, targets: dict) -> bool:
     """The target product code appears in the line, with look-alike characters
     (O/0, I/1, B/8, S/5 ...) treated as the same and other text around it ignored."""

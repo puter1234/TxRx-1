@@ -9,6 +9,9 @@ import time
 
 from .schema import FlowSettings, wappen_model_path
 
+# TEMP: GPU indicator. The wappen counter loaded last, shown on the run and trial screens.
+last_counter = None
+
 
 def file_sha256(path):
     digest = hashlib.sha256()
@@ -91,6 +94,25 @@ class ObjectCounter:
             except ImportError as exc:
                 raise ValueError("CVZone 실행 모듈이 없습니다. requirements-counting.txt를 설치하세요.") from exc
             self.cvzone = cvzone
+        global last_counter
+        last_counter = self  # TEMP: GPU indicator
+
+    def runtime_device(self):  # TEMP: GPU indicator
+        """"GPU" or "CPU": what the detector really runs on once it has run, else what was asked for."""
+        if self.model is None:
+            return "CPU"
+        try:
+            # ultralytics builds its backend at the first prediction; an ONNX one holds the session.
+            backend = getattr(getattr(self.model, "predictor", None), "model", None)
+            session = getattr(backend, "session", None)
+            if session is not None and hasattr(session, "get_providers"):
+                return "GPU" if session.get_providers()[0] == "CUDAExecutionProvider" else "CPU"
+            device = getattr(backend, "device", None)
+            if device is not None:
+                return "GPU" if str(device).startswith("cuda") else "CPU"
+        except Exception:
+            pass
+        return "GPU" if self.device == 0 else "CPU"
 
     def detect(self, frame):
         import cv2

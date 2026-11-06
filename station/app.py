@@ -431,7 +431,13 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
     @app.get("/api/status")
     def status():
         controller.last_client = time.monotonic()
-        return {**controller.snapshot(), "vision": vision.status()}
+        return state()
+
+    def state():
+        status = vision.status()
+        # TEMP: GPU indicator
+        from .vision import inference_devices
+        return {**controller.snapshot(), "vision": status, "inference": inference_devices(status)}
 
     @app.websocket("/api/ws")
     async def stream(ws: WebSocket):
@@ -448,7 +454,7 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
             while auth.valid(ws.cookies.get("txrx_session")):
                 # Only an acknowledged screen heartbeat extends operator presence.
                 payload = await asyncio.to_thread(lambda: {
-                        "state": {**controller.snapshot(), "vision": vision.status()},
+                        "state": state(),
                         "event_seq": store.last_event_seq(),
                     })
                 await ws.send_json(payload)
