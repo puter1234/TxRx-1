@@ -229,8 +229,8 @@ class FlowCycle(HardwareCycle):
                 self.event("DI1_DETECTED")
                 self.c.fault("EARLY_DI1_UNRESOLVED")
             elif hits[1]:
-                self.event("DI2_DETECTED")
-                self.c.fault("QUANTITY_MISMATCH")
+                # The product just finished passing DI2 again (a sleeve, a tag): not a new one.
+                self.event("DI2_REPEATED")
             elif self.camera_required() and not self.camera.status().get("connected"):
                 await self.reconnect(now, cfg)
             return
@@ -250,15 +250,15 @@ class FlowCycle(HardwareCycle):
                 # debounced acceptance must not undo an expired timer's return
                 # to high speed, including a configured zero-length hold.
         if hits[1]:
-            self.event("DI2_DETECTED")
             self.io.light(False)
-            if not self.pending:
-                self.c.fault("DI2_WITHOUT_DI1")
-                return
-            if self.pending["di2"]:
-                self.fail("QUANTITY_MISMATCH")
-            self.pending["di2"] = True
-            self.pending["inspection"]["di2_at"] = utc()
+            # DI2 seen again with no new DI1 is the same product's edge passing DI2
+            # again (a sleeve, a tag, a gap in the cloth): ignored, never a stop.
+            if not self.pending or self.pending["di2"]:
+                self.event("DI2_REPEATED")
+            else:
+                self.event("DI2_DETECTED")
+                self.pending["di2"] = True
+                self.pending["inspection"]["di2_at"] = utc()
         # A product failure takes priority over camera recovery. Never briefly
         # restart the conveyor before processing an already known mismatch.
         if self.pending and self.pending["failures"]:
