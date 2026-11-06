@@ -240,6 +240,10 @@ class WorkPreset(Model):
     def coherent(self):
         self.camera = (self.camera or PresetCamera()) if self.kind == "vision" else None
         self.channels = [c for c in self.channels if c != "barcode"]  # Barcode reading is switched off.
+        if self.kind != "vision" and self.flow.counter != "sensor":
+            # Older 옷/조건 settings could carry a camera counter that had to see exactly one
+            # object per product (QUANTITY_MISMATCH otherwise). Only wappens are counted by camera.
+            self.flow = self.flow.model_copy(update={"counter": "sensor"})
         if "rfid" in self.channels:
             self.flow.validate_rfid_timing()
         if len(self.channels) != len(set(self.channels)):
@@ -294,6 +298,9 @@ class Recipe(Model):
     def channels_unique(self):
         # Barcode reading is switched off; saved presets and jobs that asked for it run without it.
         self.channels = [c for c in self.channels if c != "barcode"]
+        if self.kind != "vision" and self.flow and self.flow.counter != "sensor":
+            # Only wappens are counted by camera; see WorkPreset.coherent.
+            self.flow = self.flow.model_copy(update={"counter": "sensor"})
         if "rfid" in self.channels and self.flow:
             self.flow.validate_rfid_timing()
         if self.kind == "condition" and (not self.targets or not self.channels):
