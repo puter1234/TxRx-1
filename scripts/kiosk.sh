@@ -47,4 +47,4 @@ sed -i 's/"exit_type":"Crashed"/"exit_type":"Normal"/; s/"exited_cleanly":false/
 echo "opening $START with $BROWSER"
 # GPU drawing off: with it on, Chrome on the J4012 stops redrawing the page.
 exec "$BROWSER" --user-data-dir="$PROFILE" --disable-gpu --kiosk --start-fullscreen --no-first-run \
-  --noerrdialogs --disable-session-crashed-bubble --disable-infobars --password-store=basic --allow-file-access-from-files --enable-wayland-ime --gtk-version=4 "$START"
+  --noerrdialogs --disable-session-crashed-bubble --disable-infobars --password-store=basic --allow-file-access-from-files --enable-wayland-ime "$START"
