@@ -73,6 +73,7 @@ const session: Session = {
 };
 const response = (body: unknown) => ({ ok: true, json: async () => body });
 beforeEach(() => {
+  localStorage.clear();
   useApp.setState({
     snapshot: null,
     server: null,
@@ -205,6 +206,19 @@ describe("worker and admin flows", () => {
     expect(JSON.parse(creation[1].body).channels).toEqual(["rfid"]);
     expect(JSON.parse(creation[1].body).targets).toEqual({ style: "HUTS6C612", color: "N3", size: "095", season: "SS" });
     expect(actions(fetcher).map((c) => c.action)).toEqual(["start"]);
+  });
+  it("starts a brand on the values picked for it last time", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", vi.fn(async (path: string) => response(path === "/api/brands" ? [brand] : [])));
+    const first = render(<MemoryRouter initialEntries={["/condition"]}><App /></MemoryRouter>);
+    await user.click(await screen.findByRole("button", { name: "헤지스" }));
+    for (const value of ["HUTS6C612", "N3", "095", "SS"]) await user.click(screen.getByRole("button", { name: value }));
+    first.unmount();
+    useApp.getState().resetWizard();
+    render(<MemoryRouter initialEntries={["/condition"]}><App /></MemoryRouter>);
+    await user.click(await screen.findByRole("button", { name: "헤지스" }));
+    expect(screen.getByRole("heading", { name: "수량" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "색상 N3 다시 고르기" })).toBeTruthy();
   });
   it("goes back one condition at a time and changes a chosen value from its chip", async () => {
     const user = userEvent.setup();

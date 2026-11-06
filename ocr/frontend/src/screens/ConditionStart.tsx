@@ -16,6 +16,15 @@ const CHECKS: { key: keyof Checks; label: string }[] = [
   { key: "rfid", label: "RFID" },
 ];
 
+const LAST_TARGETS = "txrx.lastTargets";
+const readLastTargets = (): Record<string, Record<string, string>> => {
+  try {
+    return JSON.parse(localStorage.getItem(LAST_TARGETS) || "{}") || {};
+  } catch {
+    return {};
+  }
+};
+
 export default function ConditionStart() {
   const nav = useNavigate();
   const brands = useApp((s) => s.brands);
@@ -73,11 +82,27 @@ export default function ConditionStart() {
   const chooseBrand = (id: string) => {
     const b = brands.find((x) => x.id === id);
     if (!b) return;
-    if (id !== w.brandId) setW({ brandId: id, targets: {}, checks: { ...b.caps } });
+    if (id !== w.brandId) {
+      // The values picked last time for this brand, while they are still offered.
+      const last = readLastTargets()[id] || {};
+      const targets = Object.fromEntries(
+        b.source.options.filter((o) => o.values.includes(last[o.key])).map((o) => [o.key, last[o.key]]),
+      );
+      setW({ brandId: id, targets, checks: { ...b.caps } });
+    }
     setView(null);
   };
   const choose = (key: string, value: string) => {
     setW({ targets: { ...w.targets, [key]: value } });
+    if (w.brandId) {
+      const all = readLastTargets();
+      all[w.brandId] = { ...(all[w.brandId] || {}), [key]: value };
+      try {
+        localStorage.setItem(LAST_TARGETS, JSON.stringify(all));
+      } catch {
+        /* the next job starts with nothing picked */
+      }
+    }
     const next = options[options.findIndex((o) => o.key === key) + 1];
     // After "이전" the following options are visited in order again; a value
     // changed from its summary chip returns straight to the last step.
