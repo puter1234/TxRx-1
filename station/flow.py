@@ -416,7 +416,12 @@ class FlowCycle(HardwareCycle):
         from .usb_camera import frame_at
 
         self.event("CAPTURE_STARTED")
-        await self.offload(self.camera.verify_fixed_controls)
+        # Once per job, as the process test does. Querying and setting camera controls
+        # for every product while the belt runs stalled the 48MP stream into reconnects.
+        session_id = (self.c.session or {}).get("id")
+        if getattr(self, "controls_checked", None) != session_id:
+            self.controls_checked = session_id
+            await self.offload(self.camera.verify_fixed_controls)
         recipe = Recipe.model_validate(p["inspection"]["recipe"])
         for i in range(cfg.capture_count):
             due = p["start"] + (cfg.capture_delay_ms + i * cfg.capture_interval_ms) / 1000
