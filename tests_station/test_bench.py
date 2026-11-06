@@ -1020,3 +1020,48 @@ def test_wappen_trial_counts_on_live_camera_and_stops_with_emergency_stop(rig):
     while c.get("/api/bench/vision").json()["active"] and time.monotonic() < deadline:
         time.sleep(0.01)
     assert not c.get("/api/bench/vision").json()["active"]
+
+
+def test_wappen_line_saved_during_trial_counts_at_once(rig):
+    c, app = rig
+    from station.counting import CrossingTracker
+    from station.schema import FlowSettings, WorkPreset
+    preset = WorkPreset(id="wappen", name="와펜", kind="vision", flow=FlowSettings(counter="cvzone")).model_dump()
+    app.state.store.put("work_presets", {"wappen": preset})
+    camera = app.state.camera
+    c.post("/api/bench/camera/apply", json={"profile": camera.backend.profile.model_dump(), "save": True})
+    made = []
+    class Counter:
+        def __init__(self, flow):
+            self.settings = flow
+            self.tracker = CrossingTracker(flow)
+            made.append(self)
+        def update(self, frame, now=None):
+            time.sleep(0.01)
+            return {"boxes": [], "total": 0, "width": frame.shape[1], "height": frame.shape[0], "inference_ms": 1.0}
+    trial = app.state.vision_trial
+    trial.counter_factory = Counter
+    seq = {"n": 100}
+    def status():
+        seq["n"] += 1
+        return {"connected": True, "frames": seq["n"], "width": 640, "height": 480}
+    camera.stream.status = status
+    assert c.post("/api/bench/vision/start", json={"preset_id": "wappen"}).status_code == 200
+    counter = made[-1]
+    saved = c.post("/api/presets", json={"preset": {**preset, "flow": {**preset["flow"], "line": 0.3}},
+                                         "expected_revision": 1})
+    assert saved.status_code == 200, saved.text
+    assert counter.settings.line == counter.tracker.settings.line == 0.3
+    shown = c.get("/api/bench/vision").json()["preset"]
+    assert shown["revision"] == 2 and shown["flow"]["line"] == 0.3
+    # Another counting method is loaded only when the trial starts again.
+    raw = saved.json()
+    assert c.post("/api/presets", json={"preset": {**raw, "flow": {**raw["flow"], "counter": "yolo", "line": 0.6}},
+                                        "expected_revision": 2}).status_code == 200
+    assert counter.settings.line == 0.3 and counter.settings.counter == "cvzone"
+    c.post("/api/bench/vision/stop", json={})
+    assert not c.get("/api/bench/vision").json()["active"]
+    # The next trial counts with the line saved last.
+    assert c.post("/api/bench/vision/start", json={"preset_id": "wappen"}).status_code == 200
+    assert made[-1].settings.line == 0.6
+    c.post("/api/bench/vision/stop", json={})
