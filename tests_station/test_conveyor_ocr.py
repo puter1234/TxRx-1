@@ -345,12 +345,16 @@ def test_model_load_failure_never_enables_outputs(trial):
     assert not t.writes and not t.state()["active"]
 
 
-def test_48mp_preflight_rejects_camera_before_motor_starts(trial):
+def test_preflight_accepts_a_camera_below_48mp_and_starts_the_motor(trial):
     from station.vision import Vision
-    trial.vision.prepare_capture = Vision().prepare_capture
+    vision = Vision()
+    # The synthetic camera is 40 x 20; any size is accepted and scaled at reading time.
+    assert vision.source_error(trial.camera.status(), "yolo26") is None
+    trial.vision.prepare_capture = vision.prepare_capture
     response = trial.client.post("/api/bench/pipeline/start", json={"conveyor_sync": True})
-    assert response.status_code == 422 and "48MP" in response.text
-    assert not trial.writes and not trial.state()["active"]
+    assert response.status_code == 200, response.text
+    assert trial.state()["active"]
+    assert trial.values[51] == 1
 
 
 def test_trial_restart_waits_five_seconds_without_delaying_stop(trial):

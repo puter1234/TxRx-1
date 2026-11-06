@@ -75,11 +75,34 @@ def test_capture_puts_drifted_controls_back_without_touching_saved_profile(rig):
     assert not app.state.bench.native_busy
 
 
-def test_capture_refuses_when_drifted_controls_do_not_stick(rig):
+def test_capture_goes_on_and_records_when_drifted_controls_cannot_be_restored(rig):
+    c, app = rig
+    class RefusingBackend(AutomaticBackend):
+        def apply_controls(self, profile):
+            raise ValueError("driver refused focus_auto")
+    backend = RefusingBackend()
+    app.state.camera.backend = backend
+    saved = copy.deepcopy(apply(c, app)["saved_profile"])
+    backend.profile.controls["focus_auto"] = 1
+    result = c.post("/api/bench/camera/capture", json={})
+    # The camera keeps the drifted value; the capture is taken anyway and the failed restore recorded.
+    assert result.status_code == 200, result.text
+    assert c.get("/api/bench/captures/latest").json()["id"] == result.json()["id"]
+    assert backend.profile.controls["focus_auto"] == 1
+    assert app.state.camera.status()["connected"]
+    assert app.state.store.get("usb_camera_profile") == saved
+    events = [e for e in app.state.store.events() if e["kind"].startswith("CAMERA_CONTROLS_")]
+    assert [e["kind"] for e in events] == ["CAMERA_CONTROLS_RESTORE_FAILED"]
+    assert events[0]["body"]["drift"] == {"focus_auto": 1}
+    assert "driver refused focus_auto" in events[0]["body"]["error"]
+    assert not app.state.bench.native_busy
+
+
+def test_capture_goes_on_when_drifted_controls_do_not_stick(rig):
     c, app = rig
     backend = AutomaticBackend()
     app.state.camera.backend = backend
-    apply(c, app)
+    saved = copy.deepcopy(apply(c, app)["saved_profile"])
     backend.profile.controls["focus_auto"] = 1
     stuck = backend.apply
     def ignores_focus(profile):
@@ -88,9 +111,12 @@ def test_capture_refuses_when_drifted_controls_do_not_stick(rig):
         return result
     backend.apply = ignores_focus
     result = c.post("/api/bench/camera/capture", json={})
-    assert result.status_code == 409, result.text
-    assert "되돌리지 못했습니다" in result.json()["detail"]
-    assert c.get("/api/bench/captures/latest").json() is None
+    assert result.status_code == 200, result.text
+    assert c.get("/api/bench/captures/latest").json()["id"] == result.json()["id"]
+    # The capture records the value the camera actually held; the saved settings are untouched.
+    assert result.json()["metadata"]["camera_profile"]["controls"]["focus_auto"] == 1
+    assert app.state.store.get("usb_camera_profile") == saved
+    assert app.state.camera.status()["connected"]
 
 
 def test_controls_reset_by_opening_the_capture_are_put_back(rig):
@@ -111,7 +137,7 @@ def test_controls_reset_by_opening_the_capture_are_put_back(rig):
     assert camera.saved["controls"]["focus_auto"] == 0 and camera.status()["connected"]
 
 
-def test_driver_reset_after_open_is_not_reported_as_success(rig):
+def test_driver_reset_after_open_is_accepted_with_the_controls_the_camera_holds(rig):
     c, app = rig
     camera = app.state.camera
     camera.backend = AutomaticBackend()
@@ -125,9 +151,13 @@ def test_driver_reset_after_open_is_not_reported_as_success(rig):
     result = c.post("/api/bench/camera/apply", json={
         "profile": camera.backend.profile.model_dump(), "save": True, "expected_revision": 0,
     })
-    assert result.status_code == 422
-    assert camera.saved is None
-    assert not camera.status()["connected"]
+    # A readback that differs is not an error: the camera connects and the settings it
+    # settled on are reported and saved as they are.
+    assert result.status_code == 200, result.text
+    assert result.json()["profile"]["controls"]["focus_auto"] == 1
+    assert camera.saved["controls"]["focus_auto"] == 1
+    assert app.state.store.get("usb_camera_profile") == camera.saved
+    assert camera.status()["connected"]
 
 
 def test_ready_job_can_adjust_camera_without_ending_or_unlocking_other_settings(rig):

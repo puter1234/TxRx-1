@@ -732,15 +732,29 @@ def test_live_ocr_has_no_image_correction_endpoints(rig):
     assert c.put("/api/bench/ocr/correction", json={}).status_code in (404, 405)
 
 
-def test_live_ocr_defaults_to_models_and_rejects_lower_resolution(rig):
+def test_live_ocr_defaults_to_models_and_accepts_lower_resolution(rig, monkeypatch):
     c, app = rig
     profile = app.state.camera.backend.profile.model_dump()
     assert c.post("/api/bench/camera/apply", json={
         "profile": profile, "save": False, "expected_revision": 0,
     }).status_code == 200
     app.state.vision.load = lambda: None
+    import tagreader.model_pipeline as model_pipeline
+    scaled = []
+    original_to_source = model_pipeline.to_source
+    def to_source(frame):
+        out = original_to_source(frame)
+        scaled.append((frame.shape, out.shape))
+        return out
+    monkeypatch.setattr(model_pipeline, "to_source", to_source)
     response = c.post("/api/bench/ocr/read", json={})
-    assert response.status_code == 422 and "48MP" in response.text
+    # A 640 x 480 camera is read, not refused: the model pipeline (the default locator)
+    # scales the frame into the 8000 x 6000 layout.
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert (result["frame_width"], result["frame_height"]) == (640, 480)
+    assert scaled == [((480, 640, 3), (6000, 8000, 3))]
+    assert "48MP" not in response.text
     assert not app.state.bench.runs
 
 

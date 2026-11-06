@@ -131,7 +131,7 @@ def prepare(line, channels=(), target=2, **flow):
     preset = WorkPreset(id="test-work", name="공정 시험", kind=kind,
         brand_id="hazzys" if channels else "__simple__", channels=list(channels),
         flow=FlowSettings(**{"capture_delay_ms": 0, "rfid_delay_ms": 0, "di1_debounce_ms": 5, "di2_debounce_ms": 5,
-                             "sensor_gap_ms": 0, "finish_run_ms": 0, "result_timeout_ms": 1000,
+                             "sensor_gap_ms": 0, "sensor_gap_low_ms": 0, "finish_run_ms": 0, "result_timeout_ms": 1000,
                              "departure_timeout_ms": 2000, **flow}))
     response = line.client.post("/api/presets", json={"preset": preset.model_dump()})
     assert response.status_code == 200, response.text
@@ -143,13 +143,16 @@ def prepare(line, channels=(), target=2, **flow):
 
 
 @pytest.mark.parametrize("channels", [(), ("rfid",), ("ocr", "rfid")])
-def test_preset_to_target_completion_with_real_gpio_adapter(line, channels):
+def test_preset_to_target_completion_with_real_gpio_adapter(line, monkeypatch, channels):
+    # The soft start/stop ramp has its own case below.
+    monkeypatch.setattr("station.hardware.SOFT_RAMP_SECONDS", 0)
     prepare(line, channels, low_speed_ms=80)
     if not channels:
         line.camera.connected = False
         line.io.reader.port.is_open = False
     issue(line, "start")
-    assert line.io.snapshot()["speed_requested"]
+    # High speed follows the (here zero-length) start ramp on the next poll.
+    wait_for(lambda: line.io.snapshot()["speed_requested"])
     for count in (1, 2):
         line.gpio.sensor(1, 0)
         wait_state(line, lambda s: s["session"]["active_product"] is not None)
@@ -169,19 +172,43 @@ def test_preset_to_target_completion_with_real_gpio_adapter(line, channels):
     issue(line, "start", 409)
 
 
-def test_manual_restart_selects_high_speed_again(line):
+def wait_for(predicate, timeout=3):
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() > deadline:
+            raise AssertionError("condition did not become true")
+        time.sleep(.005)
+    return time.monotonic()
+
+
+def test_manual_restart_selects_high_speed_again(line, monkeypatch):
+    ramp = .2
+    monkeypatch.setattr("station.hardware.SOFT_RAMP_SECONDS", ramp)
     prepare(line)
-    issue(line, "start")
-    assert line.io.snapshot()["speed_requested"]
-    issue(line, "stop")
-    assert not line.io.snapshot()["motor_requested"]
-    assert not line.io.snapshot()["speed_requested"]
-    # Advance the synthetic hardware's restart deadline; the five-second
-    # interlock has separate coverage for every motor-off path.
-    line.io.motor_ready_at = time.monotonic() - 1
-    wait_state(line, lambda s: s["can_start"])
-    issue(line, "start")
-    assert line.io.snapshot()["motor_requested"] and line.io.snapshot()["speed_requested"]
+    for attempt in range(2):
+        # Every software start runs at low speed first; high speed follows the ramp.
+        started = time.monotonic()
+        issue(line, "start")
+        snapshot = line.io.snapshot()
+        assert snapshot["motor_requested"] and not snapshot["speed_requested"]
+        assert line.gpio.values[51] == 1 and line.gpio.values[108] == 0
+        high = wait_for(lambda: line.io.snapshot()["speed_requested"])
+        assert high - started >= ramp
+        assert line.gpio.values[108] == 1
+        # A software stop drops to low speed at once and turns the motor off after the ramp.
+        stopped = time.monotonic()
+        issue(line, "stop")
+        snapshot = line.io.snapshot()
+        assert not snapshot["motor_requested"] and not snapshot["speed_requested"]
+        assert line.gpio.values[108] == 0
+        assert line.gpio.values[51] == 1  # still running, slowly
+        off = wait_for(lambda: line.gpio.values[51] == 0)
+        assert off - stopped >= ramp
+        assert not line.io.snapshot()["motor_requested"]
+        # Advance the synthetic hardware's restart deadline; the five-second
+        # interlock has separate coverage for every motor-off path.
+        line.io.motor_ready_at = time.monotonic() - 1
+        wait_state(line, lambda s: s["can_start"])
 
 
 @pytest.mark.parametrize("target", ["speed", "motor"])
@@ -240,6 +267,7 @@ def test_gpio_reset_reports_cleared_fault_immediately(line):
 
 @pytest.mark.parametrize("stop_method", ["stop", "motor_off", "reset", "permit_loss"])
 def test_gpio_enforces_five_seconds_on_every_off_path(line, monkeypatch, stop_method):
+    from station import hardware
     io = line.io
     clock = [time.monotonic()]
     monkeypatch.setattr("station.hardware.time", SimpleNamespace(monotonic=lambda: clock[0], time=time.time))
@@ -259,6 +287,15 @@ def test_gpio_enforces_five_seconds_on_every_off_path(line, monkeypatch, stop_me
         else:
             getattr(io, stop_method)()
         assert not io.snapshot()["motor_requested"]
+        if stop_method in ("stop", "motor_off"):
+            # A software stop runs the motor at low speed for the ramp; the five
+            # seconds count from the moment it actually turns off.
+            assert line.gpio.values[51] == 1 and line.gpio.values[108] == 0
+            assert io.snapshot()["motor_restart_ms"] == 0
+            clock[0] += hardware.SOFT_RAMP_SECONDS
+            io._ramp()
+            assert line.gpio.values[51] == 0
+            assert not io.snapshot()["motor_requested"]
         assert io.snapshot()["motor_restart_ms"] == 5000
         clock[0] += 4.999
         with pytest.raises(RuntimeError, match="모터 정지 후 5초"):
@@ -272,7 +309,9 @@ def test_gpio_enforces_five_seconds_on_every_off_path(line, monkeypatch, stop_me
         io.stop()
 
 
-def test_gpio_snapshot_reports_current_output_requests_without_waiting_for_poll(line):
+def test_gpio_snapshot_reports_current_output_requests_without_waiting_for_poll(line, monkeypatch):
+    # Without a start ramp, high speed applies as soon as it is asked for.
+    monkeypatch.setattr("station.hardware.SOFT_RAMP_SECONDS", 0)
     with line.io.lock:
         line.io.motor(True)
         assert line.io.snapshot()["motor_requested"]
@@ -282,7 +321,10 @@ def test_gpio_snapshot_reports_current_output_requests_without_waiting_for_poll(
         assert line.io.snapshot()["speed_requested"]
         line.io.stop()
         snapshot = line.io.snapshot()
+        # The motor reads as stopped from the moment the soft stop begins, before the
+        # poll thread turns the output off.
         assert not any(snapshot[key] for key in ("motor_requested", "led_requested", "speed_requested"))
+        assert line.gpio.values[51] == 1
 
 
 def test_wappens_poured_in_bulk_are_counted_by_the_camera_alone(line):
@@ -320,7 +362,9 @@ def test_wappens_are_counted_at_low_speed_the_whole_time(line, monkeypatch):
     assert line.client.get("/api/status").json()["session"]["phase"] == "FEEDING"
 
 
-def test_target_correction_waits_for_removal_of_an_interrupted_product(line):
+def test_target_correction_waits_for_removal_of_an_interrupted_product(line, monkeypatch):
+    # Discarding needs the belt stopped (contactor off), so no stop ramp here.
+    monkeypatch.setattr("station.hardware.SOFT_RAMP_SECONDS", 0)
     state = prepare(line)
     issue(line, "start")
     time.sleep(.03)
@@ -403,6 +447,9 @@ def test_reset_during_a_held_field_stop_says_why_and_keeps_the_fault(line):
 
 @pytest.mark.parametrize("manual_stop", [False, True])
 def test_camera_reconnect_preserves_product_and_obeys_manual_stop(line, monkeypatch, manual_stop):
+    # The motor turns off at once when the camera is lost, so the five-second
+    # restart interval applies; discarding also needs the contactor off.
+    monkeypatch.setattr("station.hardware.SOFT_RAMP_SECONDS", 0)
     prepare(line, ("ocr", "rfid"), target=1, reconnect_interval_ms=100)
     initial_connections = line.camera.retries
     issue(line, "start")
