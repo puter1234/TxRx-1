@@ -45,20 +45,16 @@ def ensure_onnxruntime_gpu(python: Path, wheels: Path) -> None:
         return
     pip = [str(python), "-m", "pip"]
     wheels.mkdir(parents=True, exist_ok=True)
-    # One try only: a failed download or a build that does not load must never hold up
-    # every later start (the station waited minutes on it). Delete the marker to try again.
-    marker = wheels / ".onnxruntime-gpu-tried"
-    if marker.exists():
-        return
-    marker.write_text("tried\n")
+    # Every start that finds the CPU build swaps again; the station starts only after it.
+    (wheels / ".onnxruntime-gpu-tried").unlink(missing_ok=True)  # marker of an earlier version
     cached = sorted(wheels.glob("onnxruntime_gpu-*.whl"))
     if not cached:
         print("Downloading the GPU build of onnxruntime for the text detector...", flush=True)
-        args = [*pip, "download", "--no-deps", "--only-binary", ":all:", "--timeout", "10", "--retries", "0",
+        args = [*pip, "download", "--no-deps", "--only-binary", ":all:", "--timeout", "15", "--retries", "1",
                 "-d", str(wheels), "--index-url", GPU_INDEXES[0], "--extra-index-url", GPU_INDEXES[1],
                 "onnxruntime-gpu"]
         try:
-            subprocess.run(args, check=True, timeout=90)
+            subprocess.run(args, check=True, timeout=600)
         except Exception as exc:
             print("onnxruntime GPU build not downloaded; text detection stays on the CPU.", exc, flush=True)
             return

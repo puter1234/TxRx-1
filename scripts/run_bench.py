@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from jetson_ocr_env import cusparselt_environment
+from jetson_ocr_env import cusparselt_environment, ensure_onnxruntime_gpu
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -33,6 +33,12 @@ def main():
                             capture_output=True, text=True)
     if pillow.returncode:
         raise SystemExit("Pillow is missing from .venv-bench. Run: python3 scripts/install_bench.py")
+    # The GPU build is put in place before the station starts; the kiosk screen shows
+    # 시작 중 meanwhile.
+    try:
+        ensure_onnxruntime_gpu(python, ROOT / "runtime/jetson-ai-wheels")
+    except Exception as exc:
+        print("onnxruntime GPU swap failed:", exc, flush=True)
     print("Open the screen with ./open-screen.sh on the J4012. Jobs and device tests control real hardware.", flush=True)
     os.execve(str(python), [str(python), "-m", "uvicorn", "station.app:create_app",
                            "--factory", "--host", "127.0.0.1", "--port", "8000", "--workers", "1"],
