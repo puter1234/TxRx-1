@@ -169,7 +169,9 @@ class Reader:
         return self._inventory(timeout_ms, cancel, rounds=1, first_read=True)
 
     def inventory(self, window_ms: int, cancel: threading.Event | None = None):
-        return self._inventory(window_ms, cancel, rounds=100, first_read=False)
+        # No reply at all in the window means the reader stopped answering (it can hang
+        # while its USB link stays up): raise, so the job reopens and sets it up again.
+        return self._inventory(window_ms, cancel, rounds=100, first_read=False, require_response=True)
 
     def inventory_bench(self, window_ms: int, cancel: threading.Event | None = None):
         return self._inventory(window_ms, cancel, rounds=5, first_read=False,

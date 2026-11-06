@@ -127,6 +127,11 @@ def test_bench_preserves_distinct_tags_across_missed_rounds(wire):
 def test_miss_is_retryable(wire, reply, read_method):
     reader, port, _ = wire
     port.chunks = [reply]
+    if read_method == "inventory" and not reply:
+        # Silence means the reader stopped answering; the job then reopens it.
+        with pytest.raises(TimeoutError):
+            reader.inventory(100)
+        return
     assert getattr(reader, read_method)(100) == []
     assert reader.initialized and port.writes[-1] == frame(0x28)
     port.chunks = [notice()]

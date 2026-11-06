@@ -131,6 +131,7 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
     bench = bench_factory(config, io, store)
     if hasattr(io, "rfid_source"):
         io.rfid_source = lambda: (bench.setup.rfid_port, bench.setup.rfid_power)
+        io.rfid_found = lambda port: bench.save_rfid_setup({"rfid_port": port}, "rfid-auto-port")
     controller.external_busy = lambda: maintenance_active.is_set() or prior_busy() or bench.busy()
 
     async def watch():
