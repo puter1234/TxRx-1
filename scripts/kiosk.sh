@@ -11,13 +11,20 @@ mkdir -p runtime
 exec >>runtime/kiosk.log 2>&1
 echo "== $(date) kiosk start (user $(id -un), display ${DISPLAY:-none})"
 up() { python3 -c "import urllib.request,sys; urllib.request.urlopen(sys.argv[1], timeout=2)" "$URL/api/status" >/dev/null 2>&1; }
+START="$URL/"
 if ! up; then
-  echo "station not running; starting scripts/run_bench.py"
+  echo "station not running; starting scripts/run_bench.py (its output: runtime/station.log)"
   nohup python3 scripts/run_bench.py >>runtime/station.log 2>&1 &
-  # Model loading and a first GPU package swap can take a while.
-  i=0
-  while ! up && [ "$i" -lt 300 ]; do sleep 1; i=$((i + 1)); done
-  up && echo "station up after ${i}s" || echo "station still not answering after ${i}s; see runtime/station.log"
+  echo "run_bench pid $!"
+  # The screen opens at once on a page that switches to the station when it answers.
+  START="file://$ROOT/scripts/kiosk-wait.html?port=$PORT"
+  (
+    i=0
+    while ! up && [ "$i" -lt 600 ]; do sleep 5; i=$((i + 5))
+      echo "waiting ${i}s; station.log: $(tail -n 1 runtime/station.log 2>/dev/null)"
+    done
+    up && echo "station up after ${i}s" || echo "station still not answering after ${i}s"
+  ) &
 fi
 BROWSER=""
 for b in google-chrome google-chrome-stable chromium-browser chromium; do
@@ -30,7 +37,7 @@ pkill -f -- "--user-data-dir=$PROFILE" 2>/dev/null && sleep 2
 # After a power cut Chrome would offer to restore the old tabs instead of the first screen.
 sed -i 's/"exit_type":"Crashed"/"exit_type":"Normal"/; s/"exited_cleanly":false/"exited_cleanly":true/' \
   "$PROFILE/Default/Preferences" 2>/dev/null || true
-echo "opening $URL/ with $BROWSER"
+echo "opening $START with $BROWSER"
 # GPU drawing off: with it on, Chrome on the J4012 stops redrawing the page.
 exec "$BROWSER" --user-data-dir="$PROFILE" --disable-gpu --kiosk --start-fullscreen --no-first-run \
-  --noerrdialogs --disable-session-crashed-bubble --disable-infobars --password-store=basic "$URL/"
+  --noerrdialogs --disable-session-crashed-bubble --disable-infobars --password-store=basic --allow-file-access-from-files "$START"

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>TxRx</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #10233f; color: #fff; font-family: sans-serif; }
+  body { display: flex; align-items: center; justify-content: center; font-size: 56px; font-weight: 800; }
+</style>
+</head>
+<body>
+<p id="t">시작 중</p>
+<script>
+// Shown full screen while the station starts; switches to it as soon as it answers.
+const url = "http://127.0.0.1:" + (new URLSearchParams(location.search).get("port") || "8000") + "/";
+let n = 0;
+async function check() {
+  try {
+    await fetch(url + "api/status", { mode: "no-cors", cache: "no-store" });
+    location.replace(url);
+    return;
+  } catch (e) {}
+  n += 1;
+  document.getElementById("t").textContent = "시작 중 " + n + "초";
+  setTimeout(check, 1000);
+}
+check();
+</script>
+</body>
+</html>

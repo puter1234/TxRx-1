@@ -45,25 +45,31 @@ def ensure_onnxruntime_gpu(python: Path, wheels: Path) -> None:
         return
     pip = [str(python), "-m", "pip"]
     wheels.mkdir(parents=True, exist_ok=True)
+    # One try only: a failed download or a build that does not load must never hold up
+    # every later start (the station waited minutes on it). Delete the marker to try again.
+    marker = wheels / ".onnxruntime-gpu-tried"
+    if marker.exists():
+        return
+    marker.write_text("tried\n")
     cached = sorted(wheels.glob("onnxruntime_gpu-*.whl"))
     if not cached:
         print("Downloading the GPU build of onnxruntime for the text detector...", flush=True)
-        args = [*pip, "download", "--no-deps", "--only-binary", ":all:", "--timeout", "15", "--retries", "1",
+        args = [*pip, "download", "--no-deps", "--only-binary", ":all:", "--timeout", "10", "--retries", "0",
                 "-d", str(wheels), "--index-url", GPU_INDEXES[0], "--extra-index-url", GPU_INDEXES[1],
                 "onnxruntime-gpu"]
         try:
-            subprocess.run(args, check=True, timeout=600)
+            subprocess.run(args, check=True, timeout=90)
         except Exception as exc:
             print("onnxruntime GPU build not downloaded; text detection stays on the CPU.", exc, flush=True)
             return
         cached = sorted(wheels.glob("onnxruntime_gpu-*.whl"))
         if not cached:
             return
-    subprocess.run([*pip, "uninstall", "-y", "onnxruntime"], check=False)
-    installed = subprocess.run([*pip, "install", "--no-deps", "--force-reinstall", str(cached[-1])])
+    subprocess.run([*pip, "uninstall", "-y", "onnxruntime"], check=False, timeout=120)
+    installed = subprocess.run([*pip, "install", "--no-deps", "--force-reinstall", str(cached[-1])], timeout=300)
     if installed.returncode or not _has_cuda_provider(python):
         print("onnxruntime GPU build did not load; putting the CPU build back.", flush=True)
-        subprocess.run([*pip, "uninstall", "-y", "onnxruntime-gpu"], check=False)
-        subprocess.run([*pip, "install", "onnxruntime==1.23.2"], check=False)
+        subprocess.run([*pip, "uninstall", "-y", "onnxruntime-gpu"], check=False, timeout=120)
+        subprocess.run([*pip, "install", "onnxruntime==1.23.2"], check=False, timeout=300)
         return
     print("Text detection runs on the GPU (onnxruntime CUDA).", flush=True)
