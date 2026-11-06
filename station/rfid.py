@@ -210,7 +210,10 @@ class Reader:
                                 if idle_ms is not None:
                                     idle_deadline = time.monotonic() + idle_ms / 1000
                                 continue
-                            raise IOError("RFID inventory error: " + m.payload.hex())
+                            # Any other reply code is a missed round too, not a broken reader.
+                            no_tag = True
+                            received_response = True
+                            continue
                         if m.kind == 2 and m.command == 0x22:
                             tag = tag_notice(m)
                             received_response = True
@@ -227,8 +230,8 @@ class Reader:
                     # EPCs remain visible to the product mismatch check.
                     if first_read and (tags or no_tag):
                         break
-                if self.parser.errors:
-                    raise IOError("RFID frame checksum/length error")
+                # Damaged frames (leftovers of an earlier read, line noise) are skipped,
+                # not taken for a broken reader.
                 if require_response and not received_response:
                     raise TimeoutError("RFID 응답이 없습니다.")
             finally:

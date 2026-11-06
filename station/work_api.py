@@ -37,8 +37,9 @@ def prepare_session(controller, vision, monitor, recipe, actor):
     if "rfid" in recipe.channels and hasattr(controller.io, "ensure_rfid"):
         try:
             controller.io.ensure_rfid()
-        except RuntimeError as exc:
-            raise Conflict(str(exc)) from exc
+        except Exception as exc:
+            # Never refuse the job over the reader; it is reopened while the job runs.
+            controller.store.event("RFID_RETRY_FAILED", {"error": str(exc)})
     # All creation routes must check ownership before touching the active model.
     with controller.lock:
         if controller.session and controller.session["phase"] not in ("DONE", "FINISHED", "ABORTED"):

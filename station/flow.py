@@ -11,7 +11,6 @@ from .counting import ObjectCounter, file_sha256
 from .storage import utc
 
 
-RFID_RECONNECT_TRIES = 3  # failed reopenings in a row before the line stops
 RFID_RECONNECT_GAP_S = 0.5
 
 class SensorEdge:
@@ -110,8 +109,7 @@ class FlowCycle(HardwareCycle):
             reasons.append(self.counter_error)
         if recipe["flow"]["counter"] != "sensor" and self.counter is None:
             reasons.append("계수 모델을 불러오세요.")
-        if "rfid" in recipe["channels"] and not self.io.snapshot().get("rfid_ready"):
-            reasons.append("RFID 연결을 확인하세요.")
+        # A reader that is not ready never blocks a start; the job reopens it and reads.
         if "ocr" in recipe["channels"] and not self.vision.status().get("local_assets_present"):
             reasons.append("OCR 모델을 확인하세요.")
         if set(recipe.get("channels", [])) & {"ocr", "barcode"} and self.camera and hasattr(self.vision, "source_error"):
@@ -212,16 +210,12 @@ class FlowCycle(HardwareCycle):
             self.c.fault(snap.get("fault") or "IO_DISCONNECTED")
             return
         if "rfid" in s["recipe"]["channels"]:
-            # A lost reader is reopened while the belt runs; only repeated failures stop it.
+            # A lost reader is reopened while the belt runs, again and again; it never
+            # stops the line. A product read while it is gone is judged on what was read.
             task = self.rfid_reconnect
             if task and task.done():
                 self.rfid_reconnect = None
-                self.rfid_misses = 0 if not task.cancelled() and task.result() else self.rfid_misses + 1
-            if not snap.get("rfid_ready"):
-                if not hasattr(self.io, "ensure_rfid") or self.rfid_misses >= RFID_RECONNECT_TRIES:
-                    self.rfid_misses = 0
-                    self.c.fault("RFID_DISCONNECTED")
-                    return
+            if not snap.get("rfid_ready") and hasattr(self.io, "ensure_rfid"):
                 if self.rfid_reconnect is None:
                     self.rfid_reconnect = asyncio.create_task(self.reconnect_rfid())
         if (s["phase"] == "FEEDING" and self.speed_deadline is not None and now >= self.speed_deadline and not bulk

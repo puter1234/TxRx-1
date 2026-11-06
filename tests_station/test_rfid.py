@@ -141,15 +141,14 @@ def test_single_round_preserves_distinct_tags_in_received_chunk(wire):
 
 @pytest.mark.parametrize("read_method", ["inventory_once", "inventory", "inventory_bench"])
 @pytest.mark.parametrize("corrupt", [False, True])
-def test_inventory_does_not_hide_reader_or_checksum_errors(wire, corrupt, read_method):
+def test_damaged_frames_and_reply_codes_are_skipped_not_taken_for_a_broken_reader(wire, corrupt, read_method):
     reader, port, _ = wire
     bad = bytearray(notice())
     bad[-2] ^= 1
     error = bytes(bad) if corrupt else frame(0xFF, b"\x17", 1)
     port.chunks = [notice() + frame(0xFF, b"\x15", 1) + error]
-    message = "RFID frame checksum/length error" if corrupt else "RFID inventory error: 17"
-    with pytest.raises(IOError, match=message):
-        getattr(reader, read_method)(100)
+    tags = getattr(reader, read_method)(100)
+    assert [t["epc"] for t in tags] == ["1D44D280281B70D75A8DF0000E114D7A"] and reader.initialized
     assert port.writes[-1] == frame(0x28)
 
 

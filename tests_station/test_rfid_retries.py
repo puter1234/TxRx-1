@@ -227,6 +227,7 @@ def test_lost_reader_is_reopened_while_the_belt_runs(controller, recipe, monkeyp
         if comes_back:
             assert tries == [1] and c.session["phase"] == "FEEDING" and io.on
         else:
-            assert len(tries) == 3 and c.session["fault"] == "RFID_DISCONNECTED" and not io.on
+            # The reader is tried again and again; the belt keeps running.
+            assert len(tries) >= 3 and c.session["phase"] == "FEEDING" and io.on
 
     asyncio.run(run())

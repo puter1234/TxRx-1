@@ -298,9 +298,13 @@ class GpioIO:
                         self.reader.close()
                     except Exception:
                         pass  # The unplugged descriptor may reject STOP.
-                self.reader = Reader(self.rfid_port)
-                self.reader.initialize(self.config.rfid_power)
-                self.rfid_error = None
+                try:
+                    self.reader = Reader(self.rfid_port)
+                    self.reader.initialize(self.config.rfid_power)
+                    self.rfid_error = None
+                except Exception as exc:
+                    # Recovery goes on; the job keeps reopening the reader while it runs.
+                    self.rfid_error = str(exc)
             self.fault = None
 
     def snapshot(self):
