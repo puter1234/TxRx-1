@@ -211,7 +211,7 @@ class GpioIO:
             except Exception as exc:
                 self.fault = "IO_ACCESS_ERROR: " + str(exc)
                 try:
-                    self.stop()
+                    self.hard_stop()
                 except Exception:
                     pass
                 with self.lock:
@@ -236,6 +236,13 @@ class GpioIO:
             if self.req:
                 self._outputs(self.requested, False)
                 self._soft_stop()
+
+    def hard_stop(self):
+        """Motor and light off at once: shutdown and I/O errors, where no poll is left
+        to finish a soft stop."""
+        with self.lock:
+            if self.req:
+                self._outputs(False, False)
 
     def motor(self, on, allowed=None):
         with self.lock:
@@ -410,7 +417,7 @@ class GpioIO:
     def close(self):
         self.closed.set()
         try:
-            self.stop()
+            self.hard_stop()
         finally:
             if self.thread:
                 self.thread.join(timeout=1)
