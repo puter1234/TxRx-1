@@ -12,6 +12,8 @@ from pydantic import Field, model_validator
 from .schema import Model
 from .controller import Conflict
 from .motor import MOTOR_RESTART_SECONDS, restart_message
+# The production motor slows for 2 s before it turns off (station.hardware.SOFT_RAMP_SECONDS).
+STOP_RAMP_SECONDS = 2.0
 
 # Test inputs held by a screen that is gone (browser closed, network lost)
 # would block production; they are released after this long without a look.
@@ -355,6 +357,9 @@ class Bench:
             try:
                 self.io.set_output(target, False)
                 self.last = self.io.snapshot()
+                if target == "motor" and self.last.get("km2_on") is not False:
+                    # DI3 must show the motor stopped; checked in _tick.
+                    self.stop_wait_until = time.monotonic() + 3 + STOP_RAMP_SECONDS
             except Exception as exc:
                 self.error = "끄기 명령 실패: " + str(exc)
                 raise Conflict(self.error) from exc
@@ -485,6 +490,8 @@ class Bench:
                 if self.io:
                     self.io.stop()
                     self.last = self.io.snapshot()
+                    if "motor" in old and self.last.get("km2_on") is not False:
+                        self.stop_wait_until = time.monotonic() + 3 + STOP_RAMP_SECONDS
             except Exception as exc:
                 self.error = "출력 OFF 확인 실패: " + str(exc)
             finally:
@@ -545,6 +552,14 @@ class Bench:
                     for listener in self.input_listeners:
                         listener(i + 1, value, time.monotonic_ns())
             self.last = snap
+            if self.stop_wait_until:
+                if snap.get("km2_on") is False:
+                    self.stop_wait_until = None
+                elif time.monotonic() >= self.stop_wait_until:
+                    # Shown until 오류 해제, which always clears it.
+                    self.stop_wait_until = None
+                    self.error = "접촉기 정지 응답 없음"
+                    self.stop(self.error)
             for run in list(self.runs.values()):
                 now = time.monotonic()
                 if run["target"] == "motor" and not self.document_motor_test() and snap.get("physical_permit") is not True:

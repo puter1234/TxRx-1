@@ -192,13 +192,16 @@ class GpioIO:
                     ):
                         self.fault = "IO_LEASE_EXPIRED"
                         self._outputs(False, False)
-                    # DI3 (contactor feedback) is reported, never enforced: a missing or
-                    # late reply neither stops the line nor needs clearing.
-                    settled = time.monotonic() - self.changed > self.feedback_ms / 1000
-                    self.latest["km2_warning"] = (
-                        "KM2_FEEDBACK_MISSING" if settled and self.requested and not snap["km2_on"]
-                        else "KM2_FEEDBACK_STUCK" if settled and not self.requested and snap["km2_on"]
-                        else None)
+                    # DI3 tells whether the motor really runs. A wrong reply stops the line
+                    # with a fault; 오류 해제 (reset) always clears it.
+                    if time.monotonic() - self.changed > self.feedback_ms / 1000:
+                        if self.requested and not snap["km2_on"]:
+                            # The contactor never reported running (DI3), not a lost permit.
+                            self.fault = "KM2_FEEDBACK_MISSING"
+                            self._outputs(False, False)
+                        elif not self.requested and snap["km2_on"] and not self.fault:
+                            self.fault = "KM2_FEEDBACK_STUCK"
+                            self._outputs(False, False)
                     self.latest.update(
                         fault=self.fault,
                         motor_requested=self.motor_wanted(),
