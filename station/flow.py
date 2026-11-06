@@ -630,9 +630,17 @@ class FlowCycle(HardwareCycle):
                 self.event("CAMERA_RETRY_FAILED", {"error": str(exc)})
             self.reconnect_task = None
             self.next_retry = now + cfg.reconnect_interval_ms / 1000
-        if not self.camera.status().get("connected"):
-            self.reconnect_ok = False
+        status = self.camera.status()
+        # Frames coming in again is what counts, whenever they arrive: a 48MP stream
+        # can take longer than one retry interval to deliver its first frame.
+        self.reconnect_ok = bool(status.get("connected"))
         if not self.reconnect_ok and self.reconnect_task is None and now >= self.next_retry and not self.worker_busy():
+            if status.get("process_alive") and (status.get("capture_stage_ms") or 0) < 10000:
+                # The capture is starting or briefly stalled: leave it to deliver. Restarting
+                # it every interval killed each new 48MP stream before its first frame, so the
+                # job never came back. Its reader ends it by itself after 2 s without frames.
+                self.next_retry = now + cfg.reconnect_interval_ms / 1000
+                return
             self.event("CAMERA_RETRY")
             self.reconnect_task = asyncio.create_task(self.offload(self.camera.connect))
             # The serial and phase guards still reject a manual stop during connect.
