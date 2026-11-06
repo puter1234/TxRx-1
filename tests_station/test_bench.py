@@ -164,18 +164,18 @@ def test_led_deadline_and_screen_loss_drop_outputs_without_counts(rig):
     assert c.get("/api/history").json()["inspections"] == []
 
 
-def test_stop_invalidates_delayed_on_and_duplicate_does_not_reenergize(rig):
+def test_a_press_from_an_older_screen_works_and_a_duplicate_does_not_reenergize(rig):
     c, app = rig
     setup(c)
     c.post("/api/bench/io/connect", json={})
     generation = c.get("/api/bench").json()["generation"]
     c.post("/api/bench/stop", json={})
-    assert pulse(c, generation=generation).status_code == 409
-    assert pulse(c, request_id="one-logical-test").status_code == 200
+    # No "이전 시험 요청입니다": a screen that missed an update still works.
+    assert pulse(c, generation=generation, request_id="older-screen", issued_at=time.time() - 20).status_code == 200
+    assert app.state.bench.io.led
     c.post("/api/bench/stop", json={})
-    assert pulse(c, request_id="one-logical-test").status_code == 200
+    assert pulse(c, request_id="older-screen").status_code == 200
     assert not app.state.bench.io.led
-    assert pulse(c, issued_at=time.time() - 20).status_code == 409
 
 
 @pytest.mark.parametrize("waiting_camera", [False, True])
@@ -508,29 +508,33 @@ def test_clear_error_opens_the_inputs_itself(rig):
     assert b.io is not None and b.error is None
 
 
-@pytest.mark.parametrize("condition", ["feedback_on", "output_on", "fault", "running"])
-def test_clear_error_rejects_unresolved_conditions(rig, condition):
+@pytest.mark.parametrize("condition", ["feedback_on", "output_on", "fault"])
+def test_clear_error_always_clears(rig, condition):
     c, app = rig
     b = app.state.bench
     c.post("/api/bench/io/connect", json={})
-    if condition == "running":
-        assert pulse(c, "led", 10).status_code == 200
     with b.lock:
         if condition == "feedback_on":
             b.io.raw[2] = 0
         elif condition == "output_on":
             b.io.led = True
-        elif condition == "fault":
+        else:
             snapshot = b.io.snapshot
             b.io.snapshot = lambda: {**snapshot(), "fault": "read failure"}
-        if condition != "running":
-            b.error = "시험 오류"
+        b.error = "시험 오류"
     response = c.post("/api/bench/error/clear", json={})
-    assert response.status_code == 409, response.text
-    if condition != "running":
-        assert b.error is not None
-    else:
-        assert b.run is not None and b.io.led
+    assert response.status_code == 200, response.text
+    if condition != "fault":  # this test double keeps reporting its fault, so the tick sets it again
+        assert b.error is None
+
+
+def test_clear_error_waits_for_a_running_test(rig):
+    c, app = rig
+    b = app.state.bench
+    c.post("/api/bench/io/connect", json={})
+    assert pulse(c, "led", 10).status_code == 200
+    assert c.post("/api/bench/error/clear", json={}).status_code == 409
+    assert b.run is not None and b.io.led
 
 
 @pytest.mark.parametrize("first", ["motor", "led"])
@@ -758,7 +762,7 @@ def test_live_ocr_defaults_to_models_and_accepts_lower_resolution(rig, monkeypat
     assert not app.state.bench.runs
 
 
-def test_unconfirmed_off_remains_blocked(rig):
+def test_a_contactor_that_reads_on_after_stop_does_not_block(rig):
     c, app = rig
     setup(c)
     c.post("/api/bench/io/connect", json={})
@@ -766,14 +770,10 @@ def test_unconfirmed_off_remains_blocked(rig):
     pulse(c, "motor", 10)
     b.io.stuck = True
     c.post("/api/bench/stop", json={})
-    assert b.stop_wait_until
-    b.stop_wait_until -= 4
+    # DI3 is reported, never enforced: no stop wait, no error, closing still works.
+    assert not b.stop_wait_until
     b._tick()
-    assert b.error == "접촉기 정지 응답 없음"
-    assert c.post("/api/bench/io/disconnect", json={}).status_code == 409
-    b.io.raw[2] = 1
-    b.io.stuck = False
-    b._tick()
+    assert b.error is None
     assert c.post("/api/bench/io/disconnect", json={}).status_code == 200
 
 
