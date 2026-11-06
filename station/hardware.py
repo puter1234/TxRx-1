@@ -192,17 +192,13 @@ class GpioIO:
                     ):
                         self.fault = "IO_LEASE_EXPIRED"
                         self._outputs(False, False)
-                    if (
-                        time.monotonic() - self.changed
-                        > self.feedback_ms / 1000
-                    ):
-                        if self.requested and not snap["km2_on"]:
-                            # The contactor never reported running (DI3), not a lost permit.
-                            self.fault = "KM2_FEEDBACK_MISSING"
-                            self._outputs(False, False)
-                        elif not self.requested and snap["km2_on"]:
-                            self.fault = "KM2_FEEDBACK_STUCK"
-                            self._outputs(False, False)
+                    # DI3 (contactor feedback) is reported, never enforced: a missing or
+                    # late reply neither stops the line nor needs clearing.
+                    settled = time.monotonic() - self.changed > self.feedback_ms / 1000
+                    self.latest["km2_warning"] = (
+                        "KM2_FEEDBACK_MISSING" if settled and self.requested and not snap["km2_on"]
+                        else "KM2_FEEDBACK_STUCK" if settled and not self.requested and snap["km2_on"]
+                        else None)
                     self.latest.update(
                         fault=self.fault,
                         motor_requested=self.motor_wanted(),
@@ -297,7 +293,7 @@ class GpioIO:
         with self.lock:
             self._outputs(False, False)
             snap = self._read()
-            if snap["km2_on"] or not snap["physical_permit"]:
+            if not snap["physical_permit"]:
                 raise RuntimeError("현장 정지/새 START 상태를 확인하세요.")
             if self.rfid_port and getattr(self, "require_rfid", True) and not self.snapshot().get("rfid_ready"):
                 if self.reader:

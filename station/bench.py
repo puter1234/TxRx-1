@@ -309,8 +309,6 @@ class Bench:
         if self.document_motor_test():
             if self.error:
                 reasons.append(self.error)
-            if self.io and "motor" not in self.runs and self.last.get("km2_on") is not False:
-                reasons.append("DI3 접촉기 꺼짐을 확인하세요.")
             return reasons
         if s.do_on_raw is None:
             reasons.append("출력 ON 값을 지정하세요.")
@@ -357,8 +355,6 @@ class Bench:
             try:
                 self.io.set_output(target, False)
                 self.last = self.io.snapshot()
-                if target == "motor" and self.last.get("km2_on") is not False:
-                    self.stop_wait_until = time.monotonic() + 3
             except Exception as exc:
                 self.error = "끄기 명령 실패: " + str(exc)
                 raise Conflict(self.error) from exc
@@ -400,8 +396,6 @@ class Bench:
                 raise Conflict("정지 요청 이후에는 다시 실행하세요.")
             if request_id in self.seen:
                 return self.status()
-            if generation != self.generation or abs(time.time() - issued_at) > 3:
-                raise Conflict("이전 시험 요청입니다. 다시 눌러 주세요.")
             if self.native_busy or target in self.runs:
                 raise Conflict("현재 시험이 끝난 후 다시 시도하세요.")
             if target not in self.next_output_at:
@@ -417,9 +411,9 @@ class Bench:
             if blockers:
                 raise Conflict(" ".join(blockers))
             snap = self.io.snapshot()
-            motor_running = "motor" in self.runs
-            if not snap.get("connected") or (target == "motor" and not self.document_motor_test() and snap.get("physical_permit") is not True) or (snap.get("km2_on") is not False and not (target != "motor" and motor_running)) or snap.get("fault") or self.stop_wait_until:
-                raise Conflict("운전 허가와 접촉기 정지 상태를 확인하세요.")
+            # DI3 (contactor feedback) does not gate a test; the field permit still does.
+            if not snap.get("connected") or (target == "motor" and not self.document_motor_test() and snap.get("physical_permit") is not True):
+                raise Conflict("운전 허가를 확인하세요.")
             if seconds is not None and not 10 <= seconds <= 60:
                 raise ValueError("켜짐 유지 시간은 10초부터 60초까지입니다.")
             if self.rfid_busy and self.cancel.is_set():
@@ -456,12 +450,13 @@ class Bench:
             if not self.io:
                 self.connect()
             snap = self.io.snapshot()
-            if not snap.get("connected") or snap.get("fault"):
+            if not snap.get("connected"):
                 raise Conflict("입력 연결 상태를 확인하세요.")
-            if snap.get("motor_requested") is not False or snap.get("led_requested") is not False:
-                raise Conflict("모터와 LED 끄기 명령을 먼저 완료하세요.")
-            if snap.get("km2_on") is not False:
-                raise Conflict("DI3 접촉기 꺼짐을 확인하세요.")
+            # Clearing always works; an I/O fault left on the production owner
+            # (for example a lost permit) is cleared with it. Running still needs the permit.
+            if snap.get("fault") and getattr(self.production_io, "fault", None):
+                self.production_io.fault = None
+                snap = self.io.snapshot()
             # Acknowledge only: never switch outputs or shorten the retry interval.
             self.store.event("BENCH_ERROR_CLEARED", {"error": self.error})
             self.last = snap
@@ -490,8 +485,6 @@ class Bench:
                 if self.io:
                     self.io.stop()
                     self.last = self.io.snapshot()
-                    if "motor" in old and self.last.get("km2_on") is not False:
-                        self.stop_wait_until = time.monotonic() + 3
             except Exception as exc:
                 self.error = "출력 OFF 확인 실패: " + str(exc)
             finally:
@@ -515,8 +508,6 @@ class Bench:
     def disconnect(self):
         with self.lock:
             self.stop("점검 종료")
-            if self.stop_wait_until and self.last.get("km2_on") is not False:
-                raise Conflict("접촉기 정지 상태를 확인하세요.")
             if self.io:
                 try:
                     self.io.close()
@@ -554,12 +545,6 @@ class Bench:
                     for listener in self.input_listeners:
                         listener(i + 1, value, time.monotonic_ns())
             self.last = snap
-            if self.stop_wait_until:
-                if snap.get("km2_on") is False:
-                    self.stop_wait_until = None
-                elif time.monotonic() >= self.stop_wait_until:
-                    self.error = "접촉기 정지 응답 없음"
-                    self.stop(self.error)
             for run in list(self.runs.values()):
                 now = time.monotonic()
                 if run["target"] == "motor" and not self.document_motor_test() and snap.get("physical_permit") is not True:
@@ -577,8 +562,6 @@ class Bench:
                             run["feedback_error"] = None
                         elif not run["feedback_error"]:
                             run["feedback_error"] = "접촉기 가동 응답 끊김" if run["feedback_seen"] else "접촉기 가동 응답 없음"
-                elif "motor" not in self.runs and not self.stop_wait_until and snap.get("km2_on") is not False:
-                    self.error = "LED 시험 중 접촉기 켜짐"
                 if self.error:
                     self.stop(self.error)
                     return

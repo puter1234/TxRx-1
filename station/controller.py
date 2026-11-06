@@ -392,10 +392,9 @@ class Controller:
                         raise Conflict(str(exc)) from exc
                     self.stop_fault = None
                 reset_state = self.io.snapshot()
-                if (self.stop_fault or reset_state.get("km2_on") is True or
-                        (self.config.mode == "HARDWARE" and
-                         (not reset_state.get("connected") or reset_state.get("fault") or
-                          reset_state.get("km2_on") is not False))):
+                # DI3 (contactor feedback) is not required to recover.
+                if self.stop_fault or (self.config.mode == "HARDWARE" and
+                                       (not reset_state.get("connected") or reset_state.get("fault"))):
                     raise Conflict("출력 정지를 확인할 수 없습니다.")
                 # Reset clears the fault only. It never energizes the motor.
                 # Only a product on the conveyor must be removed first; the
@@ -418,7 +417,7 @@ class Controller:
                 if s["phase"] not in ("HOLD", "FAULT", "PAUSED") or self.busy or len(cmd.reason) < 3:
                     raise Conflict("불합격 제품 제거 및 조치 내용을 먼저 확인하세요.")
                 self.stop_outputs()
-                if self.stop_fault or self.io.snapshot().get("km2_on") is True:
+                if self.stop_fault:
                     raise Conflict("장비 정지를 확인할 수 없습니다.")
                 if self.config.mode == "HARDWARE" and s["recipe"].get("kind") != "vision":
                     raw = self.io.snapshot().get("di_raw")
