@@ -14,7 +14,9 @@ up() { python3 -c "import urllib.request,sys; urllib.request.urlopen(sys.argv[1]
 START="$URL/"
 if ! up; then
   echo "station not running; starting scripts/run_bench.py (its output: runtime/station.log)"
-  nohup python3 scripts/run_bench.py >>runtime/station.log 2>&1 &
+  # Through an interactive login shell, so the station gets the same settings (~/.bashrc,
+  # CUDA paths) as when it is started by hand in a terminal.
+  nohup bash -lic 'exec python3 scripts/run_bench.py' >>runtime/station.log 2>&1 </dev/null &
   echo "run_bench pid $!"
   # The screen opens at once on a page that switches to the station when it answers.
   START="file://$ROOT/scripts/kiosk-wait.html?port=$PORT"
