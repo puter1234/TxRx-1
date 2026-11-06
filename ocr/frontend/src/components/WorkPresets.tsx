@@ -317,7 +317,7 @@ function PresetEditor({
                       className="field mt-2"
                       value={draft.flow.model_path}
                       onChange={(e) => flow("model_path", e.target.value)}
-                      placeholder="wappen_261031-1.pt"
+                      placeholder="wappen_261031-1.onnx"
                     />
                   </label>
                   <div className="grid grid-cols-2 gap-4">

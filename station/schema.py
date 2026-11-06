@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-WAPPEN_MODEL = Path(__file__).resolve().parents[1] / "vendor/wappen_counter/wappen_261031-1.pt"
+WAPPEN_MODEL = Path(__file__).resolve().parents[1] / "vendor/wappen_counter/wappen_261031-1.onnx"
 
 
 def wappen_model_path(model_path: str) -> Path:
