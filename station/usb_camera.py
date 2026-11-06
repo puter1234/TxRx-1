@@ -16,6 +16,11 @@ from .schema import Model
 from .controller import Conflict
 
 
+# Seconds without a new frame before the camera counts as disconnected. Frames that
+# arrive late but keep coming never stop a job; every capture still waits for a frame
+# newer than its trigger, so a late frame is never judged as a fresh one.
+STALL_SECONDS = 10.0
+
 def frame_at(camera, minimum_ns, timeout, previous_seq=-1, cancelled=None):
     """Read a distinct frame received at/after a moving capture's due time.
 
@@ -233,7 +238,9 @@ def _capture_process(settings, memory_name, metadata, lock, errors):
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         target = np.ndarray((settings["height"], settings["width"], 3), dtype=np.uint8, buffer=mem.buf)
         last_frame_at = time.monotonic()
-        frame_timeout = max(2.0, 3.0 / settings["fps"])
+        # Frames that only arrive late are waited for; a capture is restarted only after
+        # STALL_SECONDS without any frame (a really stopped camera), not after a short delay.
+        frame_timeout = max(STALL_SECONDS, 3.0 / settings["fps"])
         read_error = ""
         while True:
             capture_stage(metadata, 1)
@@ -360,7 +367,7 @@ class UVCStream:
         alive = not self.closed and self.process.is_alive()
         if not alive and not self.closed:
             self.error = self.error or "카메라 처리기가 종료되었습니다."
-        stale = bool(alive and ns and age >= max(2000, 3000 / self.profile.fps))
+        stale = bool(alive and ns and age >= max(STALL_SECONDS * 1000, 3000 / self.profile.fps))
         detail = self.error or (f"카메라 새 프레임 수신 지연: {age / 1000:.1f}초" if stale else None)
         return {"connected": bool(alive and seq and not detail),
                 "frames": seq, "last_frame_age_ms": age, "error": detail, "process_alive": alive,
