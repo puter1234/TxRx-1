@@ -444,22 +444,22 @@ class Bench:
             return self.status()
 
     def clear_error(self):
+        """오류 해제 resets the tests: whatever runs is stopped (outputs off) and every
+        error is cleared, including one left on the production I/O. It never refuses;
+        turning the motor on afterwards still needs the field permit."""
         with self.lock:
-            if self.run or self.native_busy:
-                raise Conflict("진행 중인 시험을 종료하세요.")
+            error = self.error
+            if self.runs:
+                self.stop("오류 해제")
             if not self.io:
-                self.connect()
-            snap = self.io.snapshot()
-            if not snap.get("connected"):
-                raise Conflict("입력 연결 상태를 확인하세요.")
-            # Clearing always works; an I/O fault left on the production owner
-            # (for example a lost permit) is cleared with it. Running still needs the permit.
-            if snap.get("fault") and getattr(self.production_io, "fault", None):
+                try:
+                    self.connect()
+                except Exception:
+                    pass  # the inputs open on the next test
+            if getattr(self.production_io, "fault", None):
                 self.production_io.fault = None
-                snap = self.io.snapshot()
-            # Acknowledge only: never switch outputs or shorten the retry interval.
-            self.store.event("BENCH_ERROR_CLEARED", {"error": self.error})
-            self.last = snap
+            self.store.event("BENCH_ERROR_CLEARED", {"error": error})
+            self.last = self.io.snapshot() if self.io else {}
             self.error = None
             self.stop_wait_until = None
             self.generation += 1

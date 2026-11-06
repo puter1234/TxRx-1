@@ -379,23 +379,17 @@ class Controller:
                 elif s["phase"] not in ("DONE", "FINISHED", "ABORTED"):
                     s["phase"] = "PAUSED"
             elif cmd.action == "reset":
-                if s["phase"] not in ("HOLD", "FAULT", "PAUSED") or self.busy:
+                # 오류 해제 resets: outputs off and every fault cleared, whatever the state.
+                # Running again still needs the field permit, which starting checks.
+                if self.busy:
                     raise Conflict("진행 중인 검사를 마친 후 복구하세요.")
-                if len(cmd.reason) < 3:
-                    raise Conflict("작업자 확인 및 조치 내용을 입력하세요.")
                 self.stop_outputs()
                 if self.config.mode == "HARDWARE" and hasattr(self.io, "reset"):
                     try:
                         self.io.reset()
-                    except RuntimeError as exc:
-                        # A held field stop refuses the reset; the job keeps its own fault.
-                        raise Conflict(str(exc)) from exc
-                    self.stop_fault = None
-                reset_state = self.io.snapshot()
-                # DI3 (contactor feedback) is not required to recover.
-                if self.stop_fault or (self.config.mode == "HARDWARE" and
-                                       (not reset_state.get("connected") or reset_state.get("fault"))):
-                    raise Conflict("출력 정지를 확인할 수 없습니다.")
+                    except Exception:
+                        pass
+                self.stop_fault = None
                 # Reset clears the fault only. It never energizes the motor.
                 # Only a product on the conveyor must be removed first; the
                 # photo test has none, so it can be inspected again at once.

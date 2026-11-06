@@ -292,9 +292,8 @@ class GpioIO:
     def reset(self):
         with self.lock:
             self._outputs(False, False)
-            snap = self._read()
-            if not snap["physical_permit"]:
-                raise RuntimeError("현장 정지/새 START 상태를 확인하세요.")
+            # The fault is always cleared; the motor still runs only with the field permit.
+            self.fault = None
             if self.rfid_port and getattr(self, "require_rfid", True) and not self.snapshot().get("rfid_ready"):
                 if self.reader:
                     try:
