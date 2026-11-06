@@ -9,7 +9,7 @@ export default function OptionValues({
   onChange,
 }: {
   option: Option;
-  onChange: (patch: Partial<Option>) => void;
+  onChange: (patch: Partial<Option>, renamed?: [string, string]) => void;
 }) {
   const [adding, setAdding] = useState(false);
   const [value, setValue] = useState("");
@@ -42,7 +42,7 @@ export default function OptionValues({
           ? [...option.values, next]
           : option.values.map((v) => (v === editing ? next : v)),
       colors,
-    });
+    }, editing !== null && editing !== next ? [editing, next] : undefined);
     if (editing === null) setValue("");
     else setEditing(null);
     setError("");

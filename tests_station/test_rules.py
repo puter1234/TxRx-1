@@ -57,7 +57,9 @@ def test_optional_barcode_is_not_required(recipe):
 
 
 def test_no_fuzzy_substitution(recipe):
-    assert judge(recipe, {"rfid": {**recipe.targets, "size": "O95"}})
+    # Only registered RFID tag values compare loosely (an option value changed after registering).
+    recipe.channels = ["ocr"]
+    assert judge(recipe, {"ocr": {**recipe.targets, "size": "O95"}})
 
 
 def test_other_maker_lookup(brand):
@@ -113,3 +115,29 @@ def test_color_mapping_preserves_codes_and_rejects_deleted_values():
     assert Option(key="size", label="사이즈", values=["095"]).colors == {}
     with pytest.raises(ValidationError):
         Option(key="color", label="색상", values=["N3"], colors={"BK": "#000000"})
+
+
+def test_registered_tags_follow_a_changed_option_value_they_loosely_equal(brand):
+    data = brand.model_dump()
+    data["options"][1]["values"] = ["N5", "BK", "0A", "OA"]
+    data["decoder"]["records"] = {
+        "AA": {"style": "HUTS6C612", "color": "NS", "size": "095"},
+        "BB": {"style": "HUTS6C612", "color": "WH", "size": "095"},
+        "CC": {"style": "HUTS6C612", "color": "QA", "size": "095"},
+    }
+    records = Brand.model_validate(data).decoder.records
+    assert records["AA"]["color"] == "N5"
+    # Nothing loosely equal, or more than one: left as registered.
+    assert records["BB"]["color"] == "WH" and records["CC"]["color"] == "QA"
+
+
+def test_rfid_judges_an_old_tag_value_loosely_against_the_target(brand, recipe):
+    from station.flow import FlowCycle
+    target = recipe.model_copy(update={"targets": {**recipe.targets, "color": "N5"}})
+    brand.decoder.records = {"AA": {"style": "HUTS6C612", "color": "NS", "size": "095"}}
+    assert FlowCycle.rfid_match(brand, "AA", target)
+    assert not FlowCycle.rfid_match(brand, "AA", recipe.model_copy(update={"targets": {**recipe.targets, "color": "BK"}}))
+    assert judge(target, {"rfid": {"style": "HUTS6C612", "color": "NS", "size": "095"}}) == []
+    # Printed text is still compared exactly.
+    ocr = target.model_copy(update={"channels": ["ocr"]})
+    assert judge(ocr, {"ocr": {"style": "HUTS6C612", "color": "NS", "size": "095"}})[0]["code"] == "TARGET_MISMATCH"

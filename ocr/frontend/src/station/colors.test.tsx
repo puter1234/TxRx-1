@@ -176,3 +176,26 @@ it("clears mappings for deleted codes and validates custom color input", async (
   expect(option.colors.WH).toBeUndefined();
   expect(option.values).toEqual(["N3", "BK"]);
 });
+
+it("rewrites registered RFID tags when a value is renamed and keeps them when one is deleted", async () => {
+  const user = userEvent.setup();
+  const fetcher = vi.fn(async (_path: string, args: RequestInit) => ({
+    ok: true,
+    json: async () => JSON.parse(args.body as string).brand,
+  }));
+  vi.stubGlobal("fetch", fetcher);
+  const tagged: Brand = { ...brand, decoder: { kind: "lookup", records: { AABB: { color: "N3" }, CCDD: { color: "WH" }, EEFF: { color: "BK" } } } };
+  render(<Config brands={[tagged]} locked={false} refresh={async () => {}} action={async (fn) => { await fn(); }} />);
+  await user.click(screen.getByRole("button", { name: "테스트 브랜드" }));
+  await user.click(screen.getByRole("button", { name: "색상 N3 수정" }));
+  await user.clear(screen.getByLabelText("색상 N3 수정값"));
+  await user.type(screen.getByLabelText("색상 N3 수정값"), "N5");
+  await user.click(screen.getByRole("button", { name: "색상 N3 수정 완료" }));
+  await user.click(screen.getByRole("button", { name: "색상 WH 수정" }));
+  await user.click(screen.getByRole("button", { name: "색상 WH 삭제" }));
+  await user.type(screen.getByLabelText("설정 변경 사유"), "선택값 수정");
+  await user.click(screen.getByRole("button", { name: "설정 저장" }));
+  const saved = JSON.parse(fetcher.mock.calls[0][1].body as string).brand;
+  expect(saved.options[0].values).toEqual(["N5", "BK"]);
+  expect(saved.decoder.records).toEqual({ AABB: { color: "N5" }, CCDD: { color: "WH" }, EEFF: { color: "BK" } });
+});

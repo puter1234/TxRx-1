@@ -96,9 +96,15 @@ export default function Config({
         size: "size",
       } as Record<string, string>
     )[label.trim()] || key;
-  const option = (index: number, patch: Partial<Option>) =>
+  const option = (index: number, patch: Partial<Option>, renamed?: [string, string]) =>
     setDraft({
       ...draft,
+      // Registered tags of a renamed value keep decoding to it.
+      decoder: renamed ? {
+        ...draft.decoder,
+        records: Object.fromEntries(Object.entries(draft.decoder.records).map(([epc, fields]) => [epc,
+          fields[draft.options[index].key] === renamed[0] ? { ...fields, [draft.options[index].key]: renamed[1] } : fields])),
+      } : draft.decoder,
       options: draft.options.map((o, i) => {
         if (i !== index) return o;
         const next = { ...o, ...patch };
@@ -231,7 +237,7 @@ export default function Config({
                 <h3 className="pt-3 text-[28px] font-black">{o.label}</h3>
                 <OptionValues
                   option={o}
-                  onChange={(patch) => option(i, patch)}
+                  onChange={(patch, renamed) => option(i, patch, renamed)}
                 />
               </section>
             ))}

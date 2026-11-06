@@ -1,6 +1,6 @@
 """Explicit local maker rules. Unknown fields never become matching evidence."""
 
-from .schema import Brand, Recipe
+from .schema import Brand, Recipe, loose
 
 ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
@@ -102,7 +102,7 @@ def judge(recipe: Recipe, observations: dict[str, dict[str, str]]) -> list[dict]
         fields = observations.get(channel, {})
         for field, expected in recipe.targets.items():
             actual = fields.get(field)
-            # No O/0 substitution, fuzzy comparison, or expected-data imputation.
+            # No fuzzy comparison or expected-data imputation, except the RFID case below.
             if actual is None or actual == "":
                 failures.append(
                     {
@@ -113,7 +113,8 @@ def judge(recipe: Recipe, observations: dict[str, dict[str, str]]) -> list[dict]
                         "actual": actual,
                     }
                 )
-            elif actual != expected:
+            # A registered tag may still hold a value the option has since changed loosely (NS for N5).
+            elif actual != expected and not (channel == "rfid" and loose(actual) == loose(expected)):
                 failures.append(
                     {
                         "code": "TARGET_MISMATCH",

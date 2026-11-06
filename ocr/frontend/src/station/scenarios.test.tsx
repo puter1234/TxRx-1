@@ -204,6 +204,23 @@ it("names each brand's setting in the statistics and leaves out settings of dele
   expect(within(works).getAllByRole("option").map((o) => o.textContent)).toEqual(["전체", "헤지스 기본 설정"]);
 });
 
+it("shows the RFID codes read for the last product, cut to the brand's length, with the match marked", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => response({})));
+  const rfidBrand = { ...brand, decoder: { kind: "lookup" as const, records: {}, prefix_length: 4 } };
+  const run = job({ brand: rfidBrand, recipe: { ...job({}).recipe, kind: "condition", brand_id: "hazzys", channels: ["rfid"], targets: { size: "095" } } });
+  const result = { id: "r", product_id: "p", attempt: 1, status: "PASS", mode: "REPLAY", created_at: "", observations: {}, failures: [] };
+  acceptSnapshot({ ...snapshot, session: run, last_result: { ...result, rfid: [{ epc: "AABB0001" }, { epc: "CCDD0002" }], rfid_match: "AABB0001" } } as Snapshot);
+  render(<MemoryRouter initialEntries={["/run"]}><App /></MemoryRouter>);
+  const reads = await screen.findByRole("region", { name: "읽은 RFID" });
+  expect(within(reads).getByLabelText("AABB 일치")).toBeTruthy();
+  expect(within(reads).getByText("CCDD")).toBeTruthy();
+  expect(reads.textContent).not.toContain("0001");
+  cleanup();
+  acceptSnapshot({ ...snapshot, session: run, last_result: { ...result, status: "FAIL", rfid: [] } } as Snapshot);
+  render(<MemoryRouter initialEntries={["/run"]}><App /></MemoryRouter>);
+  expect(within(await screen.findByRole("region", { name: "읽은 RFID" })).getByText("못 읽음")).toBeTruthy();
+});
+
 it("marks stopped and test jobs in the history", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => response({ sessions: [
     job({ id: "a", phase: "ABORTED", fault: "PROCESS_RESTART", count: 3 }),

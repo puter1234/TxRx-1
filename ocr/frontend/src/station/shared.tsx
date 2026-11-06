@@ -78,6 +78,8 @@ export type Result = {
   observations: Record<string, Fields>;
   failures: Failure[];
   evidence?: { url?: string; retained?: boolean };
+  rfid?: { epc: string; count?: number }[];
+  rfid_match?: string | null;
 };
 export type Snapshot = {
   can_start?: boolean;

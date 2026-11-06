@@ -12,6 +12,19 @@ def wappen_model_path(model_path: str) -> Path:
     return path if path and path.is_file() else WAPPEN_MODEL
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+_normalize = None
+
+
+def loose(text: str) -> str:
+    """ocr.normalize.normalize_loose (NS = N5, O = 0 ...), loaded on its own: the ocr package imports torch."""
+    global _normalize
+    if _normalize is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("txrx_ocr_normalize", Path(__file__).resolve().parents[1] / "ocr/normalize.py")
+        _normalize = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_normalize)
+    return _normalize.normalize_loose(text)
+
 
 class Model(BaseModel):
     model_config = ConfigDict(
@@ -117,6 +130,15 @@ class Brand(Model):
                     raise ValueError("EPC 중복 매핑")
                 clean[epc] = values
             self.decoder.records = clean
+        # A registered tag keeps up with a changed option value it loosely equals (NS -> N5);
+        # anything else stays as it was registered.
+        allowed = {o.key: o.values for o in self.options}
+        for record in self.decoder.records.values():
+            for k, v in record.items():
+                if k in allowed and v not in allowed[k]:
+                    same = [a for a in allowed[k] if loose(a) == loose(v)]
+                    if len(same) == 1:
+                        record[k] = same[0]
         for record in list(self.decoder.records.values()) + list(
             self.barcode_records.values()
         ) + list(

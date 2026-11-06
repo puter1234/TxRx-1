@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Minus, Play, Plus, Flag, RotateCcw, PackageX, Camera } from "lucide-react";
+import { Minus, Play, Plus, Flag, RotateCcw, PackageX, Camera, Check } from "lucide-react";
 import { useApp } from "../lib/store";
 import { refresh, reportError, sendCommand } from "../lib/station";
 import { api, errorText, uuid, type Result } from "../station/shared";
@@ -52,6 +52,8 @@ export default function Run() {
   const view = phaseView(phase);
   const running = RUNNING.includes(phase);
   const kind = s.recipe.kind || "condition";
+  const rfid = kind === "condition" && s.recipe.channels.includes("rfid") && state?.last_result
+    ? <RfidReads result={state.last_result} length={s.brand.decoder.prefix_length} /> : null;
   // Wappens are only counted, never to a target.
   const target = kind === "vision" ? null : s.recipe.target_count;
   const cameraNeeded = needsCamera(kind, s.recipe.channels) && state?.mode === "HARDWARE";
@@ -244,11 +246,12 @@ export default function Run() {
               {cameraBlocked && !cameraOn(equipment) && <CameraOnButton />}
             </div>
           )}
+          {!(showCamera && kind === "condition") && rfid}
         </section>
         {(showCamera || state?.mode === "REPLAY") && (
           <section className="flex min-h-0 flex-col gap-6">
             {showCamera && (kind === "condition"
-              ? <ResultView result={state?.last_result ?? null} />
+              ? <><ResultView result={state?.last_result ?? null} />{rfid}</>
               : <CameraBox className="min-h-[360px] flex-1" tracking={kind === "vision" ? state?.tracking : undefined} flow={s.recipe.flow} />)}
             {state?.mode === "REPLAY" && kind !== "vision" && <PhotoTest />}
           </section>
@@ -397,6 +400,35 @@ function PhotoTest() {
 }
 
 // The last product as the reader saw it, with the tags and lines it found.
+// The tags read for the last product, cut to the brand's comparison length.
+function RfidReads({ result, length }: { result: Result; length?: number | null }) {
+  const cut = (epc: string) => (length ? epc.slice(0, length) : epc);
+  const shown = new Map<string, boolean>();
+  for (const t of result.rfid ?? []) {
+    const code = cut(t.epc);
+    shown.set(code, !!shown.get(code) || (!!result.rfid_match && t.epc === result.rfid_match));
+  }
+  return (
+    <section aria-label="읽은 RFID" className="card space-y-4 p-6">
+      <h2 className="text-[32px] font-black">RFID</h2>
+      {shown.size ? (
+        <ul className="flex flex-wrap gap-4">
+          {[...shown].map(([code, matched]) => (
+            <li key={code} aria-label={matched ? code + " 일치" : code}
+              className={"flex items-center gap-3 break-all rounded-2xl border-4 px-5 py-3 font-mono text-[36px] font-black " +
+                (matched ? "border-ok bg-ok text-white" : "border-line bg-white text-ink-900")}>
+              {matched && <Check size={40} strokeWidth={4} aria-hidden="true" />}
+              {code}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-[36px] font-black text-danger">못 읽음</p>
+      )}
+    </section>
+  );
+}
+
 function ResultView({ result }: { result: Result | null }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [result?.id]);

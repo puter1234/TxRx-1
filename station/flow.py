@@ -5,7 +5,7 @@ import time
 import uuid
 
 from .runtime import HardwareCycle
-from .schema import FlowSettings, Recipe
+from .schema import FlowSettings, Recipe, loose
 from .rules import decode_epc, judge, RuleError
 from .counting import ObjectCounter, file_sha256
 from .storage import utc
@@ -456,7 +456,8 @@ class FlowCycle(HardwareCycle):
             fields = decode_epc(brand, epc)
         except RuleError:
             return False
-        return all(fields.get(k) == v for k, v in recipe.targets.items())
+        # A registered tag may still hold a value the option has since changed loosely (NS for N5).
+        return all(fields.get(k) and loose(fields[k]) == loose(v) for k, v in recipe.targets.items())
 
     async def reconnect_rfid(self):
         if not hasattr(self.io, "ensure_rfid"):
