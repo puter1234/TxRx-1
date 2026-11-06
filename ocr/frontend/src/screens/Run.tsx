@@ -9,7 +9,6 @@ import { cameraOn, jobTitle, needsCamera, phaseView, RUNNING, TONE_BAR, useRedo 
 import { Screen, Sheet } from "../ui/kit";
 import CameraBox, { CameraOnButton } from "../ui/CameraBox";
 import StopButton from "../ui/StopButton";
-import GpuBadge from "../ui/GpuBadge"; // TEMP: GPU indicator
 
 const ADD_REASONS = ["놓친 제품", "수량 확인"];
 const SUBTRACT_REASONS = ["중복 계수", "불량 제외", "수량 확인"];
@@ -135,7 +134,6 @@ export default function Run() {
       onBack={() => nav("/")}
       right={
         <>
-          <GpuBadge /> {/* TEMP: GPU indicator */}
           {s.recipe.test_run && <span className="rounded-2xl border-2 border-ink-500 px-5 py-3 text-[28px] font-extrabold">시험</span>}
           {kind === "condition" &&
             s.brand.options.map((o) => (

@@ -1,9 +1,10 @@
 import { useNavigate } from "react-router-dom";
-import { FileClock, Layers, ScanBarcode, Settings, Play, RotateCcw } from "lucide-react";
+import { FileClock, Layers, Power, ScanBarcode, Settings, Play, RotateCcw } from "lucide-react";
 import { useApp } from "../lib/store";
-import { ended } from "../lib/station";
+import { ended, reportError } from "../lib/station";
+import { api } from "../station/shared";
 import { jobTitle, phaseView, TONE_BAR, useRedo } from "../lib/jobs";
-import { Tile } from "../ui/kit";
+import { Tile, useConfirm } from "../ui/kit";
 
 export default function Home() {
   const nav = useNavigate();
@@ -12,10 +13,20 @@ export default function Home() {
   const active = !ended(session);
   const view = session ? phaseView(session.phase) : null;
   const redo = useRedo();
+  const { confirm, dialog } = useConfirm();
+  const powerOff = async () => {
+    if (!(await confirm("컴퓨터를 끕니다", "끄기"))) return;
+    try {
+      await api("/system/shutdown", {});
+    } catch (e) {
+      reportError(e);
+    }
+  };
   // A restart ends the job for safety; its count stays visible until the next job.
   const stopped = session?.phase === "ABORTED" && session.fault === "PROCESS_RESTART" ? session : null;
   return (
     <div className="flex h-full flex-col">
+      {dialog}
       <div className="flex min-h-0 flex-1 flex-col justify-center gap-8 overflow-y-auto px-10 py-8">
         {active && session && view && (
           <section aria-label="진행 중인 작업" className="card flex items-center gap-8 border-4 border-brand-700 p-8">
@@ -70,6 +81,10 @@ export default function Home() {
         <button className="btn btn-outline btn-lg min-w-[280px]" onClick={() => nav("/settings")}>
           <Settings size={36} />
           설정
+        </button>
+        <button className="btn btn-outline btn-lg min-w-[280px]" onClick={() => void powerOff()}>
+          <Power size={36} />
+          종료
         </button>
       </nav>
     </div>

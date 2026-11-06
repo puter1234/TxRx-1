@@ -428,16 +428,34 @@ def create_app(data_dir: Path | None = None, io=None, vision=None, camera=None, 
             "blockers": reasons,
         }
 
+    @app.post("/api/system/shutdown")
+    def shutdown_computer():
+        """Turn the whole computer off (the screen asks first). Outputs go off before."""
+        controller.stop_outputs()
+        store.event("SYSTEM_SHUTDOWN", {})
+        if config.mode != "HARDWARE":
+            return {"ok": True, "powered_off": False}
+
+        def power_off():
+            import subprocess
+            time.sleep(1)  # let the answer reach the screen
+            for command in (["systemctl", "poweroff"], ["sudo", "-n", "shutdown", "-h", "now"]):
+                try:
+                    if subprocess.run(command, timeout=15).returncode == 0:
+                        return
+                except Exception:
+                    pass
+
+        threading.Thread(target=power_off, daemon=True, name="power-off").start()
+        return {"ok": True, "powered_off": True}
+
     @app.get("/api/status")
     def status():
         controller.last_client = time.monotonic()
         return state()
 
     def state():
-        status = vision.status()
-        # TEMP: GPU indicator
-        from .vision import inference_devices
-        return {**controller.snapshot(), "vision": status, "inference": inference_devices(status)}
+        return {**controller.snapshot(), "vision": vision.status()}
 
     @app.websocket("/api/ws")
     async def stream(ws: WebSocket):
